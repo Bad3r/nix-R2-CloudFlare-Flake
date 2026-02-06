@@ -1,0 +1,11 @@
+name: Deploy R2-Explorer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Phase notice
+        run: echo "Deployment workflow is scaffolded in Phase 1; implementation lands in Phase 7."

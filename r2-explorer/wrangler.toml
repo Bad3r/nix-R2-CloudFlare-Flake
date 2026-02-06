@@ -1,0 +1,5 @@
+name = "r2-explorer"
+main = "src/index.ts"
+compatibility_date = "2026-02-06"
+
+# Bindings and routes are intentionally omitted in Phase 1.
