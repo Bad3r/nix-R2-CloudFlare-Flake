@@ -237,10 +237,8 @@ let
   };
   packageNames = builtins.map (pkg: pkg.name) hmEval.config.home.packages;
   hasR2 = builtins.any (name: name == "r2") packageNames;
-  hasR2Bucket = builtins.any (name: name == "r2-bucket") packageNames;
-  hasR2Share = builtins.any (name: name == "r2-share") packageNames;
 in
-if hasR2 && hasR2Bucket && hasR2Share then "ok" else builtins.throw "Missing expected Stage 3 CLI wrappers in home.packages"
+if hasR2 then "ok" else builtins.throw "Missing expected r2 CLI wrapper in home.packages"
 NIX
 )"
 
@@ -329,16 +327,14 @@ NIX
 
 run nix flake check
 run_quality_checks_in_temp_checkout
-run nix build .#r2-bucket
-run nix build .#r2-cli
-run nix build .#r2-share
-run nix run .#r2-bucket -- help
-run nix run .#r2-share -- --help
+run nix build .#r2
+run nix run .#r2 -- help
+run nix run .#r2 -- bucket help
 nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"
 nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
 nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"
 nix_eval_expect "r2-restic assertions (negative)" "ok" "${R2_RESTIC_ASSERTION_EXPR}"
-nix_eval_expect "home-manager r2-cloud wrappers (positive)" "ok" "${HM_R2_CLI_POSITIVE_EXPR}"
+nix_eval_expect "home-manager r2-cloud wrapper (positive)" "ok" "${HM_R2_CLI_POSITIVE_EXPR}"
 nix_eval_expect "home-manager rclone config (positive)" "ok" "${HM_RCLONE_CONFIG_POSITIVE_EXPR}"
 nix_eval_expect_failure \
   "home-manager r2-cloud assertions (negative)" \

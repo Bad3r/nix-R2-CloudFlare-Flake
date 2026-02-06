@@ -28,8 +28,8 @@ Planned structure (per `docs/plan.md`): `modules/nixos/`, `modules/home-manager/
 No build/test commands exist yet. When implementation begins, expected commands include:
 
 - `nix flake check` to validate flake structure.
-- `nix build .#r2-bucket` and `nix build .#r2-share` to build CLIs.
-- `nix run .#r2-bucket -- help` to smoke‑test CLI usage.
+- `nix build .#r2` to build the CLI.
+- `nix run .#r2 -- help` to smoke‑test CLI usage.
 - `nix develop` for a dev shell with rclone/restic/git-annex/wrangler.
 
 ## Local Development Tools
@@ -66,7 +66,7 @@ Sync strategies:
 
 Sharing modes:
 
-- Presigned URLs via `r2-share`: S3 endpoint only, no Access.
+- Presigned URLs via `r2 share`: S3 endpoint only, no Access.
 - Access‑protected links: custom domain via Worker + HMAC.
 
 ## Local Documentation
@@ -85,7 +85,7 @@ Clone repos available in `~/git/`. Update with `git -C ~/git/<repo> pull`.
 
 ## Coding Style & Naming Conventions
 
-Keep Markdown concise, with clear headings and fenced code blocks for commands. Use lower‑case, hyphenated names (for example `r2-explorer/`, `r2-share.nix`) consistent with the plan.
+Keep Markdown concise, with clear headings and fenced code blocks for commands. Use lower‑case, hyphenated names (for example `r2-explorer/`, `r2-cli.nix`) consistent with the plan.
 
 ## Error Handling & Failure Semantics
 

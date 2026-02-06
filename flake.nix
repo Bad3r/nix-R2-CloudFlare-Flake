@@ -113,12 +113,11 @@
               fi
             fi
           '';
+          r2Package = pkgs.callPackage ./packages/r2-cli.nix { wrangler = wranglerPkg; };
         in
         {
           packages = {
-            r2-bucket = pkgs.callPackage ./packages/r2-bucket.nix { };
-            r2-cli = pkgs.callPackage ./packages/r2-cli.nix { };
-            r2-share = pkgs.callPackage ./packages/r2-share.nix { };
+            r2 = r2Package;
             lefthook-treefmt = pkgs.writeShellApplication {
               name = "lefthook-treefmt";
               runtimeInputs = [
@@ -169,9 +168,7 @@
             default = pkgs.symlinkJoin {
               name = "r2-cloud-tools";
               paths = [
-                self.packages.${system}.r2-bucket
-                self.packages.${system}.r2-cli
-                self.packages.${system}.r2-share
+                self.packages.${system}.r2
                 self.packages.${system}.lefthook-treefmt
                 self.packages.${system}.lefthook-statix
               ];

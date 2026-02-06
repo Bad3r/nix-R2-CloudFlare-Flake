@@ -154,13 +154,11 @@ r2-cloud-nix/
 │   └── home-manager/
 │       ├── default.nix          # Aggregates all HM modules
 │       ├── r2-credentials.nix   # Credentials management
-│       ├── r2-cli.nix           # CLI wrappers (r2, r2-bucket, etc.)
+│       ├── r2-cli.nix           # CLI integration wrappers (env/default injection)
 │       └── rclone-config.nix    # rclone remote configuration
 │
 ├── packages/
-│   ├── r2-bucket.nix            # Bucket management CLI
-│   ├── r2-cli.nix               # Enhanced rclone wrapper
-│   └── r2-share.nix             # Presigned URL generator (S3 endpoint only)
+│   └── r2-cli.nix               # Primary `r2` subcommand CLI
 │
 ├── lib/
 │   └── r2.nix                   # Shared library functions
@@ -246,15 +244,11 @@ r2-cloud-nix/
       perSystem = { pkgs, system, ... }: {
         # CLI packages
         packages = {
-          r2-bucket = pkgs.callPackage ./packages/r2-bucket.nix { };
-          r2-cli = pkgs.callPackage ./packages/r2-cli.nix { };
-          r2-share = pkgs.callPackage ./packages/r2-share.nix { };
+          r2 = pkgs.callPackage ./packages/r2-cli.nix { };
           default = pkgs.symlinkJoin {
             name = "r2-cloud-tools";
             paths = [
-              self.packages.${system}.r2-bucket
-              self.packages.${system}.r2-cli
-              self.packages.${system}.r2-share
+              self.packages.${system}.r2
             ];
           };
         };
@@ -647,18 +641,19 @@ in
       { assertion = cfg.rcloneRemoteName != "" || !cfg.enableRcloneRemote; message = "programs.r2-cloud.rcloneRemoteName must be non-empty when remote generation is enabled"; }
     ];
 
-    # Installs wrapped CLIs:
-    # - r2        (sources credentials file, then executes rclone with managed config)
-    # - r2-bucket (wrangler create/list/delete/lifecycle)
-    # - r2-share  (presigned URLs via rclone link)
+    # Installs wrapped CLI from package derivation:
+    # - r2 (primary package-backed subcommand CLI)
     #
-    # Wrappers are fail-fast and validate required credentials/env before execution.
-    home.packages = [ r2Wrapper r2BucketWrapper r2ShareWrapper ];
+    # HM wrappers only inject default env/config and delegate to package binaries.
+    home.packages = [ r2Wrapper ];
   };
 }
 ```
 
-This module intentionally keeps wrapper logic self-contained in this repo (no external wrapper framework dependency), while following the same principles: declarative options, generated runtime artifacts, and strict validation.
+Phase 4 extracts operational CLI logic into `packages/` derivations so it can be used directly via
+`nix run` and reused by Home Manager wrappers. The HM module remains declarative and enforces
+strict validation while injecting configuration defaults (`R2_CREDENTIALS_FILE`, `R2_RCLONE_CONFIG`,
+`R2_DEFAULT_ACCOUNT_ID`).
 
 ### 5. Home Manager Module: r2-credentials.nix
 
@@ -905,16 +900,16 @@ Configure in Cloudflare dashboard:
 
 #### Presigned URLs (S3 endpoint only)
 
-Use the `r2-share` CLI for quick sharing. These links are always on the S3 endpoint
+Use the `r2 share` CLI for quick sharing. These links are always on the S3 endpoint
 (`https://<account_id>.r2.cloudflarestorage.com`) and **do not** pass through the custom
 domain or Cloudflare Access.
 
 ```bash
 # Share file for 24 hours (default)
-r2-share documents report.pdf
+r2 share documents report.pdf
 
 # Share for 7 days
-r2-share documents report.pdf 168h
+r2 share documents report.pdf 168h
 ```
 
 #### Access-Protected Share Links (custom domain)
@@ -926,24 +921,23 @@ object from R2.
 
 ## Files to Create
 
-| File                                      | Purpose                                    |
-| ----------------------------------------- | ------------------------------------------ |
-| `flake.nix`                               | Main flake with all outputs                |
-| `modules/nixos/default.nix`               | NixOS module aggregator                    |
-| `modules/nixos/r2-sync.nix`               | Mount + bisync service                     |
-| `modules/nixos/r2-restic.nix`             | Restic backup service                      |
-| `modules/nixos/git-annex.nix`             | git-annex module (optional)                |
-| `modules/home-manager/default.nix`        | HM module aggregator                       |
-| `modules/home-manager/r2-cli.nix`         | CLI wrappers                               |
-| `modules/home-manager/r2-credentials.nix` | Credentials management                     |
-| `packages/r2-bucket.nix`                  | Standalone bucket CLI                      |
-| `packages/r2-share.nix`                   | Presigned URL generator (S3 endpoint only) |
-| `lib/r2.nix`                              | Shared library functions                   |
-| `r2-explorer/flake.nix`                   | Worker subflake                            |
-| `r2-explorer/wrangler.toml`               | Worker config                              |
-| `templates/minimal/flake.nix`             | Minimal usage template                     |
-| `templates/full/flake.nix`                | Full usage template                        |
-| `README.md`                               | Documentation                              |
+| File                                      | Purpose                     |
+| ----------------------------------------- | --------------------------- |
+| `flake.nix`                               | Main flake with all outputs |
+| `modules/nixos/default.nix`               | NixOS module aggregator     |
+| `modules/nixos/r2-sync.nix`               | Mount + bisync service      |
+| `modules/nixos/r2-restic.nix`             | Restic backup service       |
+| `modules/nixos/git-annex.nix`             | git-annex module (optional) |
+| `modules/home-manager/default.nix`        | HM module aggregator        |
+| `modules/home-manager/r2-cli.nix`         | CLI integration wrappers    |
+| `modules/home-manager/r2-credentials.nix` | Credentials management      |
+| `packages/r2-cli.nix`                     | Primary `r2` subcommand CLI |
+| `lib/r2.nix`                              | Shared library functions    |
+| `r2-explorer/flake.nix`                   | Worker subflake             |
+| `r2-explorer/wrangler.toml`               | Worker config               |
+| `templates/minimal/flake.nix`             | Minimal usage template      |
+| `templates/full/flake.nix`                | Full usage template         |
+| `README.md`                               | Documentation               |
 
 ## Verification
 
@@ -956,12 +950,11 @@ git init
 
 # Build and check
 nix flake check
-nix build .#r2-bucket
-nix build .#r2-share
+nix build .#r2
 
 # Test CLI tools
-nix run .#r2-bucket -- help
-nix run .#r2-share -- --help
+nix run .#r2 -- help
+nix run .#r2 -- bucket help
 
 # Enter dev shell
 nix develop
@@ -971,9 +964,9 @@ nix develop
 
 ```bash
 # On consumer system after nixos-rebuild
-r2-bucket list
-r2-bucket create test-bucket
-r2-bucket lifecycle test-bucket 30
+r2 bucket list
+r2 bucket create test-bucket
+r2 bucket lifecycle test-bucket 30
 # Verify lifecycle (requires wrangler in PATH)
 wrangler r2 bucket lifecycle get test-bucket
 sudo systemctl status r2-mount-documents
@@ -986,7 +979,7 @@ r2 ls r2:documents/
 
 # Test sharing
 # Presigned (S3 endpoint only)
-r2-share documents test.txt
+r2 share documents test.txt
 
 # Access-protected (custom domain via Worker)
 curl -I https://files.yourdomain.com/share/<token>
@@ -1012,8 +1005,8 @@ curl -I https://files.yourdomain.com/share/<token>
 
 1. [x] **Phase 1**: Repository scaffold + flake.nix
 2. [x] **Phase 2**: NixOS modules (r2-sync.nix, r2-restic.nix)
-3. [x] **Phase 3**: Home Manager wrapped modules (`r2`, `r2-bucket`, `r2-share`, credentials assembly, managed `rclone.conf`)
-4. [ ] **Phase 4**: CLI package extraction/refactor (move Stage 3 wrapper logic into reusable package derivations)
+3. [x] **Phase 3**: Home Manager modules (`r2` wrapper, credentials assembly, managed `rclone.conf`)
+4. [x] **Phase 4**: CLI package extraction/refactor (single `r2` package CLI + HM wrapper delegation)
 5. [ ] **Phase 5**: R2-Explorer subflake
 6. [ ] **Phase 6**: Templates and documentation
 7. [ ] **Phase 7**: CI/CD setup
