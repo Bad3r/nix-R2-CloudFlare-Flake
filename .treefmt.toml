@@ -1,0 +1,22 @@
+excludes = [
+  ".git/*",
+  ".github/*",
+  "result",
+  "*.lock",
+  "*.patch",
+  "lefthook.yml",
+]
+
+[formatter.nixfmt]
+command = "nixfmt"
+includes = ["*.nix"]
+
+[formatter.prettier]
+command = "prettier"
+includes = ["*.json", "*.md", "*.yaml", "*.yml"]
+options = ["--write"]
+
+[formatter.shfmt]
+command = "shfmt"
+includes = ["*.sh", "*.bash"]
+options = ["-w", "-i", "2", "-s"]

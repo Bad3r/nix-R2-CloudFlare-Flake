@@ -10,7 +10,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       home-manager,
       r2-cloud,

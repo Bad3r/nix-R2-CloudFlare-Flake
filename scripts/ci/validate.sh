@@ -4,18 +4,32 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
+CACHE_URL_DEFAULT="https://cache.nixos.org"
+CACHE_URL="${NIX_VALIDATE_CACHE_URL:-${CACHE_URL_DEFAULT}}"
+CACHE_INFO_URL="${CACHE_URL%/}/nix-cache-info"
+
 # Force deterministic cache settings for CI and local reproducibility.
 # This avoids inheriting slow/unreachable user-level extra substituters.
-if [[ "${CI_STRICT:-0}" == "1" ]]; then
+if [[ ${CI_STRICT:-0} == "1" ]]; then
   echo "CI_STRICT=1 enabled: fail fast on cache/network failures."
   CACHE_TUNING=$'connect-timeout = 8\nstalled-download-timeout = 12\ndownload-attempts = 1\nfallback = false\n'
 else
   CACHE_TUNING=$'connect-timeout = 15\nstalled-download-timeout = 30\ndownload-attempts = 8\nfallback = true\n'
 fi
 
-PINNED_NIX_CONFIG=$'substituters = https://cache.nixos.org/\nextra-substituters =\ntrusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbYQ2I6D8sfr8Y9f3l8S8d5N9Q=\nextra-trusted-public-keys =\nhttp-connections = 50\n'"${CACHE_TUNING}"
+if [[ -n ${NIX_VALIDATE_SUBSTITUTERS:-} ]]; then
+  SUBSTITUTERS_LINE="substituters = ${NIX_VALIDATE_SUBSTITUTERS}"
+elif curl -fsSI --max-time 5 "${CACHE_INFO_URL}" >/dev/null 2>&1; then
+  SUBSTITUTERS_LINE="substituters = ${CACHE_URL%/}/"
+else
+  echo "Warning: ${CACHE_INFO_URL} is unreachable. Disabling substituters for this run." >&2
+  echo "Set NIX_VALIDATE_SUBSTITUTERS to a reachable cache to avoid source builds." >&2
+  SUBSTITUTERS_LINE="substituters ="
+fi
 
-if [[ -n "${NIX_CONFIG:-}" ]]; then
+PINNED_NIX_CONFIG="${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbYQ2I6D8sfr8Y9f3l8S8d5N9Q="$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
+
+if [[ -n ${NIX_CONFIG:-} ]]; then
   export NIX_CONFIG="${NIX_CONFIG}"$'\n'"${PINNED_NIX_CONFIG}"
 else
   export NIX_CONFIG="${PINNED_NIX_CONFIG}"
@@ -24,6 +38,27 @@ fi
 run() {
   echo "+ $*"
   "$@"
+}
+
+run_quality_checks_in_temp_checkout() {
+  local temp_checkout
+  temp_checkout="$(mktemp -d "${TMPDIR:-/tmp}/r2-cloud-validate.XXXXXX")"
+
+  cleanup_temp_checkout() {
+    rm -rf "${temp_checkout}"
+  }
+
+  trap cleanup_temp_checkout RETURN
+  run cp -a . "${temp_checkout}/repo"
+
+  (
+    cd "${temp_checkout}/repo"
+    run nix fmt
+    run nix develop .#hooks --command lefthook run pre-commit --all-files
+  )
+
+  cleanup_temp_checkout
+  trap - RETURN
 }
 
 nix_eval_expect() {
@@ -35,7 +70,7 @@ nix_eval_expect() {
   echo "+ nix eval (${label})"
   actual="$(nix eval --impure --raw --expr "${expr}")"
 
-  if [[ "${actual}" != "${expected}" ]]; then
+  if [[ ${actual} != "${expected}" ]]; then
     echo "Unexpected nix eval result for ${label}" >&2
     echo "Expected: ${expected}" >&2
     echo "Actual:   ${actual}" >&2
@@ -43,7 +78,8 @@ nix_eval_expect() {
   fi
 }
 
-R2_SYNC_POSITIVE_EXPR="$(cat <<'NIX'
+R2_SYNC_POSITIVE_EXPR="$(
+  cat <<'NIX'
 let
   flake = builtins.getFlake (toString ./.);
   lib = flake.inputs.nixpkgs.lib;
@@ -70,7 +106,8 @@ systemEval.config.systemd.services."r2-mount-documents".description
 NIX
 )"
 
-R2_RESTIC_POSITIVE_EXPR="$(cat <<'NIX'
+R2_RESTIC_POSITIVE_EXPR="$(
+  cat <<'NIX'
 let
   flake = builtins.getFlake (toString ./.);
   lib = flake.inputs.nixpkgs.lib;
@@ -96,7 +133,8 @@ systemEval.config.systemd.timers.r2-restic-backup.description
 NIX
 )"
 
-R2_SYNC_ASSERTION_EXPR="$(cat <<'NIX'
+R2_SYNC_ASSERTION_EXPR="$(
+  cat <<'NIX'
 let
   flake = builtins.getFlake (toString ./.);
   lib = flake.inputs.nixpkgs.lib;
@@ -121,7 +159,8 @@ if builtins.any (a: a.message == expected) failed then "ok" else builtins.throw 
 NIX
 )"
 
-R2_RESTIC_ASSERTION_EXPR="$(cat <<'NIX'
+R2_RESTIC_ASSERTION_EXPR="$(
+  cat <<'NIX'
 let
   flake = builtins.getFlake (toString ./.);
   lib = flake.inputs.nixpkgs.lib;
@@ -150,6 +189,7 @@ NIX
 )"
 
 run nix flake check
+run_quality_checks_in_temp_checkout
 run nix build .#r2-bucket
 run nix build .#r2-cli
 run nix build .#r2-share

@@ -8,7 +8,9 @@ let
   cfg = config.services.r2-restic;
   endpoint = "https://${cfg.accountId}.r2.cloudflarestorage.com";
 
-  excludeFlags = lib.concatMapStringsSep " " (pattern: "--exclude=${lib.escapeShellArg pattern}") cfg.exclude;
+  excludeFlags = lib.concatMapStringsSep " " (
+    pattern: "--exclude=${lib.escapeShellArg pattern}"
+  ) cfg.exclude;
   backupPaths = lib.concatMapStringsSep " " (path: lib.escapeShellArg (toString path)) cfg.paths;
 
   resticBackupScript = pkgs.writeShellScript "r2-restic-backup" ''

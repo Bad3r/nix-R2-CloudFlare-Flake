@@ -63,6 +63,12 @@
         }:
         let
           optionalPkg = name: if builtins.hasAttr name pkgs then [ pkgs.${name} ] else [ ];
+          optionalNodePkg =
+            name:
+            if builtins.hasAttr "nodePackages" pkgs && builtins.hasAttr name pkgs.nodePackages then
+              [ pkgs.nodePackages.${name} ]
+            else
+              [ ];
           wranglerPkg =
             if builtins.hasAttr "nodePackages" pkgs && builtins.hasAttr "wrangler" pkgs.nodePackages then
               pkgs.nodePackages.wrangler
@@ -70,13 +76,95 @@
               pkgs.wrangler
             else
               null;
-          formatterPkg = pkgs.nixfmt;
+          formatterPkg =
+            if builtins.hasAttr "treefmt" pkgs then
+              pkgs.writeShellApplication {
+                name = "treefmt-wrapper";
+                runtimeInputs =
+                  optionalPkg "treefmt" ++ optionalPkg "nixfmt" ++ optionalPkg "shfmt" ++ optionalNodePkg "prettier";
+                text = ''
+                  set -euo pipefail
+                  exec treefmt "$@"
+                '';
+              }
+            else
+              pkgs.nixfmt;
+          hookToolPackages =
+            optionalPkg "lefthook"
+            ++ optionalPkg "deadnix"
+            ++ optionalPkg "statix"
+            ++ optionalPkg "treefmt"
+            ++ optionalPkg "nixfmt"
+            ++ optionalPkg "shfmt"
+            ++ optionalNodePkg "prettier"
+            ++ optionalPkg "yamllint"
+            ++ [
+              self.packages.${system}.lefthook-treefmt
+              self.packages.${system}.lefthook-statix
+            ];
+          hookShellSetup = ''
+            treefmt_cache="$PWD/.git/treefmt-cache/cache"
+            mkdir -p "$treefmt_cache" 2>/dev/null || true
+            export TREEFMT_CACHE_DB="$treefmt_cache/eval-cache"
+
+            if command -v lefthook >/dev/null 2>&1; then
+              if [ ! -f .git/hooks/pre-commit ] || ! grep -q "lefthook" .git/hooks/pre-commit 2>/dev/null; then
+                lefthook install
+              fi
+            fi
+          '';
         in
         {
           packages = {
             r2-bucket = pkgs.callPackage ./packages/r2-bucket.nix { };
             r2-cli = pkgs.callPackage ./packages/r2-cli.nix { };
             r2-share = pkgs.callPackage ./packages/r2-share.nix { };
+            lefthook-treefmt = pkgs.writeShellApplication {
+              name = "lefthook-treefmt";
+              runtimeInputs = [
+                pkgs.coreutils
+              ]
+              ++ optionalPkg "git"
+              ++ optionalPkg "treefmt";
+              text = ''
+                set -euo pipefail
+
+                mapfile -t changed < <(
+                  {
+                    git diff --name-only HEAD --diff-filter=ACM 2>/dev/null || true
+                    git ls-files --others --exclude-standard 2>/dev/null || true
+                  } | sort -u
+                )
+                if [ "''${#changed[@]}" -eq 0 ]; then
+                  exit 0
+                fi
+
+                treefmt --fail-on-change "''${changed[@]}"
+              '';
+            };
+            lefthook-statix = pkgs.writeShellApplication {
+              name = "lefthook-statix";
+              runtimeInputs = [
+                pkgs.coreutils
+              ]
+              ++ optionalPkg "statix";
+              text = ''
+                set -euo pipefail
+
+                if [ "$#" -eq 0 ]; then
+                  statix check --format errfmt
+                  exit 0
+                fi
+
+                status=0
+                for file in "$@"; do
+                  if [ -f "$file" ]; then
+                    statix check --format errfmt "$file" || status=$?
+                  fi
+                done
+                exit "$status"
+              '';
+            };
 
             default = pkgs.symlinkJoin {
               name = "r2-cloud-tools";
@@ -84,6 +172,8 @@
                 self.packages.${system}.r2-bucket
                 self.packages.${system}.r2-cli
                 self.packages.${system}.r2-share
+                self.packages.${system}.lefthook-treefmt
+                self.packages.${system}.lefthook-statix
               ];
             };
           };
@@ -96,7 +186,18 @@
               pkgs.jq
             ]
             ++ optionalPkg "git-annex"
+            ++ hookToolPackages
             ++ lib.optional (wranglerPkg != null) wranglerPkg;
+
+            shellHook = hookShellSetup;
+          };
+          devShells.hooks = pkgs.mkShell {
+            packages = [
+              pkgs.coreutils
+              pkgs.git
+            ]
+            ++ hookToolPackages;
+            shellHook = hookShellSetup;
           };
 
           formatter = formatterPkg;

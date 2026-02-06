@@ -3,6 +3,7 @@
 ## Overview
 
 A self-contained Nix flake providing Cloudflare R2 cloud storage with:
+
 - Easy bucket creation via CLI
 - Local FUSE mount with 2-way background sync
 - Version history tracking (git-annex + restic)
@@ -86,6 +87,7 @@ graph TB
 **git-annex is NOT for separate "document buckets"** - it manages large files **within the same git repo** as your code/documents.
 
 **How it works:**
+
 1. In any git repo, `git annex add <large-file>` replaces the file with a symlink
 2. The actual content is stored in `.git/annex/objects/` (content-addressed)
 3. Git tracks the symlink (small), not the large file content
@@ -93,6 +95,7 @@ graph TB
 5. `git annex get <file>` downloads content; `git annex drop <file>` frees local space
 
 **Example workflow:**
+
 ```bash
 # In any project with large files
 cd ~/projects/video-editing
@@ -121,13 +124,14 @@ git annex get raw-footage/clip1.mp4  # Fetch when needed
 
 **Three sync strategies in this flake:**
 
-| Strategy | Use Case | How It Works |
-|----------|----------|--------------|
-| **git-annex** | Git repos with large files | Symlinks + special remotes, per-file versioning |
-| **rclone bisync** | Non-git folders (Downloads, Photos) | 2-way sync, --backup-dir for trash |
-| **rclone mount** | Direct R2 access | FUSE mount with VFS cache |
+| Strategy          | Use Case                            | How It Works                                    |
+| ----------------- | ----------------------------------- | ----------------------------------------------- |
+| **git-annex**     | Git repos with large files          | Symlinks + special remotes, per-file versioning |
+| **rclone bisync** | Non-git folders (Downloads, Photos) | 2-way sync, --backup-dir for trash              |
+| **rclone mount**  | Direct R2 access                    | FUSE mount with VFS cache                       |
 
 Sources:
+
 - [git-annex walkthrough](https://git-annex.branchable.com/walkthrough/)
 - [rclone special remote](https://git-annex.branchable.com/special_remotes/rclone/)
 - [rclone gitannex command](https://rclone.org/commands/rclone_gitannex/)
@@ -602,6 +606,7 @@ in
 ```
 
 **Usage:**
+
 ```bash
 cd ~/projects/my-repo
 git-annex-r2-init              # Uses defaults: remote=r2, bucket=my-repo
@@ -975,6 +980,7 @@ Configure in Cloudflare dashboard:
 Use the `r2-share` CLI for quick sharing. These links are always on the S3 endpoint
 (`https://<account_id>.r2.cloudflarestorage.com`) and **do not** pass through the custom
 domain or Cloudflare Access.
+
 ```bash
 # Share file for 24 hours (default)
 r2-share documents report.pdf
@@ -992,24 +998,24 @@ object from R2.
 
 ## Files to Create
 
-| File | Purpose |
-|------|---------|
-| `flake.nix` | Main flake with all outputs |
-| `modules/nixos/default.nix` | NixOS module aggregator |
-| `modules/nixos/r2-sync.nix` | Mount + bisync service |
-| `modules/nixos/r2-restic.nix` | Restic backup service |
-| `modules/nixos/git-annex.nix` | git-annex module (optional) |
-| `modules/home-manager/default.nix` | HM module aggregator |
-| `modules/home-manager/r2-cli.nix` | CLI wrappers |
-| `modules/home-manager/r2-credentials.nix` | Credentials management |
-| `packages/r2-bucket.nix` | Standalone bucket CLI |
-| `packages/r2-share.nix` | Presigned URL generator (S3 endpoint only) |
-| `lib/r2.nix` | Shared library functions |
-| `r2-explorer/flake.nix` | Worker subflake |
-| `r2-explorer/wrangler.toml` | Worker config |
-| `templates/minimal/flake.nix` | Minimal usage template |
-| `templates/full/flake.nix` | Full usage template |
-| `README.md` | Documentation |
+| File                                      | Purpose                                    |
+| ----------------------------------------- | ------------------------------------------ |
+| `flake.nix`                               | Main flake with all outputs                |
+| `modules/nixos/default.nix`               | NixOS module aggregator                    |
+| `modules/nixos/r2-sync.nix`               | Mount + bisync service                     |
+| `modules/nixos/r2-restic.nix`             | Restic backup service                      |
+| `modules/nixos/git-annex.nix`             | git-annex module (optional)                |
+| `modules/home-manager/default.nix`        | HM module aggregator                       |
+| `modules/home-manager/r2-cli.nix`         | CLI wrappers                               |
+| `modules/home-manager/r2-credentials.nix` | Credentials management                     |
+| `packages/r2-bucket.nix`                  | Standalone bucket CLI                      |
+| `packages/r2-share.nix`                   | Presigned URL generator (S3 endpoint only) |
+| `lib/r2.nix`                              | Shared library functions                   |
+| `r2-explorer/flake.nix`                   | Worker subflake                            |
+| `r2-explorer/wrangler.toml`               | Worker config                              |
+| `templates/minimal/flake.nix`             | Minimal usage template                     |
+| `templates/full/flake.nix`                | Full usage template                        |
+| `README.md`                               | Documentation                              |
 
 ## Verification
 

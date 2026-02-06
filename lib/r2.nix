@@ -1,5 +1,4 @@
-{ lib }:
-{
+_: {
   mkR2Endpoint = accountId: "https://${accountId}.r2.cloudflarestorage.com";
 
   validateBucketName =

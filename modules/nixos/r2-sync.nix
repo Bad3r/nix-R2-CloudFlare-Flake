@@ -65,11 +65,7 @@ let
   mkBisyncService =
     name: mount:
     let
-      localPath =
-        if mount.localPath != null then
-          toString mount.localPath
-        else
-          toString mount.mountPoint;
+      localPath = if mount.localPath != null then toString mount.localPath else toString mount.mountPoint;
       localPathArg = lib.escapeShellArg localPath;
       localTrashArg = lib.escapeShellArg "${localPath}/.trash";
       remoteArg = lib.escapeShellArg ":s3:${mount.bucket}";
@@ -225,7 +221,8 @@ in
         assertion = hasMounts;
         message = "services.r2-sync.mounts must define at least one mount when services.r2-sync.enable = true";
       }
-    ] ++ lib.mapAttrsToList (name: mount: {
+    ]
+    ++ lib.mapAttrsToList (name: mount: {
       assertion = mount.bucket != "";
       message = "services.r2-sync.mounts.${name}.bucket must be a non-empty string";
     }) cfg.mounts;
@@ -235,7 +232,8 @@ in
       pkgs.fuse
     ];
 
-    systemd.services = (lib.mapAttrs' mkMountService cfg.mounts) // (lib.mapAttrs' mkBisyncService cfg.mounts);
+    systemd.services =
+      (lib.mapAttrs' mkMountService cfg.mounts) // (lib.mapAttrs' mkBisyncService cfg.mounts);
 
     systemd.timers = lib.mapAttrs' mkBisyncTimer cfg.mounts;
   };

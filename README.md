@@ -5,6 +5,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 ## Status
 
 This repository is currently in **Phase 2** from `docs/plan.md`:
+
 - Phase 1 scaffold completed.
 - Phase 2 NixOS modules implemented:
   - `services.r2-sync` (rclone mount + bisync services and timers)
@@ -30,7 +31,10 @@ This repository is currently in **Phase 2** from `docs/plan.md`:
 `scripts/ci/validate.sh` pins `substituters` to `https://cache.nixos.org/` and clears
 `extra-substituters` so validation does not inherit flaky host-level cache mirrors.
 It also evaluates concrete NixOS module configurations for `r2-sync` and `r2-restic`
-to catch option/schema regressions early.
+to catch option/schema regressions early, and runs both formatting (`nix fmt`) and
+all pre-commit hooks (`lefthook run pre-commit --all-files`) in an isolated temp checkout.
+If cache access is unavailable, validation disables substituters for that run to avoid
+repeated timeout loops. Override cache selection with `NIX_VALIDATE_SUBSTITUTERS`.
 
 Set `CI_STRICT=1` to fail fast on cache/network issues instead of falling back to
 local builds:
@@ -38,3 +42,17 @@ local builds:
 ```bash
 CI_STRICT=1 ./scripts/ci/validate.sh
 ```
+
+## Dev Quality Gates
+
+```bash
+nix develop
+lefthook install
+lefthook run pre-commit --all-files
+```
+
+- `nix fmt` now uses `treefmt` (configured by `.treefmt.toml`).
+- Pre-commit hooks run `treefmt`, `deadnix`, and `statix`.
+- Hook environment is loaded via `scripts/lefthook-rc.sh` for reproducible tool paths.
+- Hooks use the lightweight `nix develop .#hooks` environment to avoid pulling
+  heavy non-hook tooling.

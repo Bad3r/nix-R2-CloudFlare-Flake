@@ -1,0 +1,44 @@
+---
+# Git hooks manager - https://lefthook.dev/
+min_version: 1.10.0
+glob_matcher: doublestar
+rc: ./scripts/lefthook-rc.sh
+
+output:
+  - summary
+  - failure
+  - success
+
+pre-commit:
+  parallel: true
+  skip: [merge, rebase]
+  fail_on_changes: ci
+  files: >-
+    sh -c '{ git diff --name-only HEAD 2>/dev/null;
+    git ls-files --others --exclude-standard; } | sort -u'
+
+  jobs:
+    - name: formatting
+      priority: 1
+      group:
+        jobs:
+          - name: treefmt
+            tags: [formatting]
+            run: lefthook-treefmt
+            fail_text: "Formatting failed. Fix files and retry."
+
+    - name: nix-linting
+      priority: 2
+      glob: "**/*.nix"
+      group:
+        parallel: true
+        jobs:
+          - name: deadnix
+            tags: [nix]
+            run: deadnix --fail -- {files}
+            fail_text: "Unused Nix bindings found. Remove dead code shown above."
+
+          - name: statix
+            tags: [nix]
+            run: lefthook-statix {files}
+            fail_text: "Nix anti-patterns found. Run: statix fix <file>"

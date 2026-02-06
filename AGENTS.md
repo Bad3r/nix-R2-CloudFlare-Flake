@@ -16,6 +16,7 @@ This repo is documentation-only today. The source of truth is `docs/plan.md`, wh
 ## Project Structure & Module Organization
 
 Current files:
+
 - `docs/plan.md`: architecture, CLI design, and implementation phases.
 - `AGENTS.md`, `CLAUDE.md`: contributor guidance.
 - `.mcp.json`: MCP configuration for Cloudflare agents.
@@ -25,6 +26,7 @@ Planned structure (per `docs/plan.md`): `modules/nixos/`, `modules/home-manager/
 ## Build, Test, and Development Commands
 
 No build/test commands exist yet. When implementation begins, expected commands include:
+
 - `nix flake check` to validate flake structure.
 - `nix build .#r2-bucket` and `nix build .#r2-share` to build CLIs.
 - `nix run .#r2-bucket -- help` to smoke‑test CLI usage.
@@ -43,6 +45,7 @@ Available via `nix run nixpkgs#<package>` or system install:
 - **act**: Run GitHub Actions workflows locally. Test CI before pushing with `act -l` (list) or `act` (run).
 
 Nix shortcuts:
+
 - `nix run nixpkgs#wrangler -- r2 bucket list` — run any package without installing.
 - `nix develop` — enter project dev shell with all tools available.
 - `nix develop nixpkgs#nodejs` — ad-hoc shell with specific packages.
@@ -50,16 +53,19 @@ Nix shortcuts:
 ## Architecture & Sharing Modes
 
 High-level components:
+
 - Local system: rclone mount + bisync, git‑annex, restic.
 - Cloudflare R2: `files/`, `.trash/`, `.git-annex/`.
 - Cloudflare edge: R2‑Explorer Worker + Access.
 
 Sync strategies:
+
 - **git-annex**: For git repos with large files. Replaces files with symlinks, stores content in `.git/annex/objects/`, syncs to R2 via rclone special remote. Provides per-file versioning with `git annex get/drop` for selective fetching.
 - **rclone bisync**: For non-git folders (Downloads, Photos). 2-way sync with `--backup-dir` sending deleted files to `.trash/`. Runs on a systemd timer.
 - **rclone mount**: Direct FUSE access to R2. Uses VFS cache for performance. Good for occasional access without local copy.
 
 Sharing modes:
+
 - Presigned URLs via `r2-share`: S3 endpoint only, no Access.
 - Access‑protected links: custom domain via Worker + HMAC.
 
@@ -67,15 +73,15 @@ Sharing modes:
 
 Clone repos available in `~/git/`. Update with `git -C ~/git/<repo> pull`.
 
-| Tool | Path | Docs Location |
-|------|------|---------------|
-| rclone | `~/git/rclone` | `docs/content/` (Hugo site) |
-| restic | `~/git/restic` | `doc/*.rst` (Sphinx) |
-| git-annex | `~/git/git-annex` | `doc/*.mdwn` (ikiwiki) |
-| libfuse | `~/git/libfuse` | `doc/`, `README.md` |
-| wrangler | `~/git/wrangler` | `packages/wrangler/README.md` (workers-sdk monorepo) |
-| sops-nix | `~/git/sops-nix` | `README.md` |
-| GitHub docs | `~/git/github-docs` | `content/actions/` (workflows) |
+| Tool        | Path                | Docs Location                                        |
+| ----------- | ------------------- | ---------------------------------------------------- |
+| rclone      | `~/git/rclone`      | `docs/content/` (Hugo site)                          |
+| restic      | `~/git/restic`      | `doc/*.rst` (Sphinx)                                 |
+| git-annex   | `~/git/git-annex`   | `doc/*.mdwn` (ikiwiki)                               |
+| libfuse     | `~/git/libfuse`     | `doc/`, `README.md`                                  |
+| wrangler    | `~/git/wrangler`    | `packages/wrangler/README.md` (workers-sdk monorepo) |
+| sops-nix    | `~/git/sops-nix`    | `README.md`                                          |
+| GitHub docs | `~/git/github-docs` | `content/actions/` (workflows)                       |
 
 ## Coding Style & Naming Conventions
 
