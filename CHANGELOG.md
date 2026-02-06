@@ -28,6 +28,14 @@ and this project follows Conventional Commits.
   - `.treefmt.toml` formatter configuration
   - `scripts/lefthook-rc.sh` hook runtime PATH cache
   - Flake packages `lefthook-treefmt` and `lefthook-statix`
+- Phase 3 Home Manager module implementations:
+  - `programs.r2-cloud` wrapped CLIs: `r2`, `r2-bucket`, `r2-share`
+  - `programs.r2-cloud.credentials` secure env-file assembly from file-based secrets
+  - managed `rclone.conf` generation (`modules/home-manager/rclone-config.nix`)
+- Home Manager module validation coverage in `scripts/ci/validate.sh`:
+  - positive evaluation checks for Stage 3 wrapper availability
+  - positive evaluation checks for generated R2 `rclone.conf`
+  - expected-failure checks for Stage 3 assertion paths
 
 ### Changed
 
@@ -49,6 +57,16 @@ and this project follows Conventional Commits.
 - Dev shell now includes `lefthook`, `treefmt`, `deadnix`, `statix`, `nixfmt`, `shfmt`,
   and `prettier`; shell startup installs `lefthook` hooks when needed.
 - `nix fmt` now points to `treefmt`.
+- Documentation status now marks Phase 3 complete:
+  - `README.md` updated to reflect Stage 3 implementation state
+  - `docs/plan.md` implementation order now checks Phase 3
+- `docs/plan.md` now re-scopes Phase 4 from initial CLI implementation to
+  package extraction/refactor of Stage 3 wrapper logic.
+- Package placeholder messaging now reflects the new Phase 4 scope:
+  - `packages/r2-bucket.nix` help/error text references extraction/refactor
+  - `packages/r2-share.nix` help/error text references extraction/refactor
+- `docs/credentials.md` now documents implemented credential file assembly
+  semantics and output permissions.
 
 ### Fixed
 

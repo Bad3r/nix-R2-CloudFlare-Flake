@@ -2,8 +2,10 @@
 
 Do not commit secrets.
 
-Planned location for runtime credentials:
+Default runtime credentials file:
 
 - `~/.config/cloudflare/r2/env`
 
-Credential management module implementation is scheduled for Phase 3.
+When using `programs.r2-cloud.credentials.manage = true`, the Home Manager module
+assembles this file from `accessKeyIdFile` and `secretAccessKeyFile`, then applies
+`0400` permissions.

@@ -620,180 +620,108 @@ git annex sync --content       # Pushes to R2
 ### 4. Home Manager Module: r2-cli.nix
 
 ```nix
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.programs.r2-cloud;
-
-  r2-bucket = pkgs.writeShellScriptBin "r2-bucket" ''
-    set -euo pipefail
-
-    # Load credentials
-    if [[ -f "${cfg.credentialsFile}" ]]; then
-      set -a; source "${cfg.credentialsFile}"; set +a
-    fi
-
-    ACCOUNT_ID="''${R2_ACCOUNT_ID:-}"
-    [[ -z "$ACCOUNT_ID" ]] && { echo "Error: R2_ACCOUNT_ID not set"; exit 1; }
-
-    cmd="''${1:-help}"
-    shift || true
-
-    case "$cmd" in
-      create)
-        name="''${1:?Bucket name required}"
-        ${pkgs.nodePackages.wrangler}/bin/wrangler r2 bucket create "$name"
-        echo "Created bucket: $name"
-        ;;
-      list)
-        ${pkgs.nodePackages.wrangler}/bin/wrangler r2 bucket list
-        ;;
-      delete)
-        name="''${1:?Bucket name required}"
-        read -p "Delete bucket '$name'? [y/N] " confirm
-        [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Cancelled"; exit 0; }
-        ${pkgs.nodePackages.wrangler}/bin/wrangler r2 bucket delete "$name"
-        ;;
-      lifecycle)
-        name="''${1:?Bucket name required}"
-        days="''${2:-30}"
-        # Set lifecycle via Wrangler (supported)
-        rules_file="$(mktemp)"
-        cat > "$rules_file" <<JSON
-{"rules":[{"id":"trash-cleanup","prefix":".trash/","expiration":{"days":$days}}]}
-JSON
-        ${pkgs.nodePackages.wrangler}/bin/wrangler r2 bucket lifecycle set "$name" --file "$rules_file"
-        rm -f "$rules_file"
-        echo "Set .trash/ retention to $days days"
-        ;;
-      help|*)
-        echo "Usage: r2-bucket <command> [args]"
-        echo ""
-        echo "Commands:"
-        echo "  create <name>         Create a new bucket"
-        echo "  list                  List all buckets"
-        echo "  delete <name>         Delete a bucket"
-        echo "  lifecycle <name> [d]  Set trash retention (default: 30 days)"
-        ;;
-    esac
-  '';
-
-  r2-share = pkgs.writeShellScriptBin "r2-share" ''
-    set -euo pipefail
-
-    if [[ -f "${cfg.credentialsFile}" ]]; then
-      set -a; source "${cfg.credentialsFile}"; set +a
-    fi
-
-    ACCOUNT_ID="''${R2_ACCOUNT_ID:-}"
-    [[ -z "$ACCOUNT_ID" ]] && { echo "Error: R2_ACCOUNT_ID not set"; exit 1; }
-
-    bucket="''${1:?Usage: r2-share <bucket> <key> [expiry]}"
-    key="''${2:?Usage: r2-share <bucket> <key> [expiry]}"
-    expiry="''${3:-24h}"
-
-    ${pkgs.rclone}/bin/rclone link \
-      --config=/dev/null \
-      --s3-provider=Cloudflare \
-      --s3-endpoint="https://$ACCOUNT_ID.r2.cloudflarestorage.com" \
-      --s3-access-key-id="$AWS_ACCESS_KEY_ID" \
-      --s3-secret-access-key="$AWS_SECRET_ACCESS_KEY" \
-      --expire="$expiry" \
-      ":s3:$bucket/$key"
-  '';
 in
 {
   options.programs.r2-cloud = {
-    enable = lib.mkEnableOption "R2 cloud CLI tools";
+    enable = lib.mkEnableOption "R2 cloud CLI helpers";
 
-    credentialsFile = lib.mkOption {
-      type = lib.types.path;
-      default = "${config.xdg.configHome}/cloudflare/r2/env";
-      description = "Path to credentials env file";
-    };
-
-    accountId = lib.mkOption {
-      type = lib.types.str;
-      description = "Cloudflare account ID";
-    };
-
-    enableRcloneRemote = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Configure 'r2' remote in rclone";
-    };
+    accountId = lib.mkOption { type = lib.types.str; default = ""; };
+    credentialsFile = lib.mkOption { type = lib.types.path; default = "${config.xdg.configHome}/cloudflare/r2/env"; };
+    enableRcloneRemote = lib.mkOption { type = lib.types.bool; default = true; };
+    rcloneRemoteName = lib.mkOption { type = lib.types.str; default = "r2"; };
+    rcloneConfigPath = lib.mkOption { type = lib.types.path; default = "${config.xdg.configHome}/rclone/rclone.conf"; };
+    installTools = lib.mkOption { type = lib.types.bool; default = true; };
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [
-      r2-bucket
-      r2-share
-      pkgs.rclone
-      pkgs.git-annex
-      pkgs.restic
+    assertions = [
+      { assertion = cfg.accountId != ""; message = "programs.r2-cloud.accountId must be set when programs.r2-cloud.enable = true"; }
+      { assertion = cfg.rcloneRemoteName != "" || !cfg.enableRcloneRemote; message = "programs.r2-cloud.rcloneRemoteName must be non-empty when remote generation is enabled"; }
     ];
 
-    # Configure rclone remote
-    programs.rclone = lib.mkIf cfg.enableRcloneRemote {
-      enable = true;
-      remotes.r2 = {
-        type = "s3";
-        provider = "Cloudflare";
-        endpoint = "https://${cfg.accountId}.r2.cloudflarestorage.com";
-        env_auth = true;
-      };
-    };
-
-    # Wrapper script that sources credentials
-    home.shellAliases = {
-      r2 = ''(set -a; source "${cfg.credentialsFile}"; set +a; rclone "$@" --config ~/.config/rclone/rclone.conf)'';
-    };
+    # Installs wrapped CLIs:
+    # - r2        (sources credentials file, then executes rclone with managed config)
+    # - r2-bucket (wrangler create/list/delete/lifecycle)
+    # - r2-share  (presigned URLs via rclone link)
+    #
+    # Wrappers are fail-fast and validate required credentials/env before execution.
+    home.packages = [ r2Wrapper r2BucketWrapper r2ShareWrapper ];
   };
 }
 ```
 
+This module intentionally keeps wrapper logic self-contained in this repo (no external wrapper framework dependency), while following the same principles: declarative options, generated runtime artifacts, and strict validation.
+
 ### 5. Home Manager Module: r2-credentials.nix
 
 ```nix
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.programs.r2-cloud.credentials;
+  effectiveAccountId =
+    if cfg.accountId != "" then cfg.accountId else config.programs.r2-cloud.accountId;
 in
 {
   options.programs.r2-cloud.credentials = {
-    manage = lib.mkEnableOption "Manage R2 credentials file";
-
-    accountId = lib.mkOption {
-      type = lib.types.str;
-      description = "Cloudflare account ID";
-    };
-
-    # These would typically come from sops-nix or agenix
-    accessKeyIdFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to file containing access key ID";
-    };
-
-    secretAccessKeyFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to file containing secret access key";
-    };
+    manage = lib.mkEnableOption "Manage R2 credentials env file";
+    accountId = lib.mkOption { type = lib.types.str; default = ""; };
+    accessKeyIdFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
+    secretAccessKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
+    outputFile = lib.mkOption { type = lib.types.path; default = "${config.xdg.configHome}/cloudflare/r2/env"; };
   };
 
   config = lib.mkIf cfg.manage {
-    # Create credentials directory
-    xdg.configFile."cloudflare/r2/.keep".text = "";
+    assertions = [
+      { assertion = effectiveAccountId != ""; message = "R2 account ID must be set for credential management"; }
+      { assertion = cfg.accessKeyIdFile != null; message = "accessKeyIdFile is required when manage = true"; }
+      { assertion = cfg.secretAccessKeyFile != null; message = "secretAccessKeyFile is required when manage = true"; }
+    ];
 
-    # Activation script to assemble credentials
-    home.activation.r2-credentials = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      mkdir -p ${config.xdg.configHome}/cloudflare/r2
-      cat > ${config.xdg.configHome}/cloudflare/r2/env << EOF
-      R2_ACCOUNT_ID=${cfg.accountId}
-      AWS_ACCESS_KEY_ID=$(cat ${cfg.accessKeyIdFile})
-      AWS_SECRET_ACCESS_KEY=$(cat ${cfg.secretAccessKeyFile})
-      EOF
-      chmod 0400 ${config.xdg.configHome}/cloudflare/r2/env
+    # Builds credentials file from secret file inputs (sops-nix/agenix/etc)
+    home.activation.r2-cloud-credentials = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      set -euo pipefail
+      # mkdir, write file, chmod 0400
+      # R2_ACCOUNT_ID=...
+      # AWS_ACCESS_KEY_ID=...
+      # AWS_SECRET_ACCESS_KEY=...
+    '';
+  };
+}
+```
+
+### 6. Home Manager Module: rclone-config.nix
+
+```nix
+{ config, lib, ... }:
+let
+  cfg = config.programs.r2-cloud;
+in
+{
+  config = lib.mkIf (cfg.enable && cfg.enableRcloneRemote) {
+    assertions = [
+      # rcloneConfigPath must be under config.xdg.configHome
+      # accountId must be non-empty
+    ];
+
+    xdg.configFile."rclone/rclone.conf".text = ''
+      [${cfg.rcloneRemoteName}]
+      type = s3
+      provider = Cloudflare
+      env_auth = true
+      endpoint = https://${cfg.accountId}.r2.cloudflarestorage.com
     '';
   };
 }
@@ -1084,8 +1012,8 @@ curl -I https://files.yourdomain.com/share/<token>
 
 1. [x] **Phase 1**: Repository scaffold + flake.nix
 2. [x] **Phase 2**: NixOS modules (r2-sync.nix, r2-restic.nix)
-3. [ ] **Phase 3**: Home Manager modules (r2-cli.nix, r2-credentials.nix)
-4. [ ] **Phase 4**: CLI packages (r2-bucket, r2-share)
+3. [x] **Phase 3**: Home Manager wrapped modules (`r2`, `r2-bucket`, `r2-share`, credentials assembly, managed `rclone.conf`)
+4. [ ] **Phase 4**: CLI package extraction/refactor (move Stage 3 wrapper logic into reusable package derivations)
 5. [ ] **Phase 5**: R2-Explorer subflake
 6. [ ] **Phase 6**: Templates and documentation
 7. [ ] **Phase 7**: CI/CD setup

@@ -1,6 +1,23 @@
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.programs.r2-cloud.credentials;
+  topCfg = lib.attrByPath [
+    "programs"
+    "r2-cloud"
+  ] { } config;
+  topEnable = topCfg ? enable && topCfg.enable;
+  topCredentialsFile = if topCfg ? credentialsFile then toString topCfg.credentialsFile else null;
+  effectiveAccountId = if cfg.accountId != "" then cfg.accountId else (topCfg.accountId or "");
+  outputFile = toString cfg.outputFile;
+  outputDir = builtins.dirOf outputFile;
+  accessKeyIdFile = if cfg.accessKeyIdFile == null then "" else toString cfg.accessKeyIdFile;
+  secretAccessKeyFile =
+    if cfg.secretAccessKeyFile == null then "" else toString cfg.secretAccessKeyFile;
 in
 {
   options.programs.r2-cloud.credentials = {
@@ -23,9 +40,72 @@ in
       default = null;
       description = "Path to file containing AWS secret access key";
     };
+
+    outputFile = lib.mkOption {
+      type = lib.types.path;
+      default = "${config.xdg.configHome}/cloudflare/r2/env";
+      description = "Output path for generated credentials env file";
+    };
   };
 
   config = lib.mkIf cfg.manage {
-    warnings = [ "programs.r2-cloud.credentials is a Phase 1 stub; implementation lands in Phase 3." ];
+    assertions = [
+      {
+        assertion = effectiveAccountId != "";
+        message = "programs.r2-cloud.credentials.accountId (or programs.r2-cloud.accountId) must be set when programs.r2-cloud.credentials.manage = true";
+      }
+      {
+        assertion = cfg.accessKeyIdFile != null;
+        message = "programs.r2-cloud.credentials.accessKeyIdFile must be set when programs.r2-cloud.credentials.manage = true";
+      }
+      {
+        assertion = cfg.secretAccessKeyFile != null;
+        message = "programs.r2-cloud.credentials.secretAccessKeyFile must be set when programs.r2-cloud.credentials.manage = true";
+      }
+      {
+        assertion = !topEnable || topCredentialsFile == outputFile;
+        message = "programs.r2-cloud.credentials.outputFile must match programs.r2-cloud.credentialsFile when both credential management and programs.r2-cloud.enable are enabled";
+      }
+    ];
+
+    home.activation.r2-cloud-credentials = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      set -euo pipefail
+
+      output_file=${lib.escapeShellArg outputFile}
+      output_dir=${lib.escapeShellArg outputDir}
+      account_id=${lib.escapeShellArg effectiveAccountId}
+      access_key_id_file=${lib.escapeShellArg accessKeyIdFile}
+      secret_access_key_file=${lib.escapeShellArg secretAccessKeyFile}
+
+      if [[ ! -r "$access_key_id_file" ]]; then
+        echo "Error: access key file is missing or unreadable: $access_key_id_file" >&2
+        exit 1
+      fi
+      if [[ ! -r "$secret_access_key_file" ]]; then
+        echo "Error: secret key file is missing or unreadable: $secret_access_key_file" >&2
+        exit 1
+      fi
+
+      access_key_id="$(${pkgs.coreutils}/bin/cat "$access_key_id_file")"
+      secret_access_key="$(${pkgs.coreutils}/bin/cat "$secret_access_key_file")"
+
+      if [[ -z "$access_key_id" ]]; then
+        echo "Error: access key file is empty: $access_key_id_file" >&2
+        exit 1
+      fi
+      if [[ -z "$secret_access_key" ]]; then
+        echo "Error: secret key file is empty: $secret_access_key_file" >&2
+        exit 1
+      fi
+
+      ${pkgs.coreutils}/bin/mkdir -p "$output_dir"
+      umask 077
+      {
+        printf 'R2_ACCOUNT_ID=%s\n' "$account_id"
+        printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key_id"
+        printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_access_key"
+      } > "$output_file"
+      ${pkgs.coreutils}/bin/chmod 0400 "$output_file"
+    '';
   };
 }

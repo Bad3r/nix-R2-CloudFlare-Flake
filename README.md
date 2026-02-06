@@ -4,13 +4,17 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 
 ## Status
 
-This repository is currently in **Phase 2** from `docs/plan.md`:
+This repository is currently in **Phase 3** from `docs/plan.md`:
 
 - Phase 1 scaffold completed.
 - Phase 2 NixOS modules implemented:
   - `services.r2-sync` (rclone mount + bisync services and timers)
   - `services.r2-restic` (restic backup service and timer)
-- Phases 3-7 remain in progress.
+- Phase 3 Home Manager modules implemented:
+  - `programs.r2-cloud` wrapped CLIs (`r2`, `r2-bucket`, `r2-share`)
+  - `programs.r2-cloud.credentials` env-file assembly from secret file inputs
+  - managed `rclone.conf` generation via `modules/home-manager/rclone-config.nix`
+- Phases 4-7 remain in progress.
 
 ## Layout
 
@@ -31,7 +35,8 @@ This repository is currently in **Phase 2** from `docs/plan.md`:
 `scripts/ci/validate.sh` pins `substituters` to `https://cache.nixos.org/` and clears
 `extra-substituters` so validation does not inherit flaky host-level cache mirrors.
 It also evaluates concrete NixOS module configurations for `r2-sync` and `r2-restic`
-to catch option/schema regressions early, and runs both formatting (`nix fmt`) and
+as well as Home Manager module assertions for Stage 3 (`programs.r2-cloud` and
+`programs.r2-cloud.credentials`) to catch option/schema regressions early, and runs both formatting (`nix fmt`) and
 all pre-commit hooks (`lefthook run pre-commit --all-files`) in an isolated temp checkout.
 If cache access is unavailable, validation disables substituters for that run to avoid
 repeated timeout loops. Override cache selection with `NIX_VALIDATE_SUBSTITUTERS`.

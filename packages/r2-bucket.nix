@@ -11,15 +11,22 @@ writeShellApplication {
             cat <<'USAGE'
     Usage: r2-bucket <command> [args]
 
-    Commands:
-      create <name>       Create bucket (Phase 4)
-      list                List buckets (Phase 4)
-      delete <name>       Delete bucket (Phase 4)
-      lifecycle <name>    Configure lifecycle (Phase 4)
+    Package placeholder for Phase 4:
+      CLI package extraction/refactor from Stage 3 Home Manager wrappers.
+
+    Target command surface (to be implemented in this package):
+      create <name>       Create a new bucket
+      list                List all buckets
+      delete <name>       Delete a bucket
+      lifecycle <name>    Configure .trash/ lifecycle retention
+
+    Current availability:
+      Functional r2-bucket is provided by the Stage 3 Home Manager wrapper
+      (`programs.r2-cloud.enable = true`).
     USAGE
             ;;
           *)
-            echo "r2-bucket: command '$cmd' is not implemented yet (Phase 4)." >&2
+            echo "r2-bucket package placeholder: command '$cmd' is pending Phase 4 package extraction/refactor." >&2
             exit 2
             ;;
         esac
