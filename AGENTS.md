@@ -81,6 +81,13 @@ Clone repos available in `~/git/`. Update with `git -C ~/git/<repo> pull`.
 
 Keep Markdown concise, with clear headings and fenced code blocks for commands. Use lower‑case, hyphenated names (for example `r2-explorer/`, `r2-share.nix`) consistent with the plan.
 
+## Error Handling & Failure Semantics
+
+- Fail fast: no silent or masked failures.
+- Validate required config early (prefer Nix `assertions`).
+- Errors must name the exact missing/invalid input.
+- Do not hide root cause (`null` interpolation, implicit coercions, swallowed exits like `|| true` or broad stderr redirection), except scoped non-fatal cleanup.
+
 ## Testing Guidelines
 
 No tests exist yet. If you add tests, document the framework, file naming, and exact commands to run full and focused suites.

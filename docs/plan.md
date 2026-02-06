@@ -1076,10 +1076,10 @@ curl -I https://files.yourdomain.com/share/<token>
 
 ## Implementation Order
 
-1. **Phase 1**: Repository scaffold + flake.nix
-2. **Phase 2**: NixOS modules (r2-sync.nix, r2-restic.nix)
-3. **Phase 3**: Home Manager modules (r2-cli.nix, r2-credentials.nix)
-4. **Phase 4**: CLI packages (r2-bucket, r2-share)
-5. **Phase 5**: R2-Explorer subflake
-6. **Phase 6**: Templates and documentation
-7. **Phase 7**: CI/CD setup
+1. [x] **Phase 1**: Repository scaffold + flake.nix
+2. [x] **Phase 2**: NixOS modules (r2-sync.nix, r2-restic.nix)
+3. [ ] **Phase 3**: Home Manager modules (r2-cli.nix, r2-credentials.nix)
+4. [ ] **Phase 4**: CLI packages (r2-bucket, r2-share)
+5. [ ] **Phase 5**: R2-Explorer subflake
+6. [ ] **Phase 6**: Templates and documentation
+7. [ ] **Phase 7**: CI/CD setup
