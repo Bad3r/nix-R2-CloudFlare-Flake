@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "r2-explorer/**"
-      - "r2-explorer/.github/workflows/deploy.yml"
+      - ".github/workflows/r2-explorer-deploy.yml"
       - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
     inputs:

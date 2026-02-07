@@ -1069,7 +1069,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 | Milestone                               | Scope / Tasks                                                                                                          | Deliverables                                                                  | Exit Criteria                                                                             | Status |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------ |
 | **7.1 CI matrix baseline**              | Build root CI jobs for format/lint/flake/module eval and Worker typecheck/tests.                                       | `.github/workflows/ci.yml` jobs for root + `r2-explorer` checks.              | PRs must pass full validation equivalent to `./scripts/ci/validate.sh`.                   | [x]    |
-| **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `r2-explorer/.github/workflows/deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [x]    |
+| **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `.github/workflows/r2-explorer-deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [x]    |
 | **7.3 Security and supply-chain gates** | Add dependency audit, secret scanning, and policy checks for changed files and lockfiles.                              | CI security jobs and documented remediation process.                          | Security gates fail on critical findings and block release merges.                        | [x]    |
 | **7.4 Release automation**              | Add semver/tag workflow, changelog generation, and release notes for root + worker updates.                            | Release workflow(s), versioning policy, and changelog process docs.           | Tagged release produces reproducible artifacts and clear upgrade notes.                   | [x]    |
 | **7.5 Deploy verification + rollback**  | Add post-deploy smoke checks and rollback playbook for Worker and CLI-impacting changes.                               | Post-deploy checks + rollback runbook + optional canary/manual approval step. | Failed smoke checks trigger rollback path with documented operator actions.               | [x]    |
@@ -1077,14 +1077,14 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 
 ### 7.2 Worker Deploy Pipeline Specification (2026-02-07)
 
-**Workflow file:** `r2-explorer/.github/workflows/deploy.yml`
+**Workflow file:** `.github/workflows/r2-explorer-deploy.yml`
 
 #### Triggers
 
 - `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`)
   with path filter:
   - `r2-explorer/**`
-  - `r2-explorer/.github/workflows/deploy.yml`
+  - `.github/workflows/r2-explorer-deploy.yml`
   - `scripts/ci/worker-share-smoke.sh`
 - `workflow_dispatch` with required `ref` input (default `main`)
 
@@ -1221,7 +1221,7 @@ CI automation does not remove break-glass/manual deployment workflows.
 
 ### 7.5 Closure Note (2026-02-07)
 
-- Added post-deploy smoke checks to `r2-explorer/.github/workflows/deploy.yml`:
+- Added post-deploy smoke checks to `.github/workflows/r2-explorer-deploy.yml`:
   - `smoke-preview` runs after `deploy-preview`
   - `smoke-production` runs after `deploy-production`
 - Smoke checks are implemented in `scripts/ci/worker-share-smoke.sh` and verify:
