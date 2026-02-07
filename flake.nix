@@ -81,7 +81,12 @@
               pkgs.writeShellApplication {
                 name = "treefmt-wrapper";
                 runtimeInputs =
-                  optionalPkg "treefmt" ++ optionalPkg "nixfmt" ++ optionalPkg "shfmt" ++ optionalNodePkg "prettier";
+                  optionalPkg "treefmt"
+                  ++ optionalPkg "nixfmt"
+                  ++ optionalPkg "shfmt"
+                  ++ optionalNodePkg "prettier"
+                  ++ optionalPkg "taplo"
+                  ++ optionalPkg "actionlint";
                 text = ''
                   set -euo pipefail
                   exec treefmt "$@"
@@ -97,6 +102,8 @@
             ++ optionalPkg "nixfmt"
             ++ optionalPkg "shfmt"
             ++ optionalNodePkg "prettier"
+            ++ optionalPkg "taplo"
+            ++ optionalPkg "actionlint"
             ++ optionalPkg "yamllint"
             ++ [
               self.packages.${system}.lefthook-treefmt

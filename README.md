@@ -79,6 +79,8 @@ lefthook run pre-commit --all-files
 
 - `nix fmt` now uses `treefmt` (configured by `.treefmt.toml`).
 - Pre-commit hooks run `treefmt`, `deadnix`, and `statix`.
+- `treefmt` includes `actionlint` for GitHub workflow YAML and `taplo format`
+  for TOML files (including `wrangler.toml`).
 - Hook environment is loaded via `scripts/lefthook-rc.sh` for reproducible tool paths.
 - Hooks use the lightweight `nix develop .#hooks` environment to avoid pulling
   heavy non-hook tooling.

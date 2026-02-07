@@ -65,6 +65,8 @@ and this project follows Conventional Commits.
     (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`)
   - production deploy guard requiring `workflow_dispatch` with `ref=main`
 - Root `.gitignore` now ignores `node_modules/` directories.
+- `treefmt` now runs `actionlint` against workflow files and `taplo format`
+  against TOML files.
 
 ### Changed
 
@@ -142,6 +144,8 @@ and this project follows Conventional Commits.
   bindings/vars for CI preview deployments.
 - `docs/plan.md` now marks milestone `7.2` complete and includes a
   decision-complete Worker deploy pipeline specification.
+- `flake.nix` formatter/hook toolchains now include `actionlint` and `taplo`
+  so `nix fmt` and hook/CI runs can execute the expanded `treefmt` config.
 
 ### Fixed
 
@@ -151,3 +155,6 @@ and this project follows Conventional Commits.
   when `programs.r2-cloud` options are absent.
 - Deadnix findings in templates/library were fixed by removing unused lambda
   patterns (`self` in template flakes and unused arg in `lib/r2.nix`).
+- `scripts/lefthook-rc.sh` now refreshes cached hook PATH when either
+  `flake.nix` or `flake.lock` changes, avoiding stale-tool failures after
+  formatter/linter toolchain updates.

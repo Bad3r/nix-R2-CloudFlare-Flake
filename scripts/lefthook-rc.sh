@@ -10,8 +10,16 @@ HASH_FILE="$CACHE_DIR/flake.lock.hash"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
 current_hash=""
+hash_inputs=""
+if [ -f "flake.nix" ]; then
+  hash_inputs="$hash_inputs flake.nix"
+fi
 if [ -f "flake.lock" ]; then
-  current_hash=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1)
+  hash_inputs="$hash_inputs flake.lock"
+fi
+if [ -n "$hash_inputs" ]; then
+  # Hash both flake manifest and lock to refresh cached PATH when tool inputs change.
+  current_hash=$(sha256sum $hash_inputs 2>/dev/null | sha256sum | cut -d' ' -f1)
 fi
 
 needs_update=1

@@ -1,11 +1,4 @@
-excludes = [
-  ".git/*",
-  ".github/*",
-  "result",
-  "*.lock",
-  "*.patch",
-  "lefthook.yml",
-]
+excludes = [".git/*", "result", "*.lock", "*.patch", "lefthook.yml"]
 
 [formatter.nixfmt]
 command = "nixfmt"
@@ -20,3 +13,17 @@ options = ["--write"]
 command = "shfmt"
 includes = ["*.sh", "*.bash"]
 options = ["-w", "-i", "2", "-s"]
+
+[formatter.taplo]
+command = "taplo"
+includes = ["*.toml"]
+options = ["format"]
+
+[formatter.actionlint]
+command = "actionlint"
+includes = [
+  ".github/workflows/*.yml",
+  ".github/workflows/*.yaml",
+  "r2-explorer/.github/workflows/*.yml",
+  "r2-explorer/.github/workflows/*.yaml",
+]
