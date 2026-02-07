@@ -17,7 +17,8 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - Completed: template hardening, option reference docs, operator runbooks,
   end-user workflow verification, troubleshooting matrix, and docs quality gate.
 - Templates/documentation milestones are complete; CI/CD milestone track is in progress
-  with `7.1`, `7.2`, `7.3`, and `7.6` complete in `docs/plan.md`.
+  with `7.1`, `7.2`, `7.3`, `7.4`, and `7.6` complete in `docs/plan.md`
+  (`7.5` remains open).
 
 ## Layout
 
@@ -68,6 +69,14 @@ local builds:
 ```bash
 CI_STRICT=1 ./scripts/ci/validate.sh
 ```
+
+## Release Automation
+
+- Manual release dispatch workflow: `.github/workflows/release.yml`
+- Release helper scripts:
+  - `scripts/release/prepare-changelog.sh`
+  - `scripts/release/generate-release-notes.sh`
+- Versioning and release runbook details: `docs/versioning.md`
 
 ## Dev Quality Gates
 

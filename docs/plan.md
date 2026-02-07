@@ -1071,7 +1071,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 | **7.1 CI matrix baseline**              | Build root CI jobs for format/lint/flake/module eval and Worker typecheck/tests.                                       | `.github/workflows/ci.yml` jobs for root + `r2-explorer` checks.              | PRs must pass full validation equivalent to `./scripts/ci/validate.sh`.                   | [x]    |
 | **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `r2-explorer/.github/workflows/deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [x]    |
 | **7.3 Security and supply-chain gates** | Add dependency audit, secret scanning, and policy checks for changed files and lockfiles.                              | CI security jobs and documented remediation process.                          | Security gates fail on critical findings and block release merges.                        | [x]    |
-| **7.4 Release automation**              | Add semver/tag workflow, changelog generation, and release notes for root + worker updates.                            | Release workflow(s), versioning policy, and changelog process docs.           | Tagged release produces reproducible artifacts and clear upgrade notes.                   | [ ]    |
+| **7.4 Release automation**              | Add semver/tag workflow, changelog generation, and release notes for root + worker updates.                            | Release workflow(s), versioning policy, and changelog process docs.           | Tagged release produces reproducible artifacts and clear upgrade notes.                   | [x]    |
 | **7.5 Deploy verification + rollback**  | Add post-deploy smoke checks and rollback playbook for Worker and CLI-impacting changes.                               | Post-deploy checks + rollback runbook + optional canary/manual approval step. | Failed smoke checks trigger rollback path with documented operator actions.               | [ ]    |
 | **7.6 Branch protection enforcement**   | Wire required checks, review policy, and merge guards to prevent bypassing release quality bars.                       | Repository protection configuration documented and enabled.                   | Main branch requires green CI + review before merge/deploy.                               | [x]    |
 
@@ -1184,3 +1184,30 @@ CI automation does not remove break-glass/manual deployment workflows.
   - code owner reviews
   - conversation resolution
   - up-to-date branch before merge
+
+### 7.4 Closure Note (2026-02-07)
+
+- Added manual release workflow: `.github/workflows/release.yml`.
+- Workflow trigger and policy:
+  - `workflow_dispatch` with inputs `version`, `target_ref`, and `prerelease`
+  - strict semver validation (`X.Y.Z` only; no leading `v`)
+  - releases restricted to refs resolving to `main`
+  - hard-fail if tag `vX.Y.Z` already exists
+- Release artifact gates:
+  - root build: `nix build .#r2` plus Nix output/closure metadata artifacts
+  - worker build: `pnpm install --frozen-lockfile`, `pnpm run check`,
+    `pnpm test`, then packaged worker release artifacts
+- Changelog and notes automation:
+  - `scripts/release/prepare-changelog.sh` promotes `## [Unreleased]` to
+    `## [vX.Y.Z] - YYYY-MM-DD` and resets a fresh `Unreleased` template
+  - `scripts/release/generate-release-notes.sh` extracts release body markdown
+    for GitHub Release publication
+- Publish behavior:
+  - creates commit `chore(release): vX.Y.Z`
+  - creates and pushes annotated tag `vX.Y.Z`
+  - publishes GitHub Release with generated notes and attached root/worker
+    artifacts
+- Documentation and runbook coverage:
+  - `docs/versioning.md` documents release inputs, token requirements, and
+    failure semantics
+  - `README.md` now links release automation entrypoints

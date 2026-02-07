@@ -8,6 +8,51 @@ Option reference: `docs/reference/index.md`, `docs/reference/services-r2-restic.
 If snapshot or auth checks fail, use `docs/troubleshooting.md` for first-line
 triage before operator escalation.
 
+## Automated release workflow
+
+Repository releases are automated by `.github/workflows/release.yml` and run
+through `workflow_dispatch`.
+
+Inputs:
+
+- `version`: strict semver `X.Y.Z` (without leading `v`)
+- `target_ref`: must resolve to `main`
+- `prerelease`: `true` or `false`
+
+Required credentials:
+
+- default: GitHub Actions `GITHUB_TOKEN` (`contents: write`)
+- optional: `RELEASE_PUSH_TOKEN` secret if branch protections require a token
+  with explicit push permission to `main`
+
+Workflow behavior:
+
+1. Preflight validation checks semver format, `target_ref` policy, and verifies
+   the release tag does not already exist.
+2. Root artifact build runs `nix build .#r2` and captures output/closure
+   metadata.
+3. Worker artifact build runs `pnpm install --frozen-lockfile`,
+   `pnpm run check`, and `pnpm test`, then packages release inputs.
+4. Release publish updates `CHANGELOG.md` from `Unreleased` to
+   `## [vX.Y.Z] - YYYY-MM-DD`, commits the changelog, creates tag `vX.Y.Z`,
+   pushes commit + tag, and creates a GitHub Release with generated notes and
+   attached artifacts.
+
+Release helper scripts:
+
+- `scripts/release/prepare-changelog.sh`
+- `scripts/release/generate-release-notes.sh`
+
+Failure semantics:
+
+- Non-semver `version` fails preflight before checkout/build.
+- Non-`main` `target_ref` fails preflight before checkout/build.
+- Existing tag fails preflight and blocks release.
+- Missing push permission (token/branch protection mismatch) fails before
+  release publication.
+- Missing changelog release content for the requested version fails release-note
+  generation.
+
 ## Restic snapshots (`services.r2-restic`)
 
 Template defaults:
