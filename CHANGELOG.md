@@ -9,6 +9,20 @@ and this project follows Conventional Commits.
 
 ### Added
 
+- _No changes yet._
+
+### Changed
+
+- _No changes yet._
+
+### Fixed
+
+- _No changes yet._
+
+## [v0.1.0] - 2026-02-07
+
+### Added
+
 - Phase 1 scaffold for a standalone flake, including:
   - `flake.nix`, `default.nix`, and lockfiles
   - NixOS/Home Manager module skeletons under `modules/`
