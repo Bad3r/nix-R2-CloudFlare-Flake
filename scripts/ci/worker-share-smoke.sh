@@ -126,7 +126,7 @@ assert_http_status() {
 
     dump_response_context "${status}" "${body_file}" "${label}"
     if [[ ${curl_exit} -ne 0 ]]; then
-      fail "${label} request failed with curl exit ${curl_exit}"
+      fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
     fi
     fail "${label} expected HTTP ${expected_status}, got ${status}"
   done
