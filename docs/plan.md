@@ -1203,8 +1203,9 @@ CI automation does not remove break-glass/manual deployment workflows.
   - `scripts/release/generate-release-notes.sh` extracts release body markdown
     for GitHub Release publication
 - Publish behavior:
-  - creates commit `chore(release): vX.Y.Z`
-  - creates and pushes annotated tag `vX.Y.Z`
+  - creates commit `chore(release): vX.Y.Z` on a release branch
+  - opens release PR to `main`, enables auto-merge, and waits for merge
+  - creates and pushes annotated tag `vX.Y.Z` after merge
   - publishes GitHub Release with generated notes and attached root/worker
     artifacts
 - Documentation and runbook coverage:
