@@ -8,6 +8,7 @@ regression.
 ## When to Use
 
 - Post-deploy smoke check failure.
+- Deploy workflow smoke jobs fail (`smoke-preview` or `smoke-production`).
 - Auth or share lifecycle regressions introduced by config/code changes.
 - Access policy changes causing incorrect route exposure.
 

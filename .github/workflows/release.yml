@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p artifacts/root
+          mkdir -p artifacts/root artifacts/runtime
           out_path="$(nix --accept-flake-config path-info .#r2)"
           system="$(nix --accept-flake-config eval --raw .#r2.system)"
 
@@ -141,6 +141,12 @@ jobs:
           nix --accept-flake-config path-info -S .#r2 > artifacts/root/path-info-size.txt
           echo "${system}" > artifacts/root/system.txt
           nix-store --query --requisites "${out_path}" > artifacts/root/closure-paths.txt
+          mapfile -t closure_paths < artifacts/root/closure-paths.txt
+          if [[ ${#closure_paths[@]} -eq 0 ]]; then
+            echo "Expected non-empty closure path list for ${out_path}." >&2
+            exit 1
+          fi
+          nix-store --export "${closure_paths[@]}" > artifacts/runtime/closure.nar
 
           tar -czf "artifacts/root/r2-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
 
@@ -149,6 +155,13 @@ jobs:
         with:
           name: root-release-artifacts
           path: artifacts/root/*
+          if-no-files-found: error
+
+      - name: Upload root closure runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-closure-runtime
+          path: artifacts/runtime/closure.nar
           if-no-files-found: error
 
   build-worker:
@@ -224,10 +237,77 @@ jobs:
           path: artifacts/worker/*
           if-no-files-found: error
 
+  verify-cli-smoke:
+    name: verify-cli-smoke
+    runs-on: ubuntu-latest
+    needs: [preflight, build-root]
+    steps:
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Download root artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: root-release-artifacts
+          path: release-artifacts/root
+
+      - name: Download root closure runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: root-closure-runtime
+          path: release-artifacts/runtime
+
+      - name: Run CLI smoke checks from packaged artifact
+        run: |
+          set -euo pipefail
+
+          mapfile -t tarballs < <(
+            find release-artifacts/root \
+              -maxdepth 1 \
+              -type f \
+              -name "r2-${RELEASE_TAG}-*.tar.gz" \
+              -print
+          )
+
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one root CLI artifact tarball for ${RELEASE_TAG}, found ${#tarballs[@]}." >&2
+            exit 1
+          fi
+
+          if [[ ! -f release-artifacts/runtime/closure.nar ]]; then
+            echo "Missing closure export: release-artifacts/runtime/closure.nar" >&2
+            exit 1
+          fi
+
+          nix-store --import < release-artifacts/runtime/closure.nar >/dev/null
+
+          extract_dir="$(mktemp -d "${RUNNER_TEMP}/r2-cli-smoke.XXXXXX")"
+          trap 'rm -rf "${extract_dir}"' EXIT
+
+          tar -xzf "${tarballs[0]}" -C "${extract_dir}"
+          r2_bin="${extract_dir}/bin/r2"
+
+          if [[ ! -x "${r2_bin}" ]]; then
+            echo "Extracted r2 binary is missing or not executable: ${r2_bin}" >&2
+            exit 1
+          fi
+
+          "${r2_bin}" help
+          "${r2_bin}" bucket help
+          "${r2_bin}" share help
+          "${r2_bin}" share worker help
+
   publish-release:
     name: publish-release
     runs-on: ubuntu-latest
-    needs: [preflight, build-root, build-worker]
+    needs: [preflight, build-root, build-worker, verify-cli-smoke]
     steps:
       - name: Checkout target ref
         uses: actions/checkout@v6
