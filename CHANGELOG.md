@@ -39,6 +39,13 @@ and this project follows Conventional Commits.
 - Phase 4 CLI package extraction/refactor:
   - `packages/r2-cli.nix` implements the `r2` command
   - `r2` subcommands: `bucket`, `share`, and `rclone`
+- Option reference documentation under `docs/reference/`:
+  - `services.r2-sync`
+  - `services.r2-restic`
+  - `programs.r2-cloud`
+  - `programs.r2-cloud.credentials`
+  - managed rclone config behavior for `programs.r2-cloud`
+  - `programs.git-annex-r2`
 
 ### Changed
 
@@ -78,6 +85,14 @@ and this project follows Conventional Commits.
   - deleted `packages/r2-bucket.nix` and `packages/r2-share.nix`
   - removed Home Manager installation of `r2-bucket`/`r2-share` wrappers
   - removed legacy `r2-cli` compatibility alias output from `flake.nix`
+- Documentation navigation now points to `docs/reference/index.md` from
+  `README.md` and core user guides.
+- Repository docs status wording was updated to capability-based descriptions
+  and stale milestone language removed from user-facing docs.
+- `scripts/ci/validate.sh` now includes a documentation quality gate that
+  hard-fails on stale `Phase <n>` language outside `docs/plan.md`, verifies
+  required option-reference pages, and checks required reference links.
+- `docs/plan.md` milestone status now marks `6.2` and `6.6` complete.
 
 ### Fixed
 

@@ -40,6 +40,48 @@ run() {
   "$@"
 }
 
+run_docs_checks() {
+  local stale_output
+  local required_reference_files=(
+    "docs/reference/index.md"
+    "docs/reference/services-r2-sync.md"
+    "docs/reference/services-r2-restic.md"
+    "docs/reference/programs-r2-cloud.md"
+    "docs/reference/programs-r2-cloud-credentials.md"
+    "docs/reference/programs-r2-cloud-rclone-config.md"
+    "docs/reference/programs-git-annex-r2.md"
+  )
+
+  for file in "${required_reference_files[@]}"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "Missing required reference docs file: ${file}" >&2
+      exit 1
+    fi
+  done
+
+  stale_output="$(mktemp "${TMPDIR:-/tmp}/r2-cloud-doc-stale.XXXXXX")"
+  if rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
+    echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
+    cat "${stale_output}" >&2
+    rm -f "${stale_output}"
+    exit 1
+  fi
+  rm -f "${stale_output}"
+
+  if ! rg -q "docs/reference/index.md" README.md; then
+    echo "README.md must link to docs/reference/index.md." >&2
+    exit 1
+  fi
+  if ! rg -q "docs/reference/index.md" docs/quickstart.md; then
+    echo "docs/quickstart.md must link to docs/reference/index.md." >&2
+    exit 1
+  fi
+  if ! rg -q "docs/reference/index.md" docs/credentials.md; then
+    echo "docs/credentials.md must link to docs/reference/index.md." >&2
+    exit 1
+  fi
+}
+
 run_quality_checks_in_temp_checkout() {
   local temp_checkout
   temp_checkout="$(mktemp -d "${TMPDIR:-/tmp}/r2-cloud-validate.XXXXXX")"
@@ -410,6 +452,7 @@ NIX
 
 run nix flake check
 run_template_checks
+run_docs_checks
 run_quality_checks_in_temp_checkout
 run nix build .#r2
 run nix run .#r2 -- help

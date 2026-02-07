@@ -1,6 +1,8 @@
 # Sharing
 
-Phase 5 provides two sharing modes.
+This repository supports two sharing modes.
+
+Option reference for CLI and credentials behavior: `docs/reference/index.md`.
 
 ## 1) Presigned URLs (R2 S3 endpoint)
 

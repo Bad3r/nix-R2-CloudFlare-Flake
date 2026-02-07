@@ -2,6 +2,8 @@
 
 Do not commit secrets.
 
+Option reference: `docs/reference/index.md` and `docs/reference/programs-r2-cloud-credentials.md`.
+
 Default runtime credentials file:
 
 - `~/.config/cloudflare/r2/env`

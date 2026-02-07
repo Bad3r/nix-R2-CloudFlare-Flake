@@ -1,6 +1,8 @@
 # Sync
 
-This page validates the sync flows defined by the Group A templates.
+This page validates the sync flows defined by the repository templates.
+
+Option reference: `docs/reference/index.md` and `docs/reference/services-r2-sync.md`.
 
 ## Minimal template (`documents` mount)
 

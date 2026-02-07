@@ -2,6 +2,8 @@
 
 This page covers the versioning workflows used by the `templates/full` profile.
 
+Option reference: `docs/reference/index.md`, `docs/reference/services-r2-restic.md`, and `docs/reference/programs-git-annex-r2.md`.
+
 ## Restic snapshots (`services.r2-restic`)
 
 Template defaults:

@@ -2,27 +2,20 @@
 
 Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 
-## Status
+## Capabilities
 
-This repository is currently in **Phase 5** from `docs/plan.md`:
+- NixOS sync module: `services.r2-sync` (rclone mount + bisync services/timers)
+- NixOS backup module: `services.r2-restic` (scheduled restic snapshots to R2)
+- NixOS annex helper module: `programs.git-annex-r2`
+- Home Manager CLI surface: `programs.r2-cloud` (`r2` wrapper + tool installation)
+- Home Manager credentials assembly: `programs.r2-cloud.credentials`
+- Home Manager managed `rclone.conf`: generated from `programs.r2-cloud` options
+- Worker subflake: R2-Explorer routes, share token lifecycle, and tests
 
-- Phase 1 scaffold completed.
-- Phase 2 NixOS modules implemented:
-  - `services.r2-sync` (rclone mount + bisync services and timers)
-  - `services.r2-restic` (restic backup service and timer)
-- Phase 3 Home Manager modules implemented:
-  - `programs.r2-cloud` wrapper for the `r2` CLI
-  - `programs.r2-cloud.credentials` env-file assembly from secret file inputs
-  - managed `rclone.conf` generation via `modules/home-manager/rclone-config.nix`
-- Phase 4 CLI package extraction/refactor implemented with `r2`-only command format:
-  - `packages/r2-cli.nix` provides the single `r2` subcommand CLI
-  - compatibility-specific binaries/aliases were removed
-  - Home Manager injects config defaults and delegates execution to the package
-- Phase 5 R2-Explorer subflake implemented:
-  - Worker routes for list/preview/download/upload/move/delete
-  - Worker share token lifecycle (`/api/share/*`, `/share/<token>`)
-  - KV-backed random share tokens and admin keyset verification
-- Phases 6-7 remain in progress.
+## Documentation Status
+
+- Completed: template hardening, option reference docs, end-user workflows, and docs quality gate.
+- Remaining documentation milestones: operator runbooks and troubleshooting matrix.
 
 ## Layout
 
@@ -34,6 +27,10 @@ This repository is currently in **Phase 5** from `docs/plan.md`:
 - `templates/`: starter flake templates
 - `docs/`: usage and design documentation
 
+## Option Reference
+
+- `docs/reference/index.md` is the canonical option reference entrypoint.
+
 ## Quick Validation
 
 ```bash
@@ -43,8 +40,10 @@ This repository is currently in **Phase 5** from `docs/plan.md`:
 `scripts/ci/validate.sh` pins `substituters` to `https://cache.nixos.org/` and clears
 `extra-substituters` so validation does not inherit flaky host-level cache mirrors.
 It also evaluates concrete NixOS module configurations for `r2-sync` and `r2-restic`
-as well as Home Manager module assertions for Phase 4 CLI wiring (`programs.r2-cloud`
-and `programs.r2-cloud.credentials`) to catch option/schema regressions early, and
+and `programs.git-annex-r2`, plus Home Manager module assertions for
+`programs.r2-cloud` and `programs.r2-cloud.credentials` to catch
+option/schema regressions early, and
+runs documentation quality checks (stale-language scan + reference/docs-link checks),
 runs both formatting (`nix fmt`) and
 all pre-commit hooks (`lefthook run pre-commit --all-files`) in an isolated temp checkout.
 The validation flow also runs Worker checks/tests in `r2-explorer`
