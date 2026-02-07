@@ -47,3 +47,8 @@ pre-commit:
       priority: 3
       run: ripsecrets --strict-ignore {files}
       fail_text: "Potential secrets detected. Remove secrets or add an explicit .secretsignore entry."
+
+    - name: vulnix
+      priority: 4
+      run: scripts/hooks/vulnix-scan.sh
+      fail_text: "vulnix whitelist file missing. Create scripts/ci/vulnix-whitelist.toml."

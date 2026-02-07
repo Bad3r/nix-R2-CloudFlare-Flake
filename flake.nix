@@ -204,7 +204,8 @@
               pkgs.coreutils
               pkgs.git
             ]
-            ++ hookToolPackages;
+            ++ hookToolPackages
+            ++ optionalPkg "vulnix";
             shellHook = hookShellSetup;
           };
 
