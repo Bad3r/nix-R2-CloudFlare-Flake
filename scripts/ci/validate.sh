@@ -127,12 +127,50 @@ parse_args() {
 
 run_docs_checks() {
   local stale_output
-  local search_cmd
+  local search_backend
+  local check_file
   if command -v rg >/dev/null 2>&1; then
-    search_cmd=(rg)
+    search_backend="rg"
   else
-    search_cmd=(grep -R --line-number --extended-regexp)
+    search_backend="grep"
   fi
+
+  contains_pattern() {
+    local pattern="$1"
+    local file="$2"
+    case "${search_backend}" in
+    rg)
+      rg -q "${pattern}" "${file}"
+      ;;
+    grep)
+      grep -q "${pattern}" "${file}"
+      ;;
+    *)
+      echo "Unsupported docs search backend: ${search_backend}" >&2
+      exit 1
+      ;;
+    esac
+  }
+
+  scan_stale_phase_language() {
+    local output_file="$1"
+    case "${search_backend}" in
+    rg)
+      rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" \
+        "Phase[[:space:]]+[0-9]+" README.md docs >"${output_file}"
+      ;;
+    grep)
+      grep -R --line-number --extended-regexp --include "README.md" \
+        --include "*.md" --exclude "plan.md" "Phase[[:space:]]+[0-9]+" \
+        README.md docs >"${output_file}"
+      ;;
+    *)
+      echo "Unsupported docs search backend: ${search_backend}" >&2
+      exit 1
+      ;;
+    esac
+  }
+
   local required_reference_files=(
     "docs/reference/index.md"
     "docs/reference/services-r2-sync.md"
@@ -158,50 +196,20 @@ run_docs_checks() {
   done
 
   stale_output="$(mktemp "${TMPDIR:-/tmp}/r2-cloud-doc-stale.XXXXXX")"
-  if [[ ${search_cmd[0]} == "rg" ]]; then
-    if rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
-      echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
-      cat "${stale_output}" >&2
-      rm -f "${stale_output}"
-      exit 1
-    fi
-  else
-    if grep -R --line-number --extended-regexp --include "README.md" --include "*.md" --exclude "plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
-      echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
-      cat "${stale_output}" >&2
-      rm -f "${stale_output}"
-      exit 1
-    fi
+  if scan_stale_phase_language "${stale_output}"; then
+    echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
+    cat "${stale_output}" >&2
+    rm -f "${stale_output}"
+    exit 1
   fi
   rm -f "${stale_output}"
 
-  if [[ ${search_cmd[0]} == "rg" ]]; then
-    if ! rg -q "docs/reference/index.md" README.md; then
-      echo "README.md must link to docs/reference/index.md." >&2
+  for check_file in README.md docs/quickstart.md docs/credentials.md; do
+    if ! contains_pattern "docs/reference/index.md" "${check_file}"; then
+      echo "${check_file} must link to docs/reference/index.md." >&2
       exit 1
     fi
-    if ! rg -q "docs/reference/index.md" docs/quickstart.md; then
-      echo "docs/quickstart.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-    if ! rg -q "docs/reference/index.md" docs/credentials.md; then
-      echo "docs/credentials.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-  else
-    if ! grep -q "docs/reference/index.md" README.md; then
-      echo "README.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-    if ! grep -q "docs/reference/index.md" docs/quickstart.md; then
-      echo "docs/quickstart.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-    if ! grep -q "docs/reference/index.md" docs/credentials.md; then
-      echo "docs/credentials.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-  fi
+  done
 }
 
 run_quality_checks_in_temp_checkout() {
