@@ -23,6 +23,6 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           prompt: "/label-issue REPO: ${{ github.repository }} ISSUE_NUMBER: ${{ github.event.issue.number }}"
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_non_write_users: "*"
           github_token: ${{ secrets.GITHUB_TOKEN }}
