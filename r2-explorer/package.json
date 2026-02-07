@@ -11,14 +11,14 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
-    "hono": "latest",
-    "miniflare": "latest",
-    "typescript": "latest",
-    "vitest": "latest",
-    "wrangler": "latest"
+    "@cloudflare/workers-types": "^4.20260207.0",
+    "hono": "^4.11.8",
+    "miniflare": "^4.20260205.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "wrangler": "^4.63.0"
   },
   "dependencies": {
-    "zod": "latest"
+    "zod": "^4.3.6"
   }
 }
