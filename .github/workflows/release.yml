@@ -446,8 +446,6 @@ jobs:
 
           release_args=(
             "${RELEASE_TAG}"
-            "--target"
-            "${RELEASE_TAG}"
             "--title"
             "${RELEASE_TAG}"
             "--notes-file"
