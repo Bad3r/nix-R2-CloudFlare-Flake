@@ -121,23 +121,23 @@ jobs:
       - name: Build root CLI package
         run: |
           set -euo pipefail
-          nix build .#r2
+          nix --accept-flake-config build .#r2
 
       - name: Package root release artifacts
         run: |
           set -euo pipefail
 
           mkdir -p artifacts/root
-          out_path="$(nix path-info .#r2)"
-          system="$(nix eval --raw --expr builtins.currentSystem)"
+          out_path="$(nix --accept-flake-config path-info .#r2)"
+          system="$(nix --accept-flake-config eval --raw .#r2.system)"
 
           if [[ ! -d "${out_path}" ]]; then
             echo "Expected Nix output path does not exist: ${out_path}" >&2
             exit 1
           fi
 
-          nix path-info .#r2 > artifacts/root/path-info.txt
-          nix path-info -S .#r2 > artifacts/root/path-info-size.txt
+          nix --accept-flake-config path-info .#r2 > artifacts/root/path-info.txt
+          nix --accept-flake-config path-info -S .#r2 > artifacts/root/path-info-size.txt
           echo "${system}" > artifacts/root/system.txt
           nix-store --query --requisites "${out_path}" > artifacts/root/closure-paths.txt
 
