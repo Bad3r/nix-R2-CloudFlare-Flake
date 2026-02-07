@@ -61,7 +61,7 @@ if grep -Eq "^## \[v${version}\] - " "${file}"; then
   fail "Version section already exists for v${version} in ${file}"
 fi
 
-unreleased_line="$(awk '/^## \[Unreleased\]$/ { print NR; exit }' "${file}")"
+unreleased_line="$(awk '/^## \[Unreleased\][[:space:]]*$/ { print NR; exit }' "${file}")"
 [[ -n ${unreleased_line} ]] || fail "Missing required heading: ## [Unreleased]"
 
 total_lines="$(wc -l <"${file}")"

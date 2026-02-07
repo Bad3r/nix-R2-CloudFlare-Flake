@@ -65,8 +65,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch origin main --depth=1
-
           target_sha="$(git rev-parse HEAD)"
           main_sha="$(git rev-parse origin/main)"
 
@@ -127,12 +125,19 @@ jobs:
 
           mkdir -p artifacts/root
           out_path="$(nix path-info .#r2)"
+          system="$(nix eval --raw --expr builtins.currentSystem)"
+
+          if [[ ! -d "${out_path}" ]]; then
+            echo "Expected Nix output path does not exist: ${out_path}" >&2
+            exit 1
+          fi
 
           nix path-info .#r2 > artifacts/root/path-info.txt
           nix path-info -S .#r2 > artifacts/root/path-info-size.txt
+          echo "${system}" > artifacts/root/system.txt
           nix-store --query --requisites "${out_path}" > artifacts/root/closure-paths.txt
 
-          tar -czf "artifacts/root/r2-${RELEASE_TAG}-linux-x86_64.tar.gz" -C "${out_path}" .
+          tar -czf "artifacts/root/r2-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
 
       - name: Upload root release artifacts
         uses: actions/upload-artifact@v4
@@ -266,6 +271,7 @@ jobs:
           if [[ -z "${push_token}" ]]; then
             push_token="${{ github.token }}"
           fi
+          echo "::add-mask::${push_token}"
 
           git remote set-url origin "https://x-access-token:${push_token}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:main
@@ -281,6 +287,7 @@ jobs:
           if [[ -z "${gh_token}" ]]; then
             gh_token="${{ github.token }}"
           fi
+          echo "::add-mask::${gh_token}"
           export GH_TOKEN="${gh_token}"
 
           release_args=(
@@ -297,6 +304,13 @@ jobs:
             release_args+=("--prerelease")
           fi
 
-          release_args+=(release-artifacts/root/* release-artifacts/worker/*)
+          shopt -s nullglob
+          assets=(release-artifacts/root/* release-artifacts/worker/*)
+          shopt -u nullglob
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "No release assets found under release-artifacts/." >&2
+            exit 1
+          fi
+          release_args+=("${assets[@]}")
 
           gh release create "${release_args[@]}"
