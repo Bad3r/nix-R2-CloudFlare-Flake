@@ -23,6 +23,12 @@
           r2-cloud.nixosModules.default
           {
             system.stateVersion = "25.05";
+            # Eval-only defaults so `nix flake check` passes in generated repos.
+            fileSystems."/" = {
+              device = "tmpfs";
+              fsType = "tmpfs";
+            };
+            boot.loader.grub.devices = [ "nodev" ];
 
             # Required for services.r2-sync.
             services.r2-sync = {

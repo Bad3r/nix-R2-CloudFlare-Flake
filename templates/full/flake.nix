@@ -28,6 +28,12 @@
           home-manager.nixosModules.home-manager
           {
             system.stateVersion = "25.05";
+            # Eval-only defaults so `nix flake check` passes in generated repos.
+            fileSystems."/" = {
+              device = "tmpfs";
+              fsType = "tmpfs";
+            };
+            boot.loader.grub.devices = [ "nodev" ];
 
             services.r2-sync = {
               enable = true;
