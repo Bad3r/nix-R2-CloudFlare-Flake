@@ -79,6 +79,11 @@ and this project follows Conventional Commits.
   - pre-commit `ripsecrets` scanning via `lefthook`
   - operator remediation runbook in
     `docs/operators/security-gates-remediation.md`
+- Manual release automation workflow:
+  - `.github/workflows/release.yml` with semver-gated `workflow_dispatch`
+  - root/worker release artifact build jobs
+  - changelog promotion + release-note extraction helpers in
+    `scripts/release/`
 
 ### Changed
 
@@ -160,6 +165,10 @@ and this project follows Conventional Commits.
   so `nix fmt` and hook/CI runs can execute the expanded `treefmt` config.
 - `docs/plan.md` now marks milestones `7.3` and `7.6` complete, with closure
   notes documenting required checks and branch protection controls.
+- Versioning and repository docs now document automated release operations:
+  - `docs/versioning.md` release input contract and failure semantics
+  - `README.md` release automation entrypoints
+  - `docs/plan.md` milestone `7.4` marked complete with closure note
 
 ### Fixed
 
