@@ -76,9 +76,13 @@ public token links work as intended:
 This keeps `/api/*` and `/` behind Access while allowing `GET /share/<token>`
 to work for recipients without Access membership.
 
-## Operator checklist
+## Operator runbooks
 
-- Bind KV namespaces in `wrangler.toml`: `R2E_SHARES_KV`, `R2E_KEYS_KV`.
-- Initialize `R2E_KEYS_KV` key `admin:keyset:active`.
-- Keep worker and automation clocks in sync to avoid HMAC timestamp failures.
-- Use `R2E_READONLY=true` for maintenance/read-only windows.
+Use dedicated runbooks for operations and incident handling:
+
+- `docs/operators/index.md`
+- `docs/operators/key-rotation.md`
+- `docs/operators/readonly-maintenance.md`
+- `docs/operators/access-policy-split.md`
+- `docs/operators/incident-response.md`
+- `docs/operators/rollback-worker-share.md`

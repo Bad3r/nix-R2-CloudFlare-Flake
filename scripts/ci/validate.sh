@@ -50,10 +50,16 @@ run_docs_checks() {
     "docs/reference/programs-r2-cloud-credentials.md"
     "docs/reference/programs-r2-cloud-rclone-config.md"
     "docs/reference/programs-git-annex-r2.md"
+    "docs/operators/index.md"
+    "docs/operators/key-rotation.md"
+    "docs/operators/readonly-maintenance.md"
+    "docs/operators/access-policy-split.md"
+    "docs/operators/incident-response.md"
+    "docs/operators/rollback-worker-share.md"
   )
 
   for file in "${required_reference_files[@]}"; do
-    if [[ ! -f "${file}" ]]; then
+    if [[ ! -f ${file} ]]; then
       echo "Missing required reference docs file: ${file}" >&2
       exit 1
     fi
