@@ -204,7 +204,17 @@ r2-cloud-nix/
 │   ├── credentials.md
 │   ├── sync.md
 │   ├── versioning.md
-│   └── sharing.md
+│   ├── sharing.md
+│   ├── troubleshooting.md
+│   ├── operators/
+│   │   ├── index.md
+│   │   ├── key-rotation.md
+│   │   ├── readonly-maintenance.md
+│   │   ├── access-policy-split.md
+│   │   ├── incident-response.md
+│   │   └── rollback-worker-share.md
+│   └── reference/
+│       └── index.md
 │
 └── README.md
 ```
@@ -1030,7 +1040,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 3. [x] **Phase 3**: Home Manager modules (`r2` wrapper, credentials assembly, managed `rclone.conf`)
 4. [x] **Phase 4**: CLI package extraction/refactor (single `r2` package CLI + HM wrapper delegation)
 5. [x] **Phase 5**: R2-Explorer subflake (Hono+Zod contracts, middleware layering, `/api/server/info`, worker tests)
-6. [ ] **Phase 6**: Templates and documentation (expanded matrix below)
+6. [x] **Phase 6**: Templates and documentation (expanded matrix below)
 7. [ ] **Phase 7**: CI/CD setup (expanded matrix below)
 
 ## Phase 6 Milestone Matrix (Templates + Documentation)
@@ -1040,14 +1050,19 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 | **6.1 Template hardening**         | Finalize `templates/minimal` and `templates/full`; ensure both include valid pinned inputs and runnable examples for current module options.          | Updated template flakes and inline comments.                                                                               | `nix flake check` passes for template-generated repos; quickstart commands run without manual patching.                             | [x]    |
 | **6.2 Option reference docs**      | Document NixOS + Home Manager options with defaults, required fields, and failure semantics.                                                          | `docs/` reference pages for `services.r2-sync`, `services.r2-restic`, `programs.r2-cloud`, credentials, and rclone config. | Every public option in modules has corresponding docs entry and example snippet.                                                    | [x]    |
 | **6.3 Operator runbooks**          | Add operational procedures: key rotation, readonly maintenance windows, Access policy split, incident response, and rollback of Worker/share configs. | Runbook sections in `docs/sharing.md` and dedicated operator docs.                                                         | A new operator can execute setup/rotation/recovery using docs only.                                                                 | [x]    |
-| **6.4 End-user workflows**         | Expand practical usage docs for sync, backup, annex, and worker share flows across local + remote contexts.                                           | Updated `docs/quickstart.md`, `docs/sync.md`, `docs/versioning.md`, and quickstart-linked sharing flow guidance.           | Template-specific local + remote workflows (including worker-share checkpoints) are complete and verified against current commands. | [ ]    |
+| **6.4 End-user workflows**         | Expand practical usage docs for sync, backup, annex, and worker share flows across local + remote contexts.                                           | Updated `docs/quickstart.md`, `docs/sync.md`, `docs/versioning.md`, and quickstart-linked sharing flow guidance.           | Template-specific local + remote workflows (including worker-share checkpoints) are complete and verified against current commands. | [x]    |
 | **6.5 Troubleshooting matrix**     | Add common failure signatures and root-cause/repair paths for auth, lifecycle, bisync, restic, multipart upload, and token validation.                | Troubleshooting section(s) with command-level diagnostics.                                                                 | Each critical subsystem has at least one known-failure diagnostic workflow.                                                         | [x]    |
 | **6.6 Documentation quality gate** | Ensure docs stay synchronized with code changes via validation checks and explicit review checklist.                                                  | Updated validation guidance in docs and CI docs checks (Phase 7 wiring reference).                                         | No stale phase language remains; docs reviewed against current repository behavior.                                                 | [x]    |
 
-### 6.4 Reopen Note (2026-02-07)
+### 6.4 Closure Note (2026-02-07)
 
-- `6.4` was reopened after audit due to mixed minimal/full verification commands in one path, ambiguous "after switch" wording, and missing worker-share checkpoint in end-user workflow sequencing.
-- Closure requires template-specific verification paths and explicit local + remote expected outcomes.
+- Closure criteria are now satisfied in current docs:
+  - template-specific verification paths are explicit in `docs/quickstart.md`,
+    `docs/sync.md`, and `docs/versioning.md`
+  - local and remote expected outcomes are explicit in quickstart sync/backup
+    checkpoints
+  - worker-share checkpoint now verifies both public `/share/<token>` behavior
+    and Access protection on `/api/*`
 
 ## Phase 7 Milestone Matrix (CI/CD + Release)
 

@@ -6,6 +6,8 @@ This guide covers template-based bootstrap for sync-only and full setups:
 - `templates/full` -> sync + restic + git-annex + Home Manager CLI
 
 For full option semantics and assertion behavior, see `docs/reference/index.md`.
+Run template-specific commands only; do not mix `minimal` and `full` checks in
+the same generated project.
 
 ## 1. Create a new project from a template
 
@@ -107,6 +109,25 @@ Expected result:
 - `r2-bisync-documents` service is invokable
 - `r2-bisync-documents.timer` is scheduled
 
+Minimal remote checkpoint:
+
+```bash
+set -a
+source /run/secrets/r2-credentials
+set +a
+
+rclone lsf :s3:documents \
+  --config=/dev/null \
+  --s3-provider=Cloudflare \
+  --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+  --s3-env-auth
+```
+
+Expected result:
+
+- local units are active/scheduled as listed above
+- remote `documents` bucket listing succeeds without authentication errors
+
 ## 7. Verify service wiring (full path)
 
 Run these checks only for the full template:
@@ -127,14 +148,41 @@ Expected result:
 - bisync and restic timers/services are present and invokable
 - `git-annex-r2-init` and `r2` are available in PATH
 
+Full remote checkpoints:
+
+```bash
+set -a
+source /run/secrets/r2-credentials
+set +a
+
+rclone lsf :s3:files \
+  --config=/dev/null \
+  --s3-provider=Cloudflare \
+  --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+  --s3-env-auth
+
+export RESTIC_PASSWORD_FILE=/run/secrets/restic-password
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
+```
+
+Expected result:
+
+- local units and CLI helpers are present as listed above
+- remote `files` listing succeeds
+- restic repository snapshot listing succeeds without auth/repository errors
+
 ## 8. Sharing checkpoint (full path)
 
 Prerequisite: R2-Explorer is deployed and Worker admin environment variables are available.
 
 ```bash
 r2 share files workspace/demo.txt 24h
-r2 share worker create files workspace/demo.txt 24h --max-downloads 1
+share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 1)"
+echo "${share_json}"
+share_url="$(printf '%s' "${share_json}" | jq -r '.shareUrl')"
 r2 share worker list files workspace/demo.txt
+curl -I "${share_url}"
+curl -I https://files.example.com/api/list
 ```
 
 Expected result:
@@ -142,6 +190,8 @@ Expected result:
 - presigned command returns an R2 S3 URL
 - worker create returns a `shareUrl` on your custom domain
 - worker list includes the created token record
+- `GET <shareUrl>` returns object response headers for a valid token
+- `GET /api/list` remains Cloudflare-Access protected (not public)
 
 For Access policy and Worker token behavior details, continue in `docs/sharing.md`.
 For failure diagnosis across sync/backup/share/auth flows, use

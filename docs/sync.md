@@ -1,6 +1,7 @@
 # Sync
 
 This page validates the sync flows defined by the repository templates.
+Use only the commands for the template you deployed (`minimal` or `full`).
 
 Option reference: `docs/reference/index.md` and `docs/reference/services-r2-sync.md`.
 If any step fails, use `docs/troubleshooting.md` for command-level diagnosis and

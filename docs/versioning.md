@@ -1,6 +1,8 @@
 # Versioning
 
 This page covers the versioning workflows used by the `templates/full` profile.
+These checks apply only to `templates/full` and should not be mixed into the
+`templates/minimal` path.
 
 Option reference: `docs/reference/index.md`, `docs/reference/services-r2-restic.md`, and `docs/reference/programs-git-annex-r2.md`.
 If snapshot or auth checks fail, use `docs/troubleshooting.md` for first-line

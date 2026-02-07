@@ -111,6 +111,16 @@ and this project follows Conventional Commits.
 - Documentation status tracking now reflects completed troubleshooting
   and runbook milestones in `README.md` and marks Phase `6.5` complete
   in `docs/plan.md`.
+- End-user workflow docs now include explicit template-separated local and
+  remote checkpoints, including worker-share behavior validation:
+  - `docs/quickstart.md`
+  - `docs/sync.md`
+  - `docs/versioning.md`
+- Phase 6 documentation status is now fully closed:
+  - `docs/plan.md` marks `6.4` complete and sets Phase 6 complete in
+    implementation order
+  - stale `6.4` reopen note removed and replaced with closure note
+  - `README.md` now states Phase 6 is complete and Stage 7 remains open
 
 ### Fixed
 
