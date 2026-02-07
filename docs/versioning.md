@@ -34,7 +34,12 @@ Workflow behavior:
    metadata.
 3. Worker artifact build runs `pnpm install --frozen-lockfile`,
    `pnpm run check`, and `pnpm test`, then packages release inputs.
-4. Release publish updates `CHANGELOG.md` from `Unreleased` to
+4. CLI smoke verification runs from the packaged root artifact:
+   - `r2 help`
+   - `r2 bucket help`
+   - `r2 share help`
+   - `r2 share worker help`
+5. Release publish updates `CHANGELOG.md` from `Unreleased` to
    `## [vX.Y.Z] - YYYY-MM-DD`, commits that change to a release branch, opens a
    release PR to `main`, enables auto-merge, waits for merge, then tags
    `origin/main` and creates a GitHub Release with generated notes and attached
@@ -52,10 +57,15 @@ Failure semantics:
 - Existing tag fails preflight and blocks release.
 - Missing PR creation or merge permissions fails before tag/release
   publication.
+- Any CLI smoke command failure blocks publish/tag steps.
 - If required checks on the generated release PR never pass, the workflow times
   out waiting for merge and fails without creating a tag.
 - Missing changelog release content for the requested version fails release-note
   generation.
+
+Rollback runbook:
+
+- `docs/operators/rollback-cli-release.md`
 
 ## Restic snapshots (`services.r2-restic`)
 

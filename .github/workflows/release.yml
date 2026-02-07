@@ -224,10 +224,54 @@ jobs:
           path: artifacts/worker/*
           if-no-files-found: error
 
+  verify-cli-smoke:
+    name: verify-cli-smoke
+    runs-on: ubuntu-latest
+    needs: [preflight, build-root]
+    steps:
+      - name: Download root artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: root-release-artifacts
+          path: release-artifacts/root
+
+      - name: Run CLI smoke checks from packaged artifact
+        run: |
+          set -euo pipefail
+
+          mapfile -t tarballs < <(
+            find release-artifacts/root \
+              -maxdepth 1 \
+              -type f \
+              -name "r2-${RELEASE_TAG}-*.tar.gz" \
+              -print
+          )
+
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one root CLI artifact tarball for ${RELEASE_TAG}, found ${#tarballs[@]}." >&2
+            exit 1
+          fi
+
+          extract_dir="$(mktemp -d "${RUNNER_TEMP}/r2-cli-smoke.XXXXXX")"
+          trap 'rm -rf "${extract_dir}"' EXIT
+
+          tar -xzf "${tarballs[0]}" -C "${extract_dir}"
+          r2_bin="${extract_dir}/bin/r2"
+
+          if [[ ! -x "${r2_bin}" ]]; then
+            echo "Extracted r2 binary is missing or not executable: ${r2_bin}" >&2
+            exit 1
+          fi
+
+          "${r2_bin}" help
+          "${r2_bin}" bucket help
+          "${r2_bin}" share help
+          "${r2_bin}" share worker help
+
   publish-release:
     name: publish-release
     runs-on: ubuntu-latest
-    needs: [preflight, build-root, build-worker]
+    needs: [preflight, build-root, build-worker, verify-cli-smoke]
     steps:
       - name: Checkout target ref
         uses: actions/checkout@v6

@@ -16,9 +16,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 
 - Completed: template hardening, option reference docs, operator runbooks,
   end-user workflow verification, troubleshooting matrix, and docs quality gate.
-- Templates/documentation milestones are complete; CI/CD milestone track is in progress
-  with `7.1`, `7.2`, `7.3`, `7.4`, and `7.6` complete in `docs/plan.md`
-  (`7.5` remains open).
+- CI/CD milestone track in `docs/plan.md` is complete (`7.1` through `7.6`).
 
 ## Layout
 

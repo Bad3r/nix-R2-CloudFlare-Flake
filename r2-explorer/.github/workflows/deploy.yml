@@ -6,6 +6,7 @@ on:
     paths:
       - "r2-explorer/**"
       - "r2-explorer/.github/workflows/deploy.yml"
+      - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
     inputs:
       ref:
@@ -65,6 +66,82 @@ jobs:
       - name: Deploy preview
         run: pnpm run deploy -- --env preview
 
+  smoke-preview:
+    name: Smoke preview
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    needs: [deploy-preview]
+    environment: preview
+    env:
+      R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+      R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
+      R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
+      R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
+      R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Build r2 CLI
+        run: nix --accept-flake-config build .#r2
+
+      - name: Run Worker smoke checks
+        env:
+          R2E_SMOKE_R2_BIN: ./result/bin/r2
+        run: ./scripts/ci/worker-share-smoke.sh
+
+  rollback-guidance-preview:
+    name: Rollback guidance (preview)
+    if: failure() && needs.smoke-preview.result == 'failure'
+    runs-on: ubuntu-latest
+    needs: [deploy-preview, smoke-preview]
+    steps:
+      - name: Publish rollback guidance
+        run: |
+          set -euo pipefail
+
+          runbook_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/operators/rollback-worker-share.md"
+          {
+            echo "## Preview smoke checks failed"
+            echo
+            echo "Follow the Worker rollback runbook immediately:"
+            echo "- ${runbook_url}"
+            echo
+            echo "Required operator actions:"
+            echo "1. Identify the last known-good Worker revision and matching env snapshot."
+            echo "2. Redeploy the rollback target and reapply Access policy split."
+            echo "3. Re-run share lifecycle and API protection checks."
+            echo
+            echo "Command checklist:"
+            echo '```bash'
+            echo 'git fetch origin'
+            echo 'git checkout <last-known-good-ref>'
+            echo 'cd r2-explorer'
+            echo 'pnpm install --frozen-lockfile'
+            echo 'pnpm run deploy -- --env preview'
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   deploy-production:
     name: Deploy production
     if: github.event_name == 'workflow_dispatch'
@@ -116,3 +193,76 @@ jobs:
 
       - name: Deploy production
         run: pnpm run deploy
+
+  smoke-production:
+    name: Smoke production
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    environment: production
+    env:
+      R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+      R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
+      R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
+      R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
+      R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Build r2 CLI
+        run: nix --accept-flake-config build .#r2
+
+      - name: Run Worker smoke checks
+        env:
+          R2E_SMOKE_R2_BIN: ./result/bin/r2
+        run: ./scripts/ci/worker-share-smoke.sh
+
+  rollback-guidance-production:
+    name: Rollback guidance (production)
+    if: failure() && needs.smoke-production.result == 'failure'
+    runs-on: ubuntu-latest
+    needs: [deploy-production, smoke-production]
+    steps:
+      - name: Publish rollback guidance
+        run: |
+          set -euo pipefail
+
+          runbook_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/operators/rollback-worker-share.md"
+          {
+            echo "## Production smoke checks failed"
+            echo
+            echo "Immediate rollback path:"
+            echo "- ${runbook_url}"
+            echo
+            echo "Required operator actions:"
+            echo "1. Roll back to the last known-good Worker revision."
+            echo "2. Restore matching environment variables and Access policy split."
+            echo "3. Verify /share token behavior and /api Access protection before leaving incident mode."
+            echo
+            echo "Command checklist:"
+            echo '```bash'
+            echo 'git fetch origin'
+            echo 'git checkout <last-known-good-ref>'
+            echo 'cd r2-explorer'
+            echo 'pnpm install --frozen-lockfile'
+            echo 'pnpm run deploy'
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

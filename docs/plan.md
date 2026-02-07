@@ -1041,7 +1041,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 4. [x] **Phase 4**: CLI package extraction/refactor (single `r2` package CLI + HM wrapper delegation)
 5. [x] **Phase 5**: R2-Explorer subflake (Hono+Zod contracts, middleware layering, `/api/server/info`, worker tests)
 6. [x] **Phase 6**: Templates and documentation (expanded matrix below)
-7. [ ] **Phase 7**: CI/CD setup (expanded matrix below)
+7. [x] **Phase 7**: CI/CD setup (expanded matrix below)
 
 ## Phase 6 Milestone Matrix (Templates + Documentation)
 
@@ -1072,7 +1072,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 | **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `r2-explorer/.github/workflows/deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [x]    |
 | **7.3 Security and supply-chain gates** | Add dependency audit, secret scanning, and policy checks for changed files and lockfiles.                              | CI security jobs and documented remediation process.                          | Security gates fail on critical findings and block release merges.                        | [x]    |
 | **7.4 Release automation**              | Add semver/tag workflow, changelog generation, and release notes for root + worker updates.                            | Release workflow(s), versioning policy, and changelog process docs.           | Tagged release produces reproducible artifacts and clear upgrade notes.                   | [x]    |
-| **7.5 Deploy verification + rollback**  | Add post-deploy smoke checks and rollback playbook for Worker and CLI-impacting changes.                               | Post-deploy checks + rollback runbook + optional canary/manual approval step. | Failed smoke checks trigger rollback path with documented operator actions.               | [ ]    |
+| **7.5 Deploy verification + rollback**  | Add post-deploy smoke checks and rollback playbook for Worker and CLI-impacting changes.                               | Post-deploy checks + rollback runbook + optional canary/manual approval step. | Failed smoke checks trigger rollback path with documented operator actions.               | [x]    |
 | **7.6 Branch protection enforcement**   | Wire required checks, review policy, and merge guards to prevent bypassing release quality bars.                       | Repository protection configuration documented and enabled.                   | Main branch requires green CI + review before merge/deploy.                               | [x]    |
 
 ### 7.2 Worker Deploy Pipeline Specification (2026-02-07)
@@ -1085,6 +1085,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
   with path filter:
   - `r2-explorer/**`
   - `r2-explorer/.github/workflows/deploy.yml`
+  - `scripts/ci/worker-share-smoke.sh`
 - `workflow_dispatch` with required `ref` input (default `main`)
 
 #### Job topology
@@ -1110,6 +1111,11 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+- `R2E_SMOKE_BASE_URL`
+- `R2E_SMOKE_ADMIN_KID`
+- `R2E_SMOKE_ADMIN_SECRET`
+- `R2E_SMOKE_BUCKET`
+- `R2E_SMOKE_KEY`
 
 The workflow uses environment-scoped secrets (`preview` and `production`) to
 enforce least-privilege separation and approval gates.
@@ -1212,3 +1218,51 @@ CI automation does not remove break-glass/manual deployment workflows.
   - `docs/versioning.md` documents release inputs, token requirements, and
     failure semantics
   - `README.md` now links release automation entrypoints
+
+### 7.5 Closure Note (2026-02-07)
+
+- Added post-deploy smoke checks to `r2-explorer/.github/workflows/deploy.yml`:
+  - `smoke-preview` runs after `deploy-preview`
+  - `smoke-production` runs after `deploy-production`
+- Smoke checks are implemented in `scripts/ci/worker-share-smoke.sh` and verify:
+  - Worker share creation via `r2 share worker create`
+  - first `/share/<token>` access returns success
+  - second `/share/<token>` access returns expected token exhaustion (`410`)
+  - unauthenticated `/api/server/info` remains Access-protected (`401`)
+- Added rollback guidance jobs triggered only when smoke jobs fail:
+  - `rollback-guidance-preview`
+  - `rollback-guidance-production`
+- Added CLI-impacting release gate in `.github/workflows/release.yml`:
+  - `verify-cli-smoke` validates packaged CLI commands before publish:
+    - `r2 help`
+    - `r2 bucket help`
+    - `r2 share help`
+    - `r2 share worker help`
+- Added operator runbook for CLI rollback:
+  - `docs/operators/rollback-cli-release.md`
+  - linked from `docs/operators/index.md` and `docs/versioning.md`
+
+#### 7.5 Validation Scenarios
+
+1. Preview deploy success path:
+   - same-repo PR touching `r2-explorer/**`
+   - `deploy-preview` and `smoke-preview` pass
+   - rollback guidance job does not run
+2. Preview smoke failure path:
+   - invalid preview smoke object/credentials
+   - `smoke-preview` fails
+   - `rollback-guidance-preview` runs and publishes rollback checklist
+3. Production deploy success path:
+   - `workflow_dispatch` with `ref=main`
+   - `deploy-production` and `smoke-production` pass
+   - rollback guidance job does not run
+4. Production smoke failure path:
+   - invalid production smoke object/credentials
+   - `smoke-production` fails
+   - `rollback-guidance-production` runs with operator rollback steps
+5. Access regression detection:
+   - if unauthenticated `/api/server/info` no longer returns `401`
+   - smoke checks fail with explicit status mismatch
+6. CLI release smoke gate:
+   - `verify-cli-smoke` must pass (`r2 help`, `bucket help`, `share help`,
+     `share worker help`) before release publish/tag steps
