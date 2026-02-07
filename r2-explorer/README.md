@@ -81,7 +81,7 @@ pnpm run deploy
 
 ## CI deploy workflow
 
-`r2-explorer/.github/workflows/deploy.yml` provides:
+`.github/workflows/r2-explorer-deploy.yml` provides:
 
 - preview deploys on same-repo PRs affecting `r2-explorer/**`
 - production deploys via `workflow_dispatch` only (`ref` must be `main`)
