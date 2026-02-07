@@ -14,7 +14,7 @@ Set your template source once:
 export TEMPLATE_SOURCE="$(pwd)"
 
 # Or use the remote source
-# export TEMPLATE_SOURCE="github:Bad3r/nix-R2-CloudFlare-Flake"
+# export TEMPLATE_SOURCE="github:Bad3r/nix-R2-CloudFlare-Flake?ref=main"
 ```
 
 Create the project:

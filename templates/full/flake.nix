@@ -6,7 +6,7 @@
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     # Replace with your fork if needed.
-    r2-cloud.url = "github:Bad3r/nix-R2-CloudFlare-Flake";
+    r2-cloud.url = "github:Bad3r/nix-R2-CloudFlare-Flake?ref=main";
   };
 
   outputs =

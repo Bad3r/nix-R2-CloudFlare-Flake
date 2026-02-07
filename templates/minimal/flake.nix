@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     # Replace with your fork if needed.
-    r2-cloud.url = "github:Bad3r/nix-R2-CloudFlare-Flake";
+    r2-cloud.url = "github:Bad3r/nix-R2-CloudFlare-Flake?ref=main";
   };
 
   outputs =
