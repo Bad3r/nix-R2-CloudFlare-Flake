@@ -3,7 +3,8 @@ if [ -n "${IN_NIX_SHELL:-}" ]; then
   return 0 2>/dev/null || true
 fi
 
-CACHE_DIR=".git/lefthook-cache"
+# Use git-path so this works in both regular repos and git worktrees.
+CACHE_DIR=$(git rev-parse --git-path lefthook-cache 2>/dev/null || echo ".git/lefthook-cache")
 CACHE_FILE="$CACHE_DIR/path.sh"
 HASH_FILE="$CACHE_DIR/flake.lock.hash"
 

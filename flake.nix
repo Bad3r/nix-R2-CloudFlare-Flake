@@ -116,12 +116,13 @@
               self.packages.${system}.lefthook-statix
             ];
           hookShellSetup = ''
-            treefmt_cache="$PWD/.git/treefmt-cache/cache"
+            treefmt_cache="$(git rev-parse --git-path treefmt-cache/cache 2>/dev/null || echo "$PWD/.git/treefmt-cache/cache")"
             mkdir -p "$treefmt_cache" 2>/dev/null || true
             export TREEFMT_CACHE_DB="$treefmt_cache/eval-cache"
 
             if command -v lefthook >/dev/null 2>&1; then
-              if [ ! -f .git/hooks/pre-commit ] || ! grep -q "lefthook" .git/hooks/pre-commit 2>/dev/null; then
+              pre_commit_hook="$(git rev-parse --git-path hooks/pre-commit 2>/dev/null || echo ".git/hooks/pre-commit")"
+              if [ ! -f "$pre_commit_hook" ] || ! grep -q "lefthook" "$pre_commit_hook" 2>/dev/null; then
                 lefthook install
               fi
             fi

@@ -1,3 +1,5 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
 name: Claude Commit Analysis
 
 on:
@@ -12,9 +14,14 @@ on:
           - security-review
         default: "summarize-commit"
 
+concurrency:
+  group: analysis-${{ github.ref }}-${{ github.event.inputs.analysis_type }}
+  cancel-in-progress: true
+
 jobs:
   analyze-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
