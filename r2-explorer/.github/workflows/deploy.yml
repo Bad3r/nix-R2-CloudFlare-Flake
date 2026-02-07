@@ -1,11 +1,118 @@
 name: Deploy R2-Explorer
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "r2-explorer/**"
+      - "r2-explorer/.github/workflows/deploy.yml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (must be main for production)"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+  deployments: write
 
 jobs:
-  placeholder:
+  deploy-preview:
+    name: Deploy preview
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    environment: preview
+    concurrency:
+      group: r2-explorer-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: r2-explorer
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Phase notice
-        run: echo "Worker is implemented in Phase 5. CI deployment automation remains scheduled for Phase 7."
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: r2-explorer/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Test
+        run: pnpm test
+
+      - name: Deploy preview
+        run: pnpm run deploy -- --env preview
+
+  deploy-production:
+    name: Deploy production
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: r2-explorer-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: r2-explorer
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Reject non-main production deploy ref
+        run: |
+          if [[ "${{ github.event.inputs.ref }}" != "main" ]]; then
+            echo "Production deploys require ref=main." >&2
+            echo "Got '${{ github.event.inputs.ref }}'." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: r2-explorer/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Test
+        run: pnpm test
+
+      - name: Deploy production
+        run: pnpm run deploy

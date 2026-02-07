@@ -25,3 +25,27 @@ preview_id = "replace-with-shares-kv-namespace-id-preview"
 binding = "R2E_KEYS_KV"
 id = "replace-with-keys-kv-namespace-id"
 preview_id = "replace-with-keys-kv-namespace-id-preview"
+
+[env.preview]
+workers_dev = true
+
+[env.preview.vars]
+R2E_ADMIN_AUTH_WINDOW_SEC = "300"
+R2E_MAX_SHARE_TTL_SEC = "2592000"
+R2E_DEFAULT_SHARE_TTL_SEC = "86400"
+R2E_UI_MAX_LIST_LIMIT = "1000"
+R2E_READONLY = "false"
+# Optional. If omitted, Worker derives base URL from the request.
+R2E_PUBLIC_BASE_URL = ""
+
+[[env.preview.r2_buckets]]
+binding = "FILES_BUCKET"
+bucket_name = "replace-with-r2-bucket-preview"
+
+[[env.preview.kv_namespaces]]
+binding = "R2E_SHARES_KV"
+id = "replace-with-shares-kv-namespace-id-preview"
+
+[[env.preview.kv_namespaces]]
+binding = "R2E_KEYS_KV"
+id = "replace-with-keys-kv-namespace-id-preview"

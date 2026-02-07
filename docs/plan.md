@@ -1069,8 +1069,88 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 | Milestone                               | Scope / Tasks                                                                                                          | Deliverables                                                                  | Exit Criteria                                                                             | Status |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------ |
 | **7.1 CI matrix baseline**              | Build root CI jobs for format/lint/flake/module eval and Worker typecheck/tests.                                       | `.github/workflows/ci.yml` jobs for root + `r2-explorer` checks.              | PRs must pass full validation equivalent to `./scripts/ci/validate.sh`.                   | [x]    |
-| **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `r2-explorer/.github/workflows/deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [ ]    |
+| **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `r2-explorer/.github/workflows/deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [x]    |
 | **7.3 Security and supply-chain gates** | Add dependency audit, secret scanning, and policy checks for changed files and lockfiles.                              | CI security jobs and documented remediation process.                          | Security gates fail on critical findings and block release merges.                        | [ ]    |
 | **7.4 Release automation**              | Add semver/tag workflow, changelog generation, and release notes for root + worker updates.                            | Release workflow(s), versioning policy, and changelog process docs.           | Tagged release produces reproducible artifacts and clear upgrade notes.                   | [ ]    |
 | **7.5 Deploy verification + rollback**  | Add post-deploy smoke checks and rollback playbook for Worker and CLI-impacting changes.                               | Post-deploy checks + rollback runbook + optional canary/manual approval step. | Failed smoke checks trigger rollback path with documented operator actions.               | [ ]    |
 | **7.6 Branch protection enforcement**   | Wire required checks, review policy, and merge guards to prevent bypassing release quality bars.                       | Repository protection configuration documented and enabled.                   | Main branch requires green CI + review before merge/deploy.                               | [ ]    |
+
+### 7.2 Worker Deploy Pipeline Specification (2026-02-07)
+
+**Workflow file:** `r2-explorer/.github/workflows/deploy.yml`
+
+#### Triggers
+
+- `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`)
+  with path filter:
+  - `r2-explorer/**`
+  - `r2-explorer/.github/workflows/deploy.yml`
+- `workflow_dispatch` with required `ref` input (default `main`)
+
+#### Job topology
+
+- **Preview deploy job**
+  - Runs only for same-repository PRs (fork PRs skipped because secrets are
+    unavailable).
+  - Uses GitHub Environment `preview`.
+  - Uses concurrency group `r2-explorer-preview-<pr-number>` with
+    `cancel-in-progress: true`.
+  - Runs install/typecheck/tests before deploy.
+  - Deploy command: `pnpm run deploy -- --env preview`.
+- **Production deploy job**
+  - Runs only on `workflow_dispatch`.
+  - Hard-fails unless `ref == main`.
+  - Uses GitHub Environment `production`.
+  - Uses concurrency group `r2-explorer-production` with
+    `cancel-in-progress: false`.
+  - Runs install/typecheck/tests before deploy.
+  - Deploy command: `pnpm run deploy`.
+
+#### Required environment secrets
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+The workflow uses environment-scoped secrets (`preview` and `production`) to
+enforce least-privilege separation and approval gates.
+
+#### Required workflow permissions
+
+- `contents: read`
+- `deployments: write`
+
+#### Wrangler environment scoping
+
+`r2-explorer/wrangler.toml` defines:
+
+- default (production) bindings and vars
+- explicit `[env.preview]` bindings and vars for preview deploys
+
+This allows CI to deploy preview and production with explicit resource
+separation.
+
+#### Protection and failure semantics
+
+- Production deployment remains manual-only in CI.
+- Non-`main` production refs fail immediately with explicit error output.
+- Missing or invalid credentials fail job execution (no silent fallback).
+- No `continue-on-error` behavior is allowed for deploy jobs.
+
+#### Manual deploy compatibility
+
+Local operator deploy paths remain supported:
+
+- `nix run .#deploy`
+- `pnpm run deploy`
+
+CI automation does not remove break-glass/manual deployment workflows.
+
+#### Validation and acceptance checks
+
+- Same-repo PR touching `r2-explorer/**` deploys preview successfully.
+- Fork PR does not attempt deployment.
+- `workflow_dispatch` with `ref=main` deploys production (subject to
+  environment rules).
+- `workflow_dispatch` with non-main `ref` fails before checkout/deploy.
+- Worker checks (`pnpm run check`, `pnpm test`) must pass before any deploy
+  step.

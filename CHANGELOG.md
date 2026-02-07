@@ -58,6 +58,13 @@ and this project follows Conventional Commits.
   - `--target <name>` (repeatable) for scoped checks
   - `--list-targets` for discoverability
   - matrix-aligned targets for root and `r2-explorer` validation
+- Worker deploy automation baseline for Phase 7.2:
+  - `r2-explorer/.github/workflows/deploy.yml` now includes
+    PR-driven preview deploys and manual production deploys
+  - environment-scoped Cloudflare secrets contract
+    (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`)
+  - production deploy guard requiring `workflow_dispatch` with `ref=main`
+- Root `.gitignore` now ignores `node_modules/` directories.
 
 ### Changed
 
@@ -131,6 +138,10 @@ and this project follows Conventional Commits.
     implementation order
   - stale `6.4` reopen note removed and replaced with closure note
   - `README.md` now states Phase 6 is complete and Stage 7 remains open
+- `r2-explorer/wrangler.toml` now defines explicit `[env.preview]`
+  bindings/vars for CI preview deployments.
+- `docs/plan.md` now marks milestone `7.2` complete and includes a
+  decision-complete Worker deploy pipeline specification.
 
 ### Fixed
 

@@ -78,3 +78,25 @@ or:
 ```bash
 pnpm run deploy
 ```
+
+## CI deploy workflow
+
+`r2-explorer/.github/workflows/deploy.yml` provides:
+
+- preview deploys on same-repo PRs affecting `r2-explorer/**`
+- production deploys via `workflow_dispatch` only (`ref` must be `main`)
+
+Required GitHub Environments:
+
+- `preview`
+- `production`
+
+Required environment secrets in both environments:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Recommended protection:
+
+- require protected branches for deployments
+- require reviewer approval on `production`
