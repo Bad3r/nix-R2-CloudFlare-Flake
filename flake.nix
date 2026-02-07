@@ -2,9 +2,11 @@
   description = "Standalone Cloudflare R2 flake (Phase 1 scaffold)";
   nixConfig = {
     extra-substituters = [
+      "https://nix-r2-cloudflare-flake.cachix.org"
       "https://wrangler.cachix.org"
     ];
     extra-trusted-public-keys = [
+      "nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw="
       "wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs="
     ];
   };
