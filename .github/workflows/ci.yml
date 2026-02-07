@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   workflow_dispatch:
 
 jobs:
@@ -36,3 +37,152 @@ jobs:
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target "${{ matrix.target }}"
+
+  security-dependency-audit:
+    name: security-dependency-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: r2-explorer/pnpm-lock.yaml
+
+      - name: Audit flake inputs (root + worker)
+        run: |
+          set -euo pipefail
+
+          run_flake_checker() {
+            local lock_path="$1"
+            for attempt in 1 2 3; do
+              if nix run nixpkgs#flake-checker -- \
+                --no-telemetry \
+                --fail-mode \
+                --check-outdated \
+                --check-owner \
+                --check-supported \
+                "$lock_path"; then
+                return 0
+              fi
+              if [[ "$attempt" -lt 3 ]]; then
+                echo "flake-checker attempt ${attempt} failed for ${lock_path}; retrying..." >&2
+                sleep 5
+              fi
+            done
+            return 1
+          }
+
+          run_flake_checker flake.lock
+          run_flake_checker r2-explorer/flake.lock
+
+      - name: Install Worker dependencies
+        working-directory: r2-explorer
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit Worker dependencies (high+critical)
+        working-directory: r2-explorer
+        run: pnpm audit --audit-level=high
+
+      - name: Build root package for closure scan
+        run: nix build .#r2
+
+      - name: Scan Nix closure with vulnix
+        run: |
+          set -euo pipefail
+          out_path="$(nix path-info .#r2)"
+          for attempt in 1 2 3; do
+            if nix run nixpkgs#vulnix -- -C "$out_path" -w ./scripts/ci/vulnix-whitelist.toml; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "vulnix attempt ${attempt} failed; retrying..." >&2
+              sleep 5
+            fi
+          done
+          echo "vulnix scan failed after retries." >&2
+          exit 1
+
+  security-sensitive-change-policy:
+    name: security-sensitive-change-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Detect sensitive changes
+        id: detect
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sensitivePatterns = [
+              /^\.github\/workflows\/.*/,
+              /(^|\/)flake\.lock$/,
+              /(^|\/)pnpm-lock\.yaml$/
+            ];
+
+            if (context.eventName !== "pull_request") {
+              core.info("Sensitive-change policy is enforced on pull_request events.");
+              core.setOutput("sensitive_changed", "false");
+              core.setOutput("matched_files", "");
+              return;
+            }
+
+            const prNumber = context.payload.pull_request.number;
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                per_page: 100
+              }
+            );
+
+            const matched = files
+              .map((f) => f.filename)
+              .filter((filename) =>
+                sensitivePatterns.some((pattern) => pattern.test(filename))
+              );
+
+            core.info(`Sensitive files changed: ${matched.length}`);
+            core.setOutput("sensitive_changed", matched.length > 0 ? "true" : "false");
+            core.setOutput("matched_files", matched.join("\n"));
+
+      - name: Enforce security review label for sensitive changes
+        if: github.event_name == 'pull_request' && steps.detect.outputs.sensitive_changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const requiredLabel = "security-review-approved";
+            const labels = (context.payload.pull_request.labels || []).map((label) => label.name);
+            if (!labels.includes(requiredLabel)) {
+              const changed = `${{ steps.detect.outputs.matched_files }}`;
+              core.setFailed(
+                [
+                  `Sensitive file changes detected:\n${changed}`,
+                  `Missing required label: ${requiredLabel}`,
+                  "Add the label and ensure CODEOWNER approval before merge."
+                ].join("\n\n")
+              );
+            }

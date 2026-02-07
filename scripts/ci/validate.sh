@@ -127,6 +127,12 @@ parse_args() {
 
 run_docs_checks() {
   local stale_output
+  local search_cmd
+  if command -v rg >/dev/null 2>&1; then
+    search_cmd=(rg)
+  else
+    search_cmd=(grep -R --line-number --extended-regexp)
+  fi
   local required_reference_files=(
     "docs/reference/index.md"
     "docs/reference/services-r2-sync.md"
@@ -141,6 +147,7 @@ run_docs_checks() {
     "docs/operators/access-policy-split.md"
     "docs/operators/incident-response.md"
     "docs/operators/rollback-worker-share.md"
+    "docs/operators/security-gates-remediation.md"
   )
 
   for file in "${required_reference_files[@]}"; do
@@ -151,25 +158,49 @@ run_docs_checks() {
   done
 
   stale_output="$(mktemp "${TMPDIR:-/tmp}/r2-cloud-doc-stale.XXXXXX")"
-  if rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
-    echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
-    cat "${stale_output}" >&2
-    rm -f "${stale_output}"
-    exit 1
+  if [[ ${search_cmd[0]} == "rg" ]]; then
+    if rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
+      echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
+      cat "${stale_output}" >&2
+      rm -f "${stale_output}"
+      exit 1
+    fi
+  else
+    if grep -R --line-number --extended-regexp --include "README.md" --include "*.md" --exclude "plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
+      echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
+      cat "${stale_output}" >&2
+      rm -f "${stale_output}"
+      exit 1
+    fi
   fi
   rm -f "${stale_output}"
 
-  if ! rg -q "docs/reference/index.md" README.md; then
-    echo "README.md must link to docs/reference/index.md." >&2
-    exit 1
-  fi
-  if ! rg -q "docs/reference/index.md" docs/quickstart.md; then
-    echo "docs/quickstart.md must link to docs/reference/index.md." >&2
-    exit 1
-  fi
-  if ! rg -q "docs/reference/index.md" docs/credentials.md; then
-    echo "docs/credentials.md must link to docs/reference/index.md." >&2
-    exit 1
+  if [[ ${search_cmd[0]} == "rg" ]]; then
+    if ! rg -q "docs/reference/index.md" README.md; then
+      echo "README.md must link to docs/reference/index.md." >&2
+      exit 1
+    fi
+    if ! rg -q "docs/reference/index.md" docs/quickstart.md; then
+      echo "docs/quickstart.md must link to docs/reference/index.md." >&2
+      exit 1
+    fi
+    if ! rg -q "docs/reference/index.md" docs/credentials.md; then
+      echo "docs/credentials.md must link to docs/reference/index.md." >&2
+      exit 1
+    fi
+  else
+    if ! grep -q "docs/reference/index.md" README.md; then
+      echo "README.md must link to docs/reference/index.md." >&2
+      exit 1
+    fi
+    if ! grep -q "docs/reference/index.md" docs/quickstart.md; then
+      echo "docs/quickstart.md must link to docs/reference/index.md." >&2
+      exit 1
+    fi
+    if ! grep -q "docs/reference/index.md" docs/credentials.md; then
+      echo "docs/credentials.md must link to docs/reference/index.md." >&2
+      exit 1
+    fi
   fi
 }
 

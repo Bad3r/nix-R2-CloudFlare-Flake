@@ -67,6 +67,18 @@ and this project follows Conventional Commits.
 - Root `.gitignore` now ignores `node_modules/` directories.
 - `treefmt` now runs `actionlint` against workflow files and `taplo format`
   against TOML files.
+- Phase 7.3 security gates:
+  - root CI job `security-dependency-audit` now enforces:
+    - `flake-checker` lock/input policy checks for root and worker lockfiles
+    - Worker `pnpm audit`
+    - Nix closure `vulnix` scan with
+      `scripts/ci/vulnix-whitelist.toml` baseline
+  - root CI job `security-sensitive-change-policy` enforcing sensitive-file
+    PR label requirements
+  - CODEOWNERS protection for workflow and lockfile updates
+  - pre-commit `ripsecrets` scanning via `lefthook`
+  - operator remediation runbook in
+    `docs/operators/security-gates-remediation.md`
 
 ### Changed
 
@@ -146,6 +158,8 @@ and this project follows Conventional Commits.
   decision-complete Worker deploy pipeline specification.
 - `flake.nix` formatter/hook toolchains now include `actionlint` and `taplo`
   so `nix fmt` and hook/CI runs can execute the expanded `treefmt` config.
+- `docs/plan.md` now marks milestones `7.3` and `7.6` complete, with closure
+  notes documenting required checks and branch protection controls.
 
 ### Fixed
 
