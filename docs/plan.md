@@ -1161,6 +1161,8 @@ CI automation does not remove break-glass/manual deployment workflows.
   - `security-dependency-audit`
   - `security-sensitive-change-policy`
 - Dependency gates:
+  - Flake lock/input policy scan: `flake-checker` (`--check-outdated`,
+    `--check-owner`, `--check-supported`) on root and worker lockfiles
   - Worker dependency audit: `pnpm audit --audit-level=high`
   - Nix closure scan: `vulnix` against built `.#r2` output with tracked
     baseline allowlist `scripts/ci/vulnix-whitelist.toml`

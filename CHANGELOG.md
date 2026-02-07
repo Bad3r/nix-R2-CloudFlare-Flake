@@ -68,8 +68,11 @@ and this project follows Conventional Commits.
 - `treefmt` now runs `actionlint` against workflow files and `taplo format`
   against TOML files.
 - Phase 7.3 security gates:
-  - root CI job `security-dependency-audit` (Worker `pnpm audit` + Nix
-    closure `vulnix` scan with `scripts/ci/vulnix-whitelist.toml` baseline)
+  - root CI job `security-dependency-audit` now enforces:
+    - `flake-checker` lock/input policy checks for root and worker lockfiles
+    - Worker `pnpm audit`
+    - Nix closure `vulnix` scan with
+      `scripts/ci/vulnix-whitelist.toml` baseline
   - root CI job `security-sensitive-change-policy` enforcing sensitive-file
     PR label requirements
   - CODEOWNERS protection for workflow and lockfile updates

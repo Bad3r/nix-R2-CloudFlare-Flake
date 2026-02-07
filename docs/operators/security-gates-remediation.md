@@ -8,6 +8,9 @@ gates fail.
 ## Gates Covered
 
 - Dependency audit gate (`security-dependency-audit`):
+  - `flake-checker` lock/input policy checks for:
+    - `flake.lock`
+    - `r2-explorer/flake.lock`
   - `pnpm audit --audit-level=high` for `r2-explorer`
   - `vulnix` scan for the built `.#r2` Nix closure
   - baseline allowlist: `scripts/ci/vulnix-whitelist.toml`
@@ -31,6 +34,8 @@ gates fail.
 
 ```bash
 ./scripts/ci/validate.sh --target root-format-lint
+nix run nixpkgs#flake-checker -- --no-telemetry --fail-mode --check-outdated --check-owner --check-supported flake.lock
+nix run nixpkgs#flake-checker -- --no-telemetry --fail-mode --check-outdated --check-owner --check-supported r2-explorer/flake.lock
 cd r2-explorer && pnpm install --frozen-lockfile && pnpm audit --audit-level=high
 nix build .#r2
 nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whitelist.toml
@@ -40,6 +45,10 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
    - For `pnpm audit` findings:
      - upgrade or replace vulnerable dependencies
      - regenerate `r2-explorer/pnpm-lock.yaml` and rerun audit
+   - For `flake-checker` findings:
+     - update stale flake inputs (`nix flake update` scoped as needed)
+     - replace unsupported or non-owner-pinned nixpkgs references
+     - rerun `flake-checker` against both lockfiles
    - For `vulnix` findings:
      - update pinned flake inputs (`flake.lock`, `r2-explorer/flake.lock`)
      - rebuild and rerun `vulnix`
@@ -57,6 +66,7 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
 ## Failure Signatures
 
 - `pnpm audit` exits non-zero with high/critical vulnerabilities.
+- `flake-checker` reports outdated/unsupported/non-compliant flake inputs.
 - `vulnix` reports non-empty results for closure CVEs.
 - `ripsecrets` reports potential secret patterns in changed files.
 - Policy check reports changed sensitive files and missing required label.

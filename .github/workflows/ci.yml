@@ -67,6 +67,33 @@ jobs:
           cache: pnpm
           cache-dependency-path: r2-explorer/pnpm-lock.yaml
 
+      - name: Audit flake inputs (root + worker)
+        run: |
+          set -euo pipefail
+
+          run_flake_checker() {
+            local lock_path="$1"
+            for attempt in 1 2 3; do
+              if nix run nixpkgs#flake-checker -- \
+                --no-telemetry \
+                --fail-mode \
+                --check-outdated \
+                --check-owner \
+                --check-supported \
+                "$lock_path"; then
+                return 0
+              fi
+              if [[ "$attempt" -lt 3 ]]; then
+                echo "flake-checker attempt ${attempt} failed for ${lock_path}; retrying..." >&2
+                sleep 5
+              fi
+            done
+            return 1
+          }
+
+          run_flake_checker flake.lock
+          run_flake_checker r2-explorer/flake.lock
+
       - name: Install Worker dependencies
         working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
