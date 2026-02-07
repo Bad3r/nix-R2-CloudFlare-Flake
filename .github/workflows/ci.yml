@@ -244,7 +244,7 @@ jobs:
     steps:
       - name: Detect sensitive changes
         id: detect
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const sensitivePatterns = [
@@ -283,7 +283,7 @@ jobs:
 
       - name: Enforce security review label for sensitive changes
         if: github.event_name == 'pull_request' && steps.detect.outputs.sensitive_changed == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const requiredLabel = "security-review-approved";
