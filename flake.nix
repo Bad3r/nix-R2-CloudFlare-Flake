@@ -105,6 +105,7 @@
             ++ optionalPkg "taplo"
             ++ optionalPkg "actionlint"
             ++ optionalPkg "yamllint"
+            ++ optionalPkg "ripsecrets"
             ++ [
               self.packages.${system}.lefthook-treefmt
               self.packages.${system}.lefthook-statix

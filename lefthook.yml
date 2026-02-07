@@ -42,3 +42,8 @@ pre-commit:
             tags: [nix]
             run: lefthook-statix {files}
             fail_text: "Nix anti-patterns found. Run: statix fix <file>"
+
+    - name: secrets
+      priority: 3
+      run: ripsecrets --strict-ignore {files}
+      fail_text: "Potential secrets detected. Remove secrets or add an explicit .secretsignore entry."

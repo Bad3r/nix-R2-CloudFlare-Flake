@@ -1070,10 +1070,10 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------ |
 | **7.1 CI matrix baseline**              | Build root CI jobs for format/lint/flake/module eval and Worker typecheck/tests.                                       | `.github/workflows/ci.yml` jobs for root + `r2-explorer` checks.              | PRs must pass full validation equivalent to `./scripts/ci/validate.sh`.                   | [x]    |
 | **7.2 Worker deploy pipeline**          | Implement deploy workflow for `r2-explorer` with environment scoping, required secrets, and protected branch controls. | `r2-explorer/.github/workflows/deploy.yml` production-ready workflow.         | Controlled deployment to Worker using CI credentials only; manual deploy still supported. | [x]    |
-| **7.3 Security and supply-chain gates** | Add dependency audit, secret scanning, and policy checks for changed files and lockfiles.                              | CI security jobs and documented remediation process.                          | Security gates fail on critical findings and block release merges.                        | [ ]    |
+| **7.3 Security and supply-chain gates** | Add dependency audit, secret scanning, and policy checks for changed files and lockfiles.                              | CI security jobs and documented remediation process.                          | Security gates fail on critical findings and block release merges.                        | [x]    |
 | **7.4 Release automation**              | Add semver/tag workflow, changelog generation, and release notes for root + worker updates.                            | Release workflow(s), versioning policy, and changelog process docs.           | Tagged release produces reproducible artifacts and clear upgrade notes.                   | [ ]    |
 | **7.5 Deploy verification + rollback**  | Add post-deploy smoke checks and rollback playbook for Worker and CLI-impacting changes.                               | Post-deploy checks + rollback runbook + optional canary/manual approval step. | Failed smoke checks trigger rollback path with documented operator actions.               | [ ]    |
-| **7.6 Branch protection enforcement**   | Wire required checks, review policy, and merge guards to prevent bypassing release quality bars.                       | Repository protection configuration documented and enabled.                   | Main branch requires green CI + review before merge/deploy.                               | [ ]    |
+| **7.6 Branch protection enforcement**   | Wire required checks, review policy, and merge guards to prevent bypassing release quality bars.                       | Repository protection configuration documented and enabled.                   | Main branch requires green CI + review before merge/deploy.                               | [x]    |
 
 ### 7.2 Worker Deploy Pipeline Specification (2026-02-07)
 
@@ -1154,3 +1154,31 @@ CI automation does not remove break-glass/manual deployment workflows.
 - `workflow_dispatch` with non-main `ref` fails before checkout/deploy.
 - Worker checks (`pnpm run check`, `pnpm test`) must pass before any deploy
   step.
+
+### 7.3/7.6 Closure Note (2026-02-07)
+
+- Root CI now includes security jobs:
+  - `security-dependency-audit`
+  - `security-sensitive-change-policy`
+- Dependency gates:
+  - Worker dependency audit: `pnpm audit --audit-level=high`
+  - Nix closure scan: `vulnix` against built `.#r2` output with tracked
+    baseline allowlist `scripts/ci/vulnix-whitelist.toml`
+- Secret scanning is enforced through `lefthook` pre-commit `ripsecrets`,
+  and CI execution of `lefthook run pre-commit --all-files`.
+- Sensitive file policy:
+  - changed `**/flake.lock`, `**/pnpm-lock.yaml`, and `.github/workflows/*`
+    require PR label `security-review-approved`
+  - CODEOWNER protections applied for those files
+- `main` branch protection now requires:
+  - required checks:
+    - `validate (root-format-lint)`
+    - `validate (root-flake-template-docs)`
+    - `validate (root-cli-module-eval)`
+    - `validate (worker-typecheck-test)`
+    - `security-dependency-audit`
+    - `security-sensitive-change-policy`
+  - at least one approving review
+  - code owner reviews
+  - conversation resolution
+  - up-to-date branch before merge

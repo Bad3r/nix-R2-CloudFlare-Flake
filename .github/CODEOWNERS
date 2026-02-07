@@ -1,0 +1,5 @@
+# Sensitive automation and lockfiles require explicit owner review.
+/.github/workflows/* @Bad3r
+/flake.lock @Bad3r
+/r2-explorer/flake.lock @Bad3r
+/r2-explorer/pnpm-lock.yaml @Bad3r

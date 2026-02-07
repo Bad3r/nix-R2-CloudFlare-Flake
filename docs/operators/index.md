@@ -14,6 +14,7 @@ with `docs/troubleshooting.md`.
 - [Access policy split](./access-policy-split.md)
 - [Incident response](./incident-response.md)
 - [Rollback of Worker/share configuration](./rollback-worker-share.md)
+- [Security gates remediation](./security-gates-remediation.md)
 
 ## Baseline prerequisites
 

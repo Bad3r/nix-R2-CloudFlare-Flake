@@ -141,6 +141,7 @@ run_docs_checks() {
     "docs/operators/access-policy-split.md"
     "docs/operators/incident-response.md"
     "docs/operators/rollback-worker-share.md"
+    "docs/operators/security-gates-remediation.md"
   )
 
   for file in "${required_reference_files[@]}"; do
