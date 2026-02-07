@@ -7,21 +7,17 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  validate:
+  validate-root-format-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CI_STRICT: "1"
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - root-format-lint
-          - root-flake-template-docs
-          - root-cli-module-eval
-          - worker-typecheck-test
-    name: validate (${{ matrix.target }})
+    name: validate (root-format-lint)
 
     steps:
       - name: Checkout
@@ -34,9 +30,115 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
-        run: ./scripts/ci/validate.sh --target "${{ matrix.target }}"
+        run: ./scripts/ci/validate.sh --target root-format-lint
+
+  validate-root-flake-template-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI_STRICT: "1"
+    name: validate (root-flake-template-docs)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target root-flake-template-docs
+
+  validate-root-cli-module-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI_STRICT: "1"
+    name: validate (root-cli-module-eval)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target root-cli-module-eval
+
+  validate-worker-typecheck-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI_STRICT: "1"
+    name: validate (worker-typecheck-test)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target worker-typecheck-test
 
   security-dependency-audit:
     name: security-dependency-audit
@@ -55,6 +157,16 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

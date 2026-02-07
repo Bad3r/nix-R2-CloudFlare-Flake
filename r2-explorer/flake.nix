@@ -1,10 +1,23 @@
 {
   description = "R2-Explorer Worker subflake";
+  nixConfig = {
+    extra-substituters = [
+      "https://nix-r2-cloudflare-flake.cachix.org"
+      "https://wrangler.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw="
+      "wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs="
+    ];
+  };
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    wrangler.url = "github:emrldnix/wrangler";
+  };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, wrangler, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -19,13 +32,7 @@
         default =
           let
             hasNodePackages = builtins.hasAttr "nodePackages" pkgs;
-            wranglerPkg =
-              if hasNodePackages && builtins.hasAttr "wrangler" pkgs.nodePackages then
-                pkgs.nodePackages.wrangler
-              else if builtins.hasAttr "wrangler" pkgs then
-                pkgs.wrangler
-              else
-                null;
+            wranglerPkg = wrangler.packages.${pkgs.system}.default;
             pnpmPkg =
               if hasNodePackages && builtins.hasAttr "pnpm" pkgs.nodePackages then
                 pkgs.nodePackages.pnpm
@@ -40,7 +47,7 @@
               pkgs.jq
             ]
             ++ pkgs.lib.optional (pnpmPkg != null) pnpmPkg
-            ++ pkgs.lib.optional (wranglerPkg != null) wranglerPkg;
+            ++ [ wranglerPkg ];
           };
       });
 
@@ -48,13 +55,7 @@
         pkgs:
         let
           hasNodePackages = builtins.hasAttr "nodePackages" pkgs;
-          wranglerPkg =
-            if hasNodePackages && builtins.hasAttr "wrangler" pkgs.nodePackages then
-              pkgs.nodePackages.wrangler
-            else if builtins.hasAttr "wrangler" pkgs then
-              pkgs.wrangler
-            else
-              null;
+          wranglerPkg = wrangler.packages.${pkgs.system}.default;
           pnpmPkg =
             if hasNodePackages && builtins.hasAttr "pnpm" pkgs.nodePackages then
               pkgs.nodePackages.pnpm
@@ -63,7 +64,7 @@
             else
               null;
           pnpmCmd = if pnpmPkg != null then "${pnpmPkg}/bin/pnpm" else "pnpm";
-          wranglerCmd = if wranglerPkg != null then "${wranglerPkg}/bin/wrangler" else "wrangler";
+          wranglerCmd = "${wranglerPkg}/bin/wrangler";
         in
         {
           deploy = pkgs.writeShellApplication {
@@ -73,7 +74,7 @@
               pkgs.jq
             ]
             ++ pkgs.lib.optional (pnpmPkg != null) pnpmPkg
-            ++ pkgs.lib.optional (wranglerPkg != null) wranglerPkg;
+            ++ [ wranglerPkg ];
             text = ''
               set -euo pipefail
 

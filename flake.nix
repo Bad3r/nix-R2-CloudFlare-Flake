@@ -1,5 +1,15 @@
 {
   description = "Standalone Cloudflare R2 flake (Phase 1 scaffold)";
+  nixConfig = {
+    extra-substituters = [
+      "https://nix-r2-cloudflare-flake.cachix.org"
+      "https://wrangler.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw="
+      "wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs="
+    ];
+  };
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -8,6 +18,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-parts.url = "github:hercules-ci/flake-parts";
+    wrangler.url = "github:emrldnix/wrangler";
   };
 
   outputs =
@@ -15,6 +26,7 @@
       self,
       nixpkgs,
       flake-parts,
+      wrangler,
       ...
     }:
     flake-parts.lib.mkFlake { inherit inputs; } {
@@ -57,7 +69,6 @@
       perSystem =
         {
           pkgs,
-          lib,
           system,
           ...
         }:
@@ -69,13 +80,7 @@
               [ pkgs.nodePackages.${name} ]
             else
               [ ];
-          wranglerPkg =
-            if builtins.hasAttr "nodePackages" pkgs && builtins.hasAttr "wrangler" pkgs.nodePackages then
-              pkgs.nodePackages.wrangler
-            else if builtins.hasAttr "wrangler" pkgs then
-              pkgs.wrangler
-            else
-              null;
+          wranglerPkg = wrangler.packages.${system}.default;
           formatterPkg =
             if builtins.hasAttr "treefmt" pkgs then
               pkgs.writeShellApplication {
@@ -192,7 +197,7 @@
             ]
             ++ optionalPkg "git-annex"
             ++ hookToolPackages
-            ++ lib.optional (wranglerPkg != null) wranglerPkg;
+            ++ [ wranglerPkg ];
 
             shellHook = hookShellSetup;
           };
@@ -201,7 +206,8 @@
               pkgs.coreutils
               pkgs.git
             ]
-            ++ hookToolPackages;
+            ++ hookToolPackages
+            ++ optionalPkg "vulnix";
             shellHook = hookShellSetup;
           };
 

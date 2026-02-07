@@ -1,0 +1,56 @@
+version: 2
+
+updates:
+  # ── npm (pnpm) dependencies for the Cloudflare Worker ──
+  - package-ecosystem: "npm"
+    directory: "/r2-explorer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    open-pull-requests-limit: 10
+    groups:
+      cloudflare:
+        patterns:
+          - "@cloudflare/*"
+          - "wrangler"
+          - "miniflare"
+        update-types:
+          - "minor"
+          - "patch"
+      testing:
+        patterns:
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── GitHub Actions used in CI and deploy workflows ──
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/r2-explorer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "actions/*"
+        update-types:
+          - "minor"
+          - "patch"

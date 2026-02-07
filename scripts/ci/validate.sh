@@ -7,6 +7,11 @@ cd "${REPO_ROOT}"
 CACHE_URL_DEFAULT="https://cache.nixos.org"
 CACHE_URL="${NIX_VALIDATE_CACHE_URL:-${CACHE_URL_DEFAULT}}"
 CACHE_INFO_URL="${CACHE_URL%/}/nix-cache-info"
+PROJECT_CACHE_URL="https://nix-r2-cloudflare-flake.cachix.org/"
+WRANGLER_CACHE_URL="https://wrangler.cachix.org/"
+CACHE_NIXOS_KEY="cache.nixos.org-1:6NCHdD59X431o0gWypbYQ2I6D8sfr8Y9f3l8S8d5N9Q="
+PROJECT_CACHE_KEY="nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw="
+WRANGLER_CACHE_KEY="wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs="
 
 # Force deterministic cache settings for CI and local reproducibility.
 # This avoids inheriting slow/unreachable user-level extra substituters.
@@ -20,14 +25,14 @@ fi
 if [[ -n ${NIX_VALIDATE_SUBSTITUTERS:-} ]]; then
   SUBSTITUTERS_LINE="substituters = ${NIX_VALIDATE_SUBSTITUTERS}"
 elif curl -fsSI --max-time 5 "${CACHE_INFO_URL}" >/dev/null 2>&1; then
-  SUBSTITUTERS_LINE="substituters = ${CACHE_URL%/}/"
+  SUBSTITUTERS_LINE="substituters = ${CACHE_URL%/}/ ${PROJECT_CACHE_URL} ${WRANGLER_CACHE_URL}"
 else
-  echo "Warning: ${CACHE_INFO_URL} is unreachable. Disabling substituters for this run." >&2
-  echo "Set NIX_VALIDATE_SUBSTITUTERS to a reachable cache to avoid source builds." >&2
-  SUBSTITUTERS_LINE="substituters ="
+  echo "Warning: ${CACHE_INFO_URL} is unreachable. Using ${PROJECT_CACHE_URL} and ${WRANGLER_CACHE_URL} only." >&2
+  echo "Set NIX_VALIDATE_SUBSTITUTERS to override default substituters for this run." >&2
+  SUBSTITUTERS_LINE="substituters = ${PROJECT_CACHE_URL} ${WRANGLER_CACHE_URL}"
 fi
 
-PINNED_NIX_CONFIG="${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbYQ2I6D8sfr8Y9f3l8S8d5N9Q="$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
+PINNED_NIX_CONFIG="${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = ${CACHE_NIXOS_KEY} ${PROJECT_CACHE_KEY} ${WRANGLER_CACHE_KEY}"$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
 
 if [[ -n ${NIX_CONFIG:-} ]]; then
   export NIX_CONFIG="${NIX_CONFIG}"$'\n'"${PINNED_NIX_CONFIG}"
@@ -127,12 +132,50 @@ parse_args() {
 
 run_docs_checks() {
   local stale_output
-  local search_cmd
+  local search_backend
+  local check_file
   if command -v rg >/dev/null 2>&1; then
-    search_cmd=(rg)
+    search_backend="rg"
   else
-    search_cmd=(grep -R --line-number --extended-regexp)
+    search_backend="grep"
   fi
+
+  contains_pattern() {
+    local pattern="$1"
+    local file="$2"
+    case "${search_backend}" in
+    rg)
+      rg -q "${pattern}" "${file}"
+      ;;
+    grep)
+      grep -q "${pattern}" "${file}"
+      ;;
+    *)
+      echo "Unsupported docs search backend: ${search_backend}" >&2
+      exit 1
+      ;;
+    esac
+  }
+
+  scan_stale_phase_language() {
+    local output_file="$1"
+    case "${search_backend}" in
+    rg)
+      rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" \
+        "Phase[[:space:]]+[0-9]+" README.md docs >"${output_file}"
+      ;;
+    grep)
+      grep -R --line-number --extended-regexp --include "README.md" \
+        --include "*.md" --exclude "plan.md" "Phase[[:space:]]+[0-9]+" \
+        README.md docs >"${output_file}"
+      ;;
+    *)
+      echo "Unsupported docs search backend: ${search_backend}" >&2
+      exit 1
+      ;;
+    esac
+  }
+
   local required_reference_files=(
     "docs/reference/index.md"
     "docs/reference/services-r2-sync.md"
@@ -158,50 +201,20 @@ run_docs_checks() {
   done
 
   stale_output="$(mktemp "${TMPDIR:-/tmp}/r2-cloud-doc-stale.XXXXXX")"
-  if [[ ${search_cmd[0]} == "rg" ]]; then
-    if rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
-      echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
-      cat "${stale_output}" >&2
-      rm -f "${stale_output}"
-      exit 1
-    fi
-  else
-    if grep -R --line-number --extended-regexp --include "README.md" --include "*.md" --exclude "plan.md" "Phase[[:space:]]+[0-9]+" README.md docs >"${stale_output}"; then
-      echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
-      cat "${stale_output}" >&2
-      rm -f "${stale_output}"
-      exit 1
-    fi
+  if scan_stale_phase_language "${stale_output}"; then
+    echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
+    cat "${stale_output}" >&2
+    rm -f "${stale_output}"
+    exit 1
   fi
   rm -f "${stale_output}"
 
-  if [[ ${search_cmd[0]} == "rg" ]]; then
-    if ! rg -q "docs/reference/index.md" README.md; then
-      echo "README.md must link to docs/reference/index.md." >&2
+  for check_file in README.md docs/quickstart.md docs/credentials.md; do
+    if ! contains_pattern "docs/reference/index.md" "${check_file}"; then
+      echo "${check_file} must link to docs/reference/index.md." >&2
       exit 1
     fi
-    if ! rg -q "docs/reference/index.md" docs/quickstart.md; then
-      echo "docs/quickstart.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-    if ! rg -q "docs/reference/index.md" docs/credentials.md; then
-      echo "docs/credentials.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-  else
-    if ! grep -q "docs/reference/index.md" README.md; then
-      echo "README.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-    if ! grep -q "docs/reference/index.md" docs/quickstart.md; then
-      echo "docs/quickstart.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-    if ! grep -q "docs/reference/index.md" docs/credentials.md; then
-      echo "docs/credentials.md must link to docs/reference/index.md." >&2
-      exit 1
-    fi
-  fi
+  done
 }
 
 run_quality_checks_in_temp_checkout() {
