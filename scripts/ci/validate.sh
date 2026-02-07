@@ -330,6 +330,9 @@ run_quality_checks_in_temp_checkout
 run nix build .#r2
 run nix run .#r2 -- help
 run nix run .#r2 -- bucket help
+run nix run .#r2 -- share help
+run nix run .#r2 -- share worker help
+run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install && pnpm run check && pnpm test"
 nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"
 nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
 nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"
