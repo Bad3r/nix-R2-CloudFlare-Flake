@@ -32,7 +32,7 @@ else
   SUBSTITUTERS_LINE="substituters = ${PROJECT_CACHE_URL} ${WRANGLER_CACHE_URL}"
 fi
 
-PINNED_NIX_CONFIG="${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = ${CACHE_NIXOS_KEY} ${PROJECT_CACHE_KEY} ${WRANGLER_CACHE_KEY}"$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
+PINNED_NIX_CONFIG="accept-flake-config = true"$'\n'"${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = ${CACHE_NIXOS_KEY} ${PROJECT_CACHE_KEY} ${WRANGLER_CACHE_KEY}"$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
 
 if [[ -n ${NIX_CONFIG:-} ]]; then
   export NIX_CONFIG="${NIX_CONFIG}"$'\n'"${PINNED_NIX_CONFIG}"
