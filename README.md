@@ -54,6 +54,14 @@ The validation flow also runs Worker checks/tests in `r2-explorer`
 If cache access is unavailable, validation disables substituters for that run to avoid
 repeated timeout loops. Override cache selection with `NIX_VALIDATE_SUBSTITUTERS`.
 
+Run a specific CI-equivalent target locally:
+
+```bash
+./scripts/ci/validate.sh --list-targets
+./scripts/ci/validate.sh --target root-cli-module-eval
+./scripts/ci/validate.sh --target worker-typecheck-test
+```
+
 Set `CI_STRICT=1` to fail fast on cache/network issues instead of falling back to
 local builds:
 

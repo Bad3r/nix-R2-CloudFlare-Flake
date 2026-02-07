@@ -9,9 +9,18 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     env:
       CI_STRICT: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - root-format-lint
+          - root-flake-template-docs
+          - root-cli-module-eval
+          - worker-typecheck-test
+    name: validate (${{ matrix.target }})
 
     steps:
       - name: Checkout
@@ -25,5 +34,5 @@ jobs:
             experimental-features = nix-command flakes
             require-sigs = false
 
-      - name: Validate repository
-        run: ./scripts/ci/validate.sh
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target "${{ matrix.target }}"

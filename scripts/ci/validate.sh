@@ -40,6 +40,91 @@ run() {
   "$@"
 }
 
+ALL_TARGETS=(
+  "root-format-lint"
+  "root-flake-template-docs"
+  "root-cli-module-eval"
+  "worker-typecheck-test"
+)
+
+print_usage() {
+  cat <<'EOF'
+Usage: ./scripts/ci/validate.sh [--target <name>]... [--list-targets]
+
+Options:
+  --target <name>   Run only the named validation target (repeatable).
+  --list-targets    Print all available targets and exit.
+  -h, --help        Show this help.
+
+If no --target is provided, all targets are run in baseline CI order.
+EOF
+}
+
+print_targets() {
+  for target in "${ALL_TARGETS[@]}"; do
+    echo "${target}"
+  done
+}
+
+is_valid_target() {
+  local candidate="$1"
+  local target
+  for target in "${ALL_TARGETS[@]}"; do
+    if [[ ${target} == "${candidate}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+parse_args() {
+  local arg
+  SELECTED_TARGETS=()
+
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "${arg}" in
+    --target)
+      if [[ $# -lt 2 ]]; then
+        echo "--target requires a value." >&2
+        exit 1
+      fi
+      if [[ -z ${2} ]]; then
+        echo "--target requires a non-empty value." >&2
+        exit 1
+      fi
+      SELECTED_TARGETS+=("$2")
+      shift 2
+      ;;
+    --list-targets)
+      print_targets
+      exit 0
+      ;;
+    -h | --help)
+      print_usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: ${arg}" >&2
+      print_usage >&2
+      exit 1
+      ;;
+    esac
+  done
+
+  if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
+    SELECTED_TARGETS=("${ALL_TARGETS[@]}")
+  fi
+
+  for arg in "${SELECTED_TARGETS[@]}"; do
+    if ! is_valid_target "${arg}"; then
+      echo "Unknown validation target: ${arg}" >&2
+      echo "Use --list-targets to see supported values." >&2
+      exit 1
+    fi
+  done
+}
+
 run_docs_checks() {
   local stale_output
   local required_reference_files=(
@@ -163,15 +248,15 @@ nix_eval_expect_failure() {
   local expected_substring="$2"
   local expr="$3"
   local output
-  local status
+  local exit_code
 
   echo "+ nix eval (expected failure: ${label})"
   set +e
   output="$(nix eval --impure --raw --expr "${expr}" 2>&1)"
-  status=$?
+  exit_code=$?
   set -e
 
-  if [[ ${status} -eq 0 ]]; then
+  if [[ ${exit_code} -eq 0 ]]; then
     echo "Expected nix eval to fail for ${label}, but it succeeded." >&2
     exit 1
   fi
@@ -456,29 +541,68 @@ if builtins.any (a: a.message == expected) failed then "ok" else builtins.throw 
 NIX
 )"
 
-run nix flake check
-run_template_checks
-run_docs_checks
-run_quality_checks_in_temp_checkout
-run nix build .#r2
-run nix run .#r2 -- help
-run nix run .#r2 -- bucket help
-run nix run .#r2 -- share help
-run nix run .#r2 -- share worker help
-run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install && pnpm run check && pnpm test"
-nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"
-nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
-nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"
-nix_eval_expect "r2-restic assertions (negative)" "ok" "${R2_RESTIC_ASSERTION_EXPR}"
-nix_eval_expect "git-annex module (positive)" "ok" "${GIT_ANNEX_POSITIVE_EXPR}"
-nix_eval_expect "git-annex assertions (negative)" "ok" "${GIT_ANNEX_ASSERTION_EXPR}"
-nix_eval_expect "home-manager r2-cloud wrapper (positive)" "ok" "${HM_R2_CLI_POSITIVE_EXPR}"
-nix_eval_expect "home-manager rclone config (positive)" "ok" "${HM_RCLONE_CONFIG_POSITIVE_EXPR}"
-nix_eval_expect_failure \
-  "home-manager r2-cloud assertions (negative)" \
-  "programs.r2-cloud.accountId must be set when programs.r2-cloud.enable = true" \
-  "${HM_R2_CLI_ASSERTION_EXPR}"
-nix_eval_expect_failure \
-  "home-manager credentials assertions (negative)" \
-  "programs.r2-cloud.credentials.accessKeyIdFile must be set when programs.r2-cloud.credentials.manage = true" \
-  "${HM_R2_CREDENTIALS_ASSERTION_EXPR}"
+run_target_root_format_lint() {
+  run_quality_checks_in_temp_checkout
+}
+
+run_target_root_flake_template_docs() {
+  run nix flake check
+  run_template_checks
+  run_docs_checks
+}
+
+run_target_root_cli_module_eval() {
+  run nix build .#r2
+  run nix run .#r2 -- help
+  run nix run .#r2 -- bucket help
+  run nix run .#r2 -- share help
+  run nix run .#r2 -- share worker help
+  nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"
+  nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
+  nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"
+  nix_eval_expect "r2-restic assertions (negative)" "ok" "${R2_RESTIC_ASSERTION_EXPR}"
+  nix_eval_expect "git-annex module (positive)" "ok" "${GIT_ANNEX_POSITIVE_EXPR}"
+  nix_eval_expect "git-annex assertions (negative)" "ok" "${GIT_ANNEX_ASSERTION_EXPR}"
+  nix_eval_expect "home-manager r2-cloud wrapper (positive)" "ok" "${HM_R2_CLI_POSITIVE_EXPR}"
+  nix_eval_expect "home-manager rclone config (positive)" "ok" "${HM_RCLONE_CONFIG_POSITIVE_EXPR}"
+  nix_eval_expect_failure \
+    "home-manager r2-cloud assertions (negative)" \
+    "programs.r2-cloud.accountId must be set when programs.r2-cloud.enable = true" \
+    "${HM_R2_CLI_ASSERTION_EXPR}"
+  nix_eval_expect_failure \
+    "home-manager credentials assertions (negative)" \
+    "programs.r2-cloud.credentials.accessKeyIdFile must be set when programs.r2-cloud.credentials.manage = true" \
+    "${HM_R2_CREDENTIALS_ASSERTION_EXPR}"
+}
+
+run_target_worker_typecheck_test() {
+  run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install --frozen-lockfile && pnpm run check && pnpm test"
+}
+
+run_target() {
+  local target="$1"
+  case "${target}" in
+  root-format-lint)
+    run_target_root_format_lint
+    ;;
+  root-flake-template-docs)
+    run_target_root_flake_template_docs
+    ;;
+  root-cli-module-eval)
+    run_target_root_cli_module_eval
+    ;;
+  worker-typecheck-test)
+    run_target_worker_typecheck_test
+    ;;
+  *)
+    echo "Unknown validation target: ${target}" >&2
+    exit 1
+    ;;
+  esac
+}
+
+parse_args "$@"
+
+for selected in "${SELECTED_TARGETS[@]}"; do
+  run_target "${selected}"
+done

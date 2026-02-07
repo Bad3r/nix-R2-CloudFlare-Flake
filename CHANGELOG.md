@@ -54,6 +54,10 @@ and this project follows Conventional Commits.
   - restic
   - multipart upload
   - share token validation
+- Targeted CI validation interface in `scripts/ci/validate.sh`:
+  - `--target <name>` (repeatable) for scoped checks
+  - `--list-targets` for discoverability
+  - matrix-aligned targets for root and `r2-explorer` validation
 
 ### Changed
 
@@ -116,6 +120,12 @@ and this project follows Conventional Commits.
   - `docs/quickstart.md`
   - `docs/sync.md`
   - `docs/versioning.md`
+- `.github/workflows/ci.yml` now executes a target matrix across:
+  - `root-format-lint`
+  - `root-flake-template-docs`
+  - `root-cli-module-eval`
+  - `worker-typecheck-test`
+- `docs/plan.md` now marks milestone `7.1` complete.
 - Phase 6 documentation status is now fully closed:
   - `docs/plan.md` marks `6.4` complete and sets Phase 6 complete in
     implementation order
