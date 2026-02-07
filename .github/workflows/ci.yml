@@ -66,21 +66,57 @@ jobs:
             /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
-  validate:
+  validate-root-format-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI_STRICT: "1"
+    name: validate (root-format-lint)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target root-format-lint
+
+  validate-root-flake-template-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI_STRICT: "1"
+    name: validate (root-flake-template-docs)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target root-flake-template-docs
+
+  validate-root-cli-module-eval:
     needs: [prepare-build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CI_STRICT: "1"
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - root-format-lint
-          - root-flake-template-docs
-          - root-cli-module-eval
-          - worker-typecheck-test
-    name: validate (${{ matrix.target }})
+    name: validate (root-cli-module-eval)
 
     steps:
       - name: Checkout
@@ -118,7 +154,50 @@ jobs:
           nix path-info "$out_path" >/dev/null
 
       - name: Validate target
-        run: ./scripts/ci/validate.sh --target "${{ matrix.target }}"
+        run: ./scripts/ci/validate.sh --target root-cli-module-eval
+
+      - name: Save Nix cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+
+  validate-worker-typecheck-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI_STRICT: "1"
+    name: validate (worker-typecheck-test)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+
+      - name: Restore Nix cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+          restore-keys: |
+            nix-${{ runner.os }}-
+
+      - name: Validate target
+        run: ./scripts/ci/validate.sh --target worker-typecheck-test
 
       - name: Save Nix cache
         uses: actions/cache/save@v4
