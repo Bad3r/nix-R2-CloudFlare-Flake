@@ -31,6 +31,22 @@ Expected result:
 - restic creates snapshot(s)
 - retention policy runs in the same unit invocation
 
+Repository checkpoint:
+
+```bash
+set -a
+source /run/secrets/r2-credentials
+set +a
+export RESTIC_PASSWORD_FILE=/run/secrets/restic-password
+
+restic -r "s3:https://<account-id>.r2.cloudflarestorage.com/backups" snapshots
+```
+
+Expected result:
+
+- at least one snapshot is listed for `/srv/r2/workspace`
+- command exits without repository/authentication errors
+
 ## git-annex content workflow (`programs.git-annex-r2`)
 
 The full template installs `git-annex-r2-init` and sets defaults:
@@ -68,3 +84,15 @@ Expected result:
 
 - annex metadata remains in git
 - file content is pushed/pulled via the R2-backed special remote
+
+Remote-placement checkpoint:
+
+```bash
+git annex whereis large-file.bin
+git annex info r2
+```
+
+Expected result:
+
+- `whereis` output includes the `r2` special remote for content availability
+- `git annex info r2` reports the configured remote state without errors

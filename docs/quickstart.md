@@ -55,7 +55,7 @@ Expected result:
 
 - `nix flake check` completes without editing template structure
 
-## 4. Build and activate
+## 4. Evaluate activation (no runtime changes)
 
 Minimal template:
 
@@ -73,22 +73,79 @@ Expected result:
 
 - no module assertion failures for `services.r2-sync`, `services.r2-restic`, or `programs.git-annex-r2`
 
-## 5. Verify service wiring after switch
+## 5. Apply runtime configuration (required for service status checks)
+
+Minimal template:
 
 ```bash
-sudo systemctl status r2-mount-documents
-sudo systemctl status r2-bisync-documents
-sudo systemctl status r2-mount-workspace
-sudo systemctl status r2-bisync-workspace
-sudo systemctl status r2-restic-backup
+sudo nixos-rebuild switch --flake .#r2-minimal
+```
+
+Full template:
+
+```bash
+sudo nixos-rebuild switch --flake .#r2-full
 ```
 
 Expected result:
 
-- mount services are active
-- bisync and restic timers/services are present and invokable
+- system activation succeeds without assertion errors
 
-## 6. Contract map (template -> command -> expected unit)
+## 6. Verify service wiring (minimal path)
+
+Run these checks only for the minimal template:
+
+```bash
+sudo systemctl status r2-mount-documents
+sudo systemctl status r2-bisync-documents
+sudo systemctl list-timers | grep r2-bisync-documents
+```
+
+Expected result:
+
+- `r2-mount-documents` is active
+- `r2-bisync-documents` service is invokable
+- `r2-bisync-documents.timer` is scheduled
+
+## 7. Verify service wiring (full path)
+
+Run these checks only for the full template:
+
+```bash
+sudo systemctl status r2-mount-workspace
+sudo systemctl status r2-bisync-workspace
+sudo systemctl list-timers | grep r2-bisync-workspace
+sudo systemctl status r2-restic-backup
+sudo systemctl list-timers | grep r2-restic-backup
+command -v git-annex-r2-init
+command -v r2
+```
+
+Expected result:
+
+- `r2-mount-workspace` is active
+- bisync and restic timers/services are present and invokable
+- `git-annex-r2-init` and `r2` are available in PATH
+
+## 8. Sharing checkpoint (full path)
+
+Prerequisite: R2-Explorer is deployed and Worker admin environment variables are available.
+
+```bash
+r2 share files workspace/demo.txt 24h
+r2 share worker create files workspace/demo.txt 24h --max-downloads 1
+r2 share worker list files workspace/demo.txt
+```
+
+Expected result:
+
+- presigned command returns an R2 S3 URL
+- worker create returns a `shareUrl` on your custom domain
+- worker list includes the created token record
+
+For Access policy and Worker token behavior details, continue in `docs/sharing.md`.
+
+## 9. Contract map (template -> command -> expected unit)
 
 | Template | Config Path | Verification Command | Expected Unit/Effect |
 | --- | --- | --- | --- |
