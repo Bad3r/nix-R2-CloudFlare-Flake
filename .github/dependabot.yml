@@ -9,7 +9,7 @@ updates:
       day: "monday"
     versioning-strategy: "lockfile-only"
     labels:
-      - "dependencies"
+      - "Dependencies"
       - "npm"
     commit-message:
       prefix: "chore(deps)"
@@ -41,8 +41,8 @@ updates:
       interval: "weekly"
       day: "monday"
     labels:
-      - "dependencies"
-      - "github-actions"
+      - "Dependencies"
+      - "CI"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
