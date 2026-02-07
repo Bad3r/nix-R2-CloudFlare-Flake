@@ -12,65 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepare-build:
-    name: prepare-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    env:
-      CI_STRICT: "1"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = false
-
-      - name: Restore Nix cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
-          restore-keys: |
-            nix-${{ runner.os }}-
-
-      - name: Build root package once
-        run: nix build .#r2
-
-      - name: Record build output path
-        run: nix path-info .#r2 > r2-out-path.txt
-
-      - name: Export build output closure
-        run: |
-          set -euo pipefail
-          mkdir -p nix-export
-          out_path="$(cat r2-out-path.txt)"
-          nix copy --to "file://$PWD/nix-export" "$out_path"
-
-      - name: Upload build output artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: prepare-build-output
-          path: |
-            r2-out-path.txt
-            nix-export
-          retention-days: 1
-
-      - name: Save Nix cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
-
   validate-root-format-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -89,6 +30,16 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://wrangler.cachix.org
+            extra-trusted-public-keys = wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-format-lint
@@ -111,12 +62,21 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://wrangler.cachix.org
+            extra-trusted-public-keys = wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-flake-template-docs
 
   validate-root-cli-module-eval:
-    needs: [prepare-build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -134,35 +94,19 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://wrangler.cachix.org
+            extra-trusted-public-keys = wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
 
-      - name: Restore Nix cache
-        uses: actions/cache/restore@v4
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
         with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
-          restore-keys: |
-            nix-${{ runner.os }}-
-
-      - name: Download prepare-build output artifact
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: prepare-build-output
-
-      - name: Ensure root build output is available
-        run: ./scripts/ci/ensure-r2-output.sh
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-cli-module-eval
-
-      - name: Save Nix cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   validate-worker-typecheck-test:
     runs-on: ubuntu-latest
@@ -182,29 +126,21 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://wrangler.cachix.org
+            extra-trusted-public-keys = wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
 
-      - name: Restore Nix cache
-        uses: actions/cache/restore@v4
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
         with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
-          restore-keys: |
-            nix-${{ runner.os }}-
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target worker-typecheck-test
 
-      - name: Save Nix cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
-
   security-dependency-audit:
-    needs: [prepare-build]
     name: security-dependency-audit
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -221,15 +157,16 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             require-sigs = false
+            extra-substituters = https://wrangler.cachix.org
+            extra-trusted-public-keys = wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
 
-      - name: Restore Nix cache
-        uses: actions/cache/restore@v4
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
         with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
-          restore-keys: |
-            nix-${{ runner.os }}-
+          name: nix-r2-cloudflare-flake
+          extraPullNames: wrangler
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -242,20 +179,6 @@ jobs:
           node-version: 20
           cache: pnpm
           cache-dependency-path: r2-explorer/pnpm-lock.yaml
-
-      - name: Restore pnpm store cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('r2-explorer/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Download prepare-build output artifact
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: prepare-build-output
 
       - name: Audit flake inputs (root + worker)
         run: |
@@ -292,13 +215,13 @@ jobs:
         working-directory: r2-explorer
         run: pnpm audit --audit-level=high
 
-      - name: Ensure root build output is available
-        run: ./scripts/ci/ensure-r2-output.sh
+      - name: Build root package for closure scan
+        run: nix build .#r2
 
       - name: Scan Nix closure with vulnix
         run: |
           set -euo pipefail
-          out_path="$(cat r2-out-path.txt)"
+          out_path="$(nix path-info .#r2)"
           for attempt in 1 2 3; do
             if nix run nixpkgs#vulnix -- -C "$out_path" -w ./scripts/ci/vulnix-whitelist.toml; then
               exit 0
@@ -310,21 +233,6 @@ jobs:
           done
           echo "vulnix scan failed after retries." >&2
           exit 1
-
-      - name: Save pnpm store cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('r2-explorer/pnpm-lock.yaml') }}
-
-      - name: Save Nix cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: |
-            /nix/store
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   security-sensitive-change-policy:
     name: security-sensitive-change-policy
