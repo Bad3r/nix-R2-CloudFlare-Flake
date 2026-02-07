@@ -7,6 +7,7 @@ url = "https://docs.mcp.cloudflare.com/mcp"
 
 [mcp_servers.cloudflare-bindings]
 url = "https://bindings.mcp.cloudflare.com/mcp"
+startup_timeout_sec = 46
 
 [mcp_servers.cloudflare-builds]
 url = "https://builds.mcp.cloudflare.com/mcp"
@@ -14,9 +15,11 @@ startup_timeout_sec = 46
 
 [mcp_servers.cloudflare-observability]
 url = "https://observability.mcp.cloudflare.com/mcp"
+startup_timeout_sec = 46
 
 [mcp_servers.cloudflare-containers]
 url = "https://containers.mcp.cloudflare.com/mcp"
+startup_timeout_sec = 46
 
 [mcp_servers.cloudflare-browser]
 url = "https://browser.mcp.cloudflare.com/mcp"
@@ -28,6 +31,8 @@ startup_timeout_sec = 46
 
 [mcp_servers.cloudflare-dns-analytics]
 url = "https://dns-analytics.mcp.cloudflare.com/mcp"
+startup_timeout_sec = 46
 
 [mcp_servers.cloudflare-graphql]
 url = "https://graphql.mcp.cloudflare.com/mcp"
+startup_timeout_sec = 46
