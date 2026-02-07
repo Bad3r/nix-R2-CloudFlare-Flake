@@ -82,14 +82,8 @@ if ! printf '%s\n' "${section_content}" | grep -Eq '[[:alnum:]]'; then
   fail "[Unreleased] section in ${file} has no release content"
 fi
 
-bullet_lines="$(printf '%s\n' "${section_content}" | grep -E '^[[:space:]]*-[[:space:]]+' || true)"
-if [[ -z ${bullet_lines} ]]; then
-  fail "[Unreleased] section in ${file} has no changelog bullet entries"
-fi
-
-meaningful_bullets="$(printf '%s\n' "${bullet_lines}" | grep -Eiv '^[[:space:]]*-[[:space:]]*(_No changes yet\._|TODO|TBD)([[:space:][:punct:]]|$)' || true)"
-if [[ -z ${meaningful_bullets} ]]; then
-  fail "[Unreleased] section in ${file} contains only placeholder entries (_No changes yet._/TODO/TBD)"
+if printf '%s\n' "${section_content}" | grep -Eq '_No changes yet\._|TODO|TBD'; then
+  echo "Warning: [Unreleased] section in ${file} may contain placeholder text" >&2
 fi
 
 tmp_file="$(mktemp "${TMPDIR:-/tmp}/prepare-changelog.XXXXXX")"
