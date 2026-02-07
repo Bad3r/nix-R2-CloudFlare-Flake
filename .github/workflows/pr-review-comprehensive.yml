@@ -1,12 +1,19 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
 name: PR Review with Progress Tracking
 
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review-with-tracking:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
