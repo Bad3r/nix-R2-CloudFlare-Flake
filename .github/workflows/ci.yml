@@ -199,7 +199,7 @@ jobs:
           run_flake_checker() {
             local lock_path="$1"
             for attempt in 1 2 3; do
-              if nix run nixpkgs#flake-checker -- \
+              if nix --accept-flake-config run nixpkgs#flake-checker -- \
                 --no-telemetry \
                 --fail-mode \
                 --check-outdated \
@@ -228,14 +228,14 @@ jobs:
         run: pnpm audit --audit-level=high
 
       - name: Build root package for closure scan
-        run: nix build .#r2
+        run: nix --accept-flake-config build .#r2
 
       - name: Scan Nix closure with vulnix
         run: |
           set -euo pipefail
-          out_path="$(nix path-info .#r2)"
+          out_path="$(nix --accept-flake-config path-info .#r2)"
           for attempt in 1 2 3; do
-            if nix run nixpkgs#vulnix -- -C "$out_path" -w ./scripts/ci/vulnix-whitelist.toml; then
+            if nix --accept-flake-config run nixpkgs#vulnix -- -C "$out_path" -w ./scripts/ci/vulnix-whitelist.toml; then
               exit 0
             fi
             if [[ "$attempt" -lt 3 ]]; then
