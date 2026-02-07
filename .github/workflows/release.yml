@@ -99,6 +99,7 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
+          # Disable Determinate Systems enterprise features for OSS project
           determinate: false
           extra-conf: |
             experimental-features = nix-command flakes
