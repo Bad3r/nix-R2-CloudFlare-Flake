@@ -61,6 +61,38 @@ run_quality_checks_in_temp_checkout() {
   trap - RETURN
 }
 
+run_template_checks() {
+  local temp_root minimal_dir full_dir source_flake
+
+  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/r2-cloud-template-check.XXXXXX")"
+  minimal_dir="${temp_root}/minimal"
+  full_dir="${temp_root}/full"
+  source_flake="path:${REPO_ROOT}"
+
+  cleanup_template_checks() {
+    rm -rf "${temp_root}"
+  }
+
+  trap cleanup_template_checks RETURN
+
+  run mkdir -p "${minimal_dir}" "${full_dir}"
+
+  (
+    cd "${minimal_dir}"
+    run nix flake init -t "${source_flake}#minimal"
+    run nix flake check
+  )
+
+  (
+    cd "${full_dir}"
+    run nix flake init -t "${source_flake}#full"
+    run nix flake check
+  )
+
+  cleanup_template_checks
+  trap - RETURN
+}
+
 nix_eval_expect() {
   local label="$1"
   local expected="$2"
@@ -325,7 +357,59 @@ hmEval.activationPackage.name
 NIX
 )"
 
+GIT_ANNEX_POSITIVE_EXPR="$(
+  cat <<'NIX'
+let
+  flake = builtins.getFlake (toString ./.);
+  lib = flake.inputs.nixpkgs.lib;
+  systemEval = lib.nixosSystem {
+    system = "x86_64-linux";
+    modules = [
+      { system.stateVersion = "25.05"; }
+      flake.outputs.nixosModules.git-annex
+      {
+        programs.git-annex-r2 = {
+          enable = true;
+          credentialsFile = "/run/secrets/r2";
+          rcloneRemoteName = "r2";
+        };
+      }
+    ];
+  };
+  packageNames = builtins.map (pkg: pkg.name) systemEval.config.environment.systemPackages;
+  hasInitHelper = builtins.any (name: lib.hasPrefix "git-annex-r2-init" name) packageNames;
+in
+if hasInitHelper then "ok" else builtins.throw "Missing git-annex-r2-init package in environment.systemPackages"
+NIX
+)"
+
+GIT_ANNEX_ASSERTION_EXPR="$(
+  cat <<'NIX'
+let
+  flake = builtins.getFlake (toString ./.);
+  lib = flake.inputs.nixpkgs.lib;
+  systemEval = lib.nixosSystem {
+    system = "x86_64-linux";
+    modules = [
+      { system.stateVersion = "25.05"; }
+      flake.outputs.nixosModules.git-annex
+      {
+        programs.git-annex-r2 = {
+          enable = true;
+          credentialsFile = null;
+        };
+      }
+    ];
+  };
+  failed = builtins.filter (a: !(a.assertion)) systemEval.config.assertions;
+  expected = "programs.git-annex-r2.credentialsFile must be set when programs.git-annex-r2.enable = true";
+in
+if builtins.any (a: a.message == expected) failed then "ok" else builtins.throw "Missing expected git-annex assertion"
+NIX
+)"
+
 run nix flake check
+run_template_checks
 run_quality_checks_in_temp_checkout
 run nix build .#r2
 run nix run .#r2 -- help
@@ -337,6 +421,8 @@ nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_
 nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
 nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"
 nix_eval_expect "r2-restic assertions (negative)" "ok" "${R2_RESTIC_ASSERTION_EXPR}"
+nix_eval_expect "git-annex module (positive)" "ok" "${GIT_ANNEX_POSITIVE_EXPR}"
+nix_eval_expect "git-annex assertions (negative)" "ok" "${GIT_ANNEX_ASSERTION_EXPR}"
 nix_eval_expect "home-manager r2-cloud wrapper (positive)" "ok" "${HM_R2_CLI_POSITIVE_EXPR}"
 nix_eval_expect "home-manager rclone config (positive)" "ok" "${HM_RCLONE_CONFIG_POSITIVE_EXPR}"
 nix_eval_expect_failure \

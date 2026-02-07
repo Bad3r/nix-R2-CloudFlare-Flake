@@ -1,21 +1,59 @@
 # Sync
 
-`services.r2-sync` is implemented and provides:
+This page validates the sync flows defined by the Group A templates.
 
-- `rclone mount` systemd services per configured mount
-- `rclone bisync` services and timers
-- `.trash/` lifecycle compatibility for soft-delete recovery workflows
+## Minimal template (`documents` mount)
 
-Typical consumer-side checks:
+Template defaults:
 
-```bash
-sudo systemctl status r2-mount-<name>
-sudo systemctl status r2-bisync-<name>
-sudo systemctl list-timers | grep r2-bisync
-```
+- mount name: `documents`
+- bucket: `documents`
+- mount point: `/mnt/r2/documents`
+- local bisync path: `/var/lib/r2-sync/documents`
 
-Manual sync trigger:
+Verify services:
 
 ```bash
-sudo systemctl start r2-bisync-<name>
+sudo systemctl status r2-mount-documents
+sudo systemctl status r2-bisync-documents
+sudo systemctl list-timers | grep r2-bisync-documents
 ```
+
+Trigger sync manually:
+
+```bash
+sudo systemctl start r2-bisync-documents
+```
+
+Expected result:
+
+- bisync service exits successfully
+- `.trash/` paths are used for delete backup behavior on both sides
+
+## Full template (`workspace` mount)
+
+Template defaults:
+
+- mount name: `workspace`
+- bucket: `files`
+- mount point: `/mnt/r2/workspace`
+- local bisync path: `/srv/r2/workspace`
+
+Verify services:
+
+```bash
+sudo systemctl status r2-mount-workspace
+sudo systemctl status r2-bisync-workspace
+sudo systemctl list-timers | grep r2-bisync-workspace
+```
+
+Trigger sync manually:
+
+```bash
+sudo systemctl start r2-bisync-workspace
+```
+
+Expected result:
+
+- local and remote deltas reconcile through `rclone bisync`
+- deletions are redirected to `.trash/` backup dirs

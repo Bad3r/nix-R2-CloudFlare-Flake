@@ -1,49 +1,98 @@
 # Quickstart
 
-Phase 5 provides package-backed CLIs with Home Manager wrapper integration and
-an implemented R2-Explorer Worker subflake.
+This guide tracks Phase 6 Group A deliverables:
 
-## Validate
+- `templates/minimal` -> sync-only NixOS setup
+- `templates/full` -> sync + restic + git-annex + Home Manager CLI
 
-```bash
-./scripts/ci/validate.sh
-```
+## 1. Create a new project from a template
 
-The script hard-pins Nix cache settings for resilient CI/local execution and
-checks NixOS modules, Home Manager assertions, and CLI package smoke tests.
-
-Use strict mode for fail-fast behavior in CI-like checks:
+Set your template source once:
 
 ```bash
-CI_STRICT=1 ./scripts/ci/validate.sh
+# Local checkout source (recommended while developing this repo)
+export TEMPLATE_SOURCE="$(pwd)"
+
+# Or use the remote source
+# export TEMPLATE_SOURCE="github:Bad3r/nix-R2-CloudFlare-Flake"
 ```
 
-## CLI Smoke Tests
+Create the project:
 
 ```bash
-nix build .#r2
-
-nix run .#r2 -- help
-nix run .#r2 -- bucket help
+mkdir -p ~/tmp/r2-minimal
+cd ~/tmp/r2-minimal
+nix flake init -t "${TEMPLATE_SOURCE}#minimal"
 ```
 
-`r2` is the only CLI interface. Use subcommands such as `r2 bucket ...`,
-`r2 share ...`, `r2 share worker ...`, and `r2 rclone ...`.
-
-Real bucket/share operations require a readable credentials file
-(`R2_CREDENTIALS_FILE`, default `~/.config/cloudflare/r2/env`).
-
-## Worker Explorer
+Or full setup:
 
 ```bash
-cd r2-explorer
-nix develop
-pnpm install
-pnpm run check
-pnpm test
-wrangler deploy
+mkdir -p ~/tmp/r2-full
+cd ~/tmp/r2-full
+nix flake init -t "${TEMPLATE_SOURCE}#full"
 ```
 
-Populate `r2-explorer/wrangler.toml` bindings first (`FILES_BUCKET`,
-`R2E_SHARES_KV`, `R2E_KEYS_KV`) and initialize
-`R2E_KEYS_KV` key `admin:keyset:active` before deploying.
+## 2. Configure required values
+
+Template values to replace before deployment:
+
+- `replace-with-cloudflare-account-id`
+- secret file paths under `/run/secrets/`
+
+## 3. Evaluate and smoke-test template output
+
+Run in the generated directory:
+
+```bash
+nix flake show
+nix flake check
+```
+
+Expected result:
+
+- `nix flake check` completes without editing template structure
+
+## 4. Build and activate
+
+Minimal template:
+
+```bash
+sudo nixos-rebuild dry-activate --flake .#r2-minimal
+```
+
+Full template:
+
+```bash
+sudo nixos-rebuild dry-activate --flake .#r2-full
+```
+
+Expected result:
+
+- no module assertion failures for `services.r2-sync`, `services.r2-restic`, or `programs.git-annex-r2`
+
+## 5. Verify service wiring after switch
+
+```bash
+sudo systemctl status r2-mount-documents
+sudo systemctl status r2-bisync-documents
+sudo systemctl status r2-mount-workspace
+sudo systemctl status r2-bisync-workspace
+sudo systemctl status r2-restic-backup
+```
+
+Expected result:
+
+- mount services are active
+- bisync and restic timers/services are present and invokable
+
+## 6. Contract map (template -> command -> expected unit)
+
+| Template | Config Path                                      | Verification Command                  | Expected Unit/Effect       |
+| -------- | ------------------------------------------------ | ------------------------------------- | -------------------------- | ------------------- |
+| minimal  | `services.r2-sync.mounts.documents`              | `systemctl status r2-mount-documents` | mount service exists       |
+| minimal  | `services.r2-sync.mounts.documents.syncInterval` | `systemctl list-timers                | grep r2-bisync-documents`  | bisync timer exists |
+| full     | `services.r2-sync.mounts.workspace`              | `systemctl status r2-mount-workspace` | mount service exists       |
+| full     | `services.r2-restic.bucket`                      | `systemctl status r2-restic-backup`   | restic oneshot unit exists |
+| full     | `programs.git-annex-r2.*`                        | `command -v git-annex-r2-init`        | helper is installed        |
+| full     | `programs.r2-cloud.enable`                       | `command -v r2`                       | wrapper CLI is installed   |
