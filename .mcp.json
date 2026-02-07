@@ -1,43 +1,43 @@
 {
   "mcpServers": {
     "cloudflare-agents": {
-      "type": "url",
+      "type": "http",
       "url": "https://agents.mcp.cloudflare.com/mcp"
     },
     "cloudflare-docs": {
-      "type": "url",
+      "type": "http",
       "url": "https://docs.mcp.cloudflare.com/mcp"
     },
     "cloudflare-bindings": {
-      "type": "url",
+      "type": "http",
       "url": "https://bindings.mcp.cloudflare.com/mcp"
     },
     "cloudflare-builds": {
-      "type": "url",
+      "type": "http",
       "url": "https://builds.mcp.cloudflare.com/mcp"
     },
     "cloudflare-observability": {
-      "type": "url",
+      "type": "http",
       "url": "https://observability.mcp.cloudflare.com/mcp"
     },
     "cloudflare-containers": {
-      "type": "url",
+      "type": "http",
       "url": "https://containers.mcp.cloudflare.com/mcp"
     },
     "cloudflare-browser": {
-      "type": "url",
+      "type": "http",
       "url": "https://browser.mcp.cloudflare.com/mcp"
     },
     "cloudflare-auditlogs": {
-      "type": "url",
+      "type": "http",
       "url": "https://auditlogs.mcp.cloudflare.com/mcp"
     },
     "cloudflare-dns-analytics": {
-      "type": "url",
+      "type": "http",
       "url": "https://dns-analytics.mcp.cloudflare.com/mcp"
     },
     "cloudflare-graphql": {
-      "type": "url",
+      "type": "http",
       "url": "https://graphql.mcp.cloudflare.com/mcp"
     }
   }
