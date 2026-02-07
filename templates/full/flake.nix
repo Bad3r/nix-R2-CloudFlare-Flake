@@ -70,6 +70,7 @@
             home-manager = {
               useGlobalPkgs = true;
               useUserPackages = true;
+              sharedModules = [ r2-cloud.homeManagerModules.default ];
               users.${username} = {
                 home.stateVersion = "25.05";
                 programs.r2-cloud = {
