@@ -7,8 +7,67 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  prepare-build:
+    name: prepare-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      CI_STRICT: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+
+      - name: Restore Nix cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+          restore-keys: |
+            nix-${{ runner.os }}-
+
+      - name: Build root package once
+        run: nix build .#r2
+
+      - name: Record build output path
+        run: nix path-info .#r2 > r2-out-path.txt
+
+      - name: Upload build output metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepare-build-output
+          path: r2-out-path.txt
+          retention-days: 1
+
+      - name: Save Nix cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+
   validate:
+    needs: [prepare-build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -35,10 +94,44 @@ jobs:
             experimental-features = nix-command flakes
             require-sigs = false
 
+      - name: Restore Nix cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+          restore-keys: |
+            nix-${{ runner.os }}-
+
+      - name: Download prepare-build output metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: prepare-build-output
+
+      - name: Verify prepared build output path exists
+        run: |
+          set -euo pipefail
+          test -s r2-out-path.txt
+          out_path="$(cat r2-out-path.txt)"
+          nix path-info "$out_path" >/dev/null
+
       - name: Validate target
         run: ./scripts/ci/validate.sh --target "${{ matrix.target }}"
 
+      - name: Save Nix cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+
   security-dependency-audit:
+    needs: [prepare-build]
     name: security-dependency-audit
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -56,6 +149,17 @@ jobs:
             experimental-features = nix-command flakes
             require-sigs = false
 
+      - name: Restore Nix cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
+          restore-keys: |
+            nix-${{ runner.os }}-
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -67,6 +171,19 @@ jobs:
           node-version: 20
           cache: pnpm
           cache-dependency-path: r2-explorer/pnpm-lock.yaml
+
+      - name: Restore pnpm store cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('r2-explorer/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Download prepare-build output metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: prepare-build-output
 
       - name: Audit flake inputs (root + worker)
         run: |
@@ -104,12 +221,16 @@ jobs:
         run: pnpm audit --audit-level=high
 
       - name: Build root package for closure scan
-        run: nix build .#r2
+        run: |
+          set -euo pipefail
+          test -s r2-out-path.txt
+          out_path="$(cat r2-out-path.txt)"
+          nix path-info "$out_path" >/dev/null
 
       - name: Scan Nix closure with vulnix
         run: |
           set -euo pipefail
-          out_path="$(nix path-info .#r2)"
+          out_path="$(cat r2-out-path.txt)"
           for attempt in 1 2 3; do
             if nix run nixpkgs#vulnix -- -C "$out_path" -w ./scripts/ci/vulnix-whitelist.toml; then
               exit 0
@@ -121,6 +242,23 @@ jobs:
           done
           echo "vulnix scan failed after retries." >&2
           exit 1
+
+      - name: Save pnpm store cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('r2-explorer/pnpm-lock.yaml') }}
+
+      - name: Save Nix cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            /nix/store
+            /nix/var/nix/db
+            /nix/var/nix/profiles
+          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   security-sensitive-change-policy:
     name: security-sensitive-change-policy
