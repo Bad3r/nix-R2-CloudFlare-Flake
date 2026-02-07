@@ -20,9 +20,10 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
+          determinate: false
           extra-conf: |
             experimental-features = nix-command flakes
-            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+            require-sigs = false
 
       - name: Validate repository
         run: ./scripts/ci/validate.sh
