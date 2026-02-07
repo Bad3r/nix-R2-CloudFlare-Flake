@@ -1,5 +1,12 @@
+import { createApp } from "./app";
+import type { Env } from "./types";
+
+const app = createApp();
+
+export { createApp };
+
 export default {
-  async fetch(): Promise<Response> {
-    return new Response("R2-Explorer scaffold only (Phase 1).", { status: 501 });
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return app.fetch(request, env, ctx);
   },
 };

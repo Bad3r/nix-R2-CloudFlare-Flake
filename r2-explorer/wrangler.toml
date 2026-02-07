@@ -2,4 +2,26 @@ name = "r2-explorer"
 main = "src/index.ts"
 compatibility_date = "2026-02-06"
 
-# Bindings and routes are intentionally omitted in Phase 1.
+[vars]
+R2E_ADMIN_AUTH_WINDOW_SEC = "300"
+R2E_MAX_SHARE_TTL_SEC = "2592000"
+R2E_DEFAULT_SHARE_TTL_SEC = "86400"
+R2E_UI_MAX_LIST_LIMIT = "1000"
+R2E_READONLY = "false"
+# Optional. If omitted, Worker derives base URL from the request.
+R2E_PUBLIC_BASE_URL = ""
+
+[[r2_buckets]]
+binding = "FILES_BUCKET"
+bucket_name = "replace-with-r2-bucket"
+preview_bucket_name = "replace-with-r2-bucket-preview"
+
+[[kv_namespaces]]
+binding = "R2E_SHARES_KV"
+id = "replace-with-shares-kv-namespace-id"
+preview_id = "replace-with-shares-kv-namespace-id-preview"
+
+[[kv_namespaces]]
+binding = "R2E_KEYS_KV"
+id = "replace-with-keys-kv-namespace-id"
+preview_id = "replace-with-keys-kv-namespace-id-preview"
