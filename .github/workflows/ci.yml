@@ -37,8 +37,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
           restore-keys: |
             nix-${{ runner.os }}-
@@ -49,11 +47,20 @@ jobs:
       - name: Record build output path
         run: nix path-info .#r2 > r2-out-path.txt
 
-      - name: Upload build output metadata
+      - name: Export build output closure
+        run: |
+          set -euo pipefail
+          mkdir -p nix-export
+          out_path="$(cat r2-out-path.txt)"
+          nix copy --to "file://$PWD/nix-export" "$out_path"
+
+      - name: Upload build output artifact
         uses: actions/upload-artifact@v4
         with:
           name: prepare-build-output
-          path: r2-out-path.txt
+          path: |
+            r2-out-path.txt
+            nix-export
           retention-days: 1
 
       - name: Save Nix cache
@@ -62,8 +69,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   validate-root-format-lint:
@@ -135,23 +140,18 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
           restore-keys: |
             nix-${{ runner.os }}-
 
-      - name: Download prepare-build output metadata
+      - name: Download prepare-build output artifact
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: prepare-build-output
 
-      - name: Verify prepared build output path exists
-        run: |
-          set -euo pipefail
-          test -s r2-out-path.txt
-          out_path="$(cat r2-out-path.txt)"
-          nix path-info "$out_path" >/dev/null
+      - name: Ensure root build output is available
+        run: ./scripts/ci/ensure-r2-output.sh
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-cli-module-eval
@@ -162,8 +162,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   validate-worker-typecheck-test:
@@ -190,8 +188,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
           restore-keys: |
             nix-${{ runner.os }}-
@@ -205,8 +201,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   security-dependency-audit:
@@ -233,8 +227,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
           restore-keys: |
             nix-${{ runner.os }}-
@@ -259,8 +251,9 @@ jobs:
           restore-keys: |
             pnpm-${{ runner.os }}-
 
-      - name: Download prepare-build output metadata
+      - name: Download prepare-build output artifact
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: prepare-build-output
 
@@ -299,12 +292,8 @@ jobs:
         working-directory: r2-explorer
         run: pnpm audit --audit-level=high
 
-      - name: Build root package for closure scan
-        run: |
-          set -euo pipefail
-          test -s r2-out-path.txt
-          out_path="$(cat r2-out-path.txt)"
-          nix path-info "$out_path" >/dev/null
+      - name: Ensure root build output is available
+        run: ./scripts/ci/ensure-r2-output.sh
 
       - name: Scan Nix closure with vulnix
         run: |
@@ -335,8 +324,6 @@ jobs:
         with:
           path: |
             /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/profiles
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'r2-explorer/flake.lock') }}-${{ github.workflow }}
 
   security-sensitive-change-policy:
