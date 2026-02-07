@@ -1,0 +1,28 @@
+name: Sync docs to wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/wiki-sync.yml"
+      - "scripts/ci/sync-wiki.sh"
+  workflow_dispatch:
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.repository == 'Bad3r/nix-R2-CloudFlare-Flake'
+    steps:
+      - uses: actions/checkout@v6
+      - run: scripts/ci/sync-wiki.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
