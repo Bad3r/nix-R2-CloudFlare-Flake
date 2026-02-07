@@ -30,9 +30,6 @@ jobs:
     concurrency:
       group: r2-explorer-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    defaults:
-      run:
-        working-directory: r2-explorer
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -55,15 +52,19 @@ jobs:
           cache-dependency-path: r2-explorer/pnpm-lock.yaml
 
       - name: Install dependencies
+        working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        working-directory: r2-explorer
         run: pnpm run check
 
       - name: Test
+        working-directory: r2-explorer
         run: pnpm test
 
       - name: Deploy preview
+        working-directory: r2-explorer
         run: pnpm run deploy -- --env preview
 
   smoke-preview:
@@ -192,9 +193,6 @@ jobs:
     concurrency:
       group: r2-explorer-production
       cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: r2-explorer
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -225,15 +223,19 @@ jobs:
           cache-dependency-path: r2-explorer/pnpm-lock.yaml
 
       - name: Install dependencies
+        working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        working-directory: r2-explorer
         run: pnpm run check
 
       - name: Test
+        working-directory: r2-explorer
         run: pnpm test
 
       - name: Deploy production
+        working-directory: r2-explorer
         run: pnpm run deploy
 
   smoke-production:
