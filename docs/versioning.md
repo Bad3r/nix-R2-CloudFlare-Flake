@@ -21,9 +21,10 @@ Inputs:
 
 Required credentials:
 
-- default: GitHub Actions `GITHUB_TOKEN` (`contents: write`)
-- optional: `RELEASE_PUSH_TOKEN` secret if branch protections require a token
-  with explicit push permission to `main`
+- default: GitHub Actions `GITHUB_TOKEN` (`contents: write`,
+  `pull-requests: write`)
+- optional: `RELEASE_PUSH_TOKEN` secret (used for Git push + PR merge/tag/release
+  API calls)
 
 Workflow behavior:
 
@@ -34,9 +35,10 @@ Workflow behavior:
 3. Worker artifact build runs `pnpm install --frozen-lockfile`,
    `pnpm run check`, and `pnpm test`, then packages release inputs.
 4. Release publish updates `CHANGELOG.md` from `Unreleased` to
-   `## [vX.Y.Z] - YYYY-MM-DD`, commits the changelog, creates tag `vX.Y.Z`,
-   pushes commit + tag, and creates a GitHub Release with generated notes and
-   attached artifacts.
+   `## [vX.Y.Z] - YYYY-MM-DD`, commits that change to a release branch, opens a
+   release PR to `main`, enables auto-merge, waits for merge, then tags
+   `origin/main` and creates a GitHub Release with generated notes and attached
+   artifacts.
 
 Release helper scripts:
 
@@ -48,8 +50,10 @@ Failure semantics:
 - Non-semver `version` fails preflight before checkout/build.
 - Non-`main` `target_ref` fails preflight before checkout/build.
 - Existing tag fails preflight and blocks release.
-- Missing push permission (token/branch protection mismatch) fails before
-  release publication.
+- Missing PR creation or merge permissions fails before tag/release
+  publication.
+- If required checks on the generated release PR never pass, the workflow times
+  out waiting for merge and fails without creating a tag.
 - Missing changelog release content for the requested version fails release-note
   generation.
 

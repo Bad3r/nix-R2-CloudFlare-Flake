@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: release-production
@@ -260,7 +261,7 @@ jobs:
             --version "${RELEASE_VERSION}" \
             > RELEASE_NOTES.md
 
-      - name: Commit changelog and create tag
+      - name: Commit changelog for release PR
         run: |
           set -euo pipefail
 
@@ -274,9 +275,134 @@ jobs:
           fi
 
           git commit -m "chore(release): ${RELEASE_TAG}"
-          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
 
-      - name: Push release commit and tag
+      - name: Push release branch and open release PR
+        id: release_pr
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          auth_token="${RELEASE_PUSH_TOKEN}"
+          if [[ -z "${auth_token}" ]]; then
+            auth_token="${{ github.token }}"
+          fi
+          echo "::add-mask::${auth_token}"
+          export GH_TOKEN="${auth_token}"
+
+          release_branch="release/${RELEASE_TAG}"
+          pr_title="chore(release): ${RELEASE_TAG}"
+
+          git branch -f "${release_branch}" HEAD
+          git remote set-url origin "https://x-access-token:${auth_token}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force-with-lease origin "${release_branch}"
+
+          existing_pr_json="$(gh pr list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --head "${release_branch}" \
+            --base "main" \
+            --state "open" \
+            --json number,url \
+            --jq 'if length > 0 then .[0] else {} end')"
+
+          pr_number="$(jq -r '.number // empty' <<< "${existing_pr_json}")"
+          pr_url="$(jq -r '.url // empty' <<< "${existing_pr_json}")"
+
+          if [[ -z "${pr_number}" ]]; then
+            body_file="$(mktemp)"
+            printf '%s\n\n%s\n%s\n' \
+              "Release automation created this PR for \`${RELEASE_TAG}\`." \
+              "After required checks pass, this PR is auto-merged by the release workflow." \
+              "Tagging and GitHub Release publication happen only after merge to \`main\`." \
+              > "${body_file}"
+            pr_url="$(gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base "main" \
+              --head "${release_branch}" \
+              --title "${pr_title}" \
+              --body-file "${body_file}")"
+            rm -f "${body_file}"
+            pr_number="${pr_url##*/}"
+          fi
+
+          {
+            echo "release_branch=${release_branch}"
+            echo "pr_number=${pr_number}"
+            echo "pr_url=${pr_url}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Enable auto-merge for release PR
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          auth_token="${RELEASE_PUSH_TOKEN}"
+          if [[ -z "${auth_token}" ]]; then
+            auth_token="${{ github.token }}"
+          fi
+          echo "::add-mask::${auth_token}"
+          export GH_TOKEN="${auth_token}"
+
+          pr_number="${{ steps.release_pr.outputs.pr_number }}"
+          if ! gh pr merge "${pr_number}" --repo "${GITHUB_REPOSITORY}" --merge --auto; then
+            auto_merge_enabled="$(gh pr view "${pr_number}" --repo "${GITHUB_REPOSITORY}" --json autoMergeRequest --jq 'if .autoMergeRequest == null then "false" else "true" end')"
+            if [[ "${auto_merge_enabled}" != "true" ]]; then
+              echo "Failed to enable auto-merge for PR #${pr_number}." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Wait for release PR merge
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          auth_token="${RELEASE_PUSH_TOKEN}"
+          if [[ -z "${auth_token}" ]]; then
+            auth_token="${{ github.token }}"
+          fi
+          echo "::add-mask::${auth_token}"
+          export GH_TOKEN="${auth_token}"
+
+          pr_number="${{ steps.release_pr.outputs.pr_number }}"
+          timeout_seconds=5400
+          poll_interval_seconds=20
+          deadline="$(( $(date +%s) + timeout_seconds ))"
+
+          while true; do
+            pr_json="$(gh pr view "${pr_number}" --repo "${GITHUB_REPOSITORY}" --json state,mergedAt,mergeStateStatus,url,autoMergeRequest)"
+            pr_state="$(jq -r '.state' <<< "${pr_json}")"
+            merged_at="$(jq -r '.mergedAt // ""' <<< "${pr_json}")"
+            merge_state_status="$(jq -r '.mergeStateStatus // ""' <<< "${pr_json}")"
+            auto_merge_enabled="$(jq -r 'if .autoMergeRequest == null then "false" else "true" end' <<< "${pr_json}")"
+
+            echo "PR #${pr_number} state=${pr_state} mergeStateStatus=${merge_state_status} autoMerge=${auto_merge_enabled} mergedAt=${merged_at}"
+
+            if [[ "${pr_state}" == "MERGED" ]]; then
+              break
+            fi
+
+            if [[ "${pr_state}" == "CLOSED" ]]; then
+              echo "Release PR #${pr_number} was closed without merge." >&2
+              exit 1
+            fi
+
+            if [[ "${auto_merge_enabled}" != "true" ]]; then
+              echo "Auto-merge is not enabled for release PR #${pr_number}." >&2
+              exit 1
+            fi
+
+            if (( $(date +%s) >= deadline )); then
+              echo "Timed out waiting for release PR #${pr_number} to merge." >&2
+              exit 1
+            fi
+
+            sleep "${poll_interval_seconds}"
+          done
+
+      - name: Create and push release tag
         env:
           RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
         run: |
@@ -289,8 +415,21 @@ jobs:
           echo "::add-mask::${push_token}"
 
           git remote set-url origin "https://x-access-token:${push_token}@github.com/${GITHUB_REPOSITORY}.git"
-          git push origin HEAD:main
-          git push origin "${RELEASE_TAG}"
+          git fetch origin main --tags
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists on origin: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          if ! git show "origin/main:CHANGELOG.md" | grep -Eq "^## \\[${RELEASE_TAG}\\] - "; then
+            echo "Expected ${RELEASE_TAG} heading not found in origin/main CHANGELOG.md after merge." >&2
+            exit 1
+          fi
+
+          main_sha="$(git rev-parse origin/main)"
+          git tag -a "${RELEASE_TAG}" "${main_sha}" -m "Release ${RELEASE_TAG}"
+          git push origin "refs/tags/${RELEASE_TAG}"
 
       - name: Create GitHub release
         env:
