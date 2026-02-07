@@ -39,6 +39,8 @@ Workflow behavior:
    - `r2 bucket help`
    - `r2 share help`
    - `r2 share worker help`
+   - workflow installs Nix and imports exported closure metadata before
+     invoking artifact binaries
 5. Release publish updates `CHANGELOG.md` from `Unreleased` to
    `## [vX.Y.Z] - YYYY-MM-DD`, commits that change to a release branch, opens a
    release PR to `main`, enables auto-merge, waits for merge, then tags

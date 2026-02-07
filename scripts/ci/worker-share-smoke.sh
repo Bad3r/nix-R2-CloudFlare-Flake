@@ -6,6 +6,40 @@ fail() {
   exit 1
 }
 
+parse_positive_int() {
+  local value="$1"
+  local name="$2"
+  local fallback="$3"
+
+  if [[ -z ${value} ]]; then
+    echo "${fallback}"
+    return
+  fi
+
+  if [[ ! ${value} =~ ^[0-9]+$ ]] || [[ ${value} -le 0 ]]; then
+    fail "${name} must be a positive integer (got '${value}')"
+  fi
+
+  echo "${value}"
+}
+
+parse_non_negative_int() {
+  local value="$1"
+  local name="$2"
+  local fallback="$3"
+
+  if [[ -z ${value} ]]; then
+    echo "${fallback}"
+    return
+  fi
+
+  if [[ ! ${value} =~ ^[0-9]+$ ]]; then
+    fail "${name} must be a non-negative integer (got '${value}')"
+  fi
+
+  echo "${value}"
+}
+
 require_env() {
   local name="$1"
   if [[ -z ${!name:-} ]]; then
@@ -33,6 +67,71 @@ dump_response_context() {
   fi
 }
 
+should_retry_status() {
+  local status="$1"
+
+  case "${status}" in
+  408 | 425 | 429 | 500 | 502 | 503 | 504)
+    return 0
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+assert_http_status() {
+  local expected_status="$1"
+  local label="$2"
+  local url="$3"
+  local body_file="$4"
+  local follow_redirects="$5"
+  local max_attempts attempt status curl_exit
+  local -a curl_args
+
+  max_attempts=$((SMOKE_RETRIES + 1))
+  curl_args=(
+    -sS
+    --max-time
+    "${SMOKE_TIMEOUT_SEC}"
+    --connect-timeout
+    "${SMOKE_CONNECT_TIMEOUT_SEC}"
+    -o
+    "${body_file}"
+    -w
+    "%{http_code}"
+  )
+
+  if [[ ${follow_redirects} == "true" ]]; then
+    curl_args+=(-L)
+  fi
+
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    set +e
+    status="$(curl "${curl_args[@]}" "${url}")"
+    curl_exit=$?
+    set -e
+
+    if [[ ${curl_exit} -eq 0 && ${status} == "${expected_status}" ]]; then
+      return 0
+    fi
+
+    if ((attempt < max_attempts)); then
+      if [[ ${curl_exit} -ne 0 ]] || should_retry_status "${status}"; then
+        echo "${label}: transient failure on attempt ${attempt}/${max_attempts}; retrying in ${SMOKE_RETRY_DELAY_SEC}s..." >&2
+        sleep "${SMOKE_RETRY_DELAY_SEC}"
+        continue
+      fi
+    fi
+
+    dump_response_context "${status}" "${body_file}" "${label}"
+    if [[ ${curl_exit} -ne 0 ]]; then
+      fail "${label} request failed with curl exit ${curl_exit}"
+    fi
+    fail "${label} expected HTTP ${expected_status}, got ${status}"
+  done
+}
+
 require_env "R2E_SMOKE_BASE_URL"
 require_env "R2E_SMOKE_ADMIN_KID"
 require_env "R2E_SMOKE_ADMIN_SECRET"
@@ -58,8 +157,13 @@ export R2_EXPLORER_ADMIN_KID="${R2E_SMOKE_ADMIN_KID}"
 export R2_EXPLORER_ADMIN_SECRET="${R2E_SMOKE_ADMIN_SECRET}"
 
 ttl="${R2E_SMOKE_TTL:-10m}"
+SMOKE_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_TIMEOUT:-60}" "R2E_SMOKE_TIMEOUT" "60")"
+SMOKE_CONNECT_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_CONNECT_TIMEOUT:-10}" "R2E_SMOKE_CONNECT_TIMEOUT" "10")"
+SMOKE_RETRIES="$(parse_non_negative_int "${R2E_SMOKE_RETRIES:-0}" "R2E_SMOKE_RETRIES" "0")"
+SMOKE_RETRY_DELAY_SEC="$(parse_positive_int "${R2E_SMOKE_RETRY_DELAY_SEC:-2}" "R2E_SMOKE_RETRY_DELAY_SEC" "2")"
 
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
+echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
 create_json="$(
   "${R2_BIN}" share worker create \
     "${R2E_SMOKE_BUCKET}" \
@@ -91,40 +195,13 @@ cleanup() {
 trap cleanup EXIT
 
 first_download_body="${tmp_dir}/first-download.body"
-first_status="$(
-  curl -sS -L --max-time 60 --connect-timeout 10 \
-    -o "${first_download_body}" \
-    -w "%{http_code}" \
-    "${share_url}"
-)"
-if [[ ${first_status} != "200" ]]; then
-  dump_response_context "${first_status}" "${first_download_body}" "first download"
-  fail "first share download expected HTTP 200, got ${first_status}"
-fi
+assert_http_status "200" "first download" "${share_url}" "${first_download_body}" "true"
 
 second_download_body="${tmp_dir}/second-download.body"
-second_status="$(
-  curl -sS -L --max-time 60 --connect-timeout 10 \
-    -o "${second_download_body}" \
-    -w "%{http_code}" \
-    "${share_url}"
-)"
-if [[ ${second_status} != "410" ]]; then
-  dump_response_context "${second_status}" "${second_download_body}" "second download"
-  fail "second share download expected HTTP 410 after max-downloads=1, got ${second_status}"
-fi
+assert_http_status "410" "second download" "${share_url}" "${second_download_body}" "true"
 
 api_probe_body="${tmp_dir}/api-probe.body"
-api_probe_status="$(
-  curl -sS --max-time 30 --connect-timeout 10 \
-    -o "${api_probe_body}" \
-    -w "%{http_code}" \
-    "${R2E_SMOKE_BASE_URL%/}/api/server/info"
-)"
-if [[ ${api_probe_status} != "401" ]]; then
-  dump_response_context "${api_probe_status}" "${api_probe_body}" "unauthenticated API probe"
-  fail "unauthenticated /api/server/info expected HTTP 401, got ${api_probe_status}"
-fi
+assert_http_status "401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_probe_body}" "false"
 
 api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
 if [[ -n ${api_error_code} && ${api_error_code} != "access_required" ]]; then

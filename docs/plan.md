@@ -1229,15 +1229,24 @@ CI automation does not remove break-glass/manual deployment workflows.
   - first `/share/<token>` access returns success
   - second `/share/<token>` access returns expected token exhaustion (`410`)
   - unauthenticated `/api/server/info` remains Access-protected (`401`)
+  - configurable timeout/retry controls:
+    - `R2E_SMOKE_TIMEOUT`, `R2E_SMOKE_CONNECT_TIMEOUT`
+    - `R2E_SMOKE_RETRIES`, `R2E_SMOKE_RETRY_DELAY_SEC`
+  - production smoke checks set retry defaults to reduce transient false
+    positives
 - Added rollback guidance jobs triggered only when smoke jobs fail:
   - `rollback-guidance-preview`
   - `rollback-guidance-production`
+  - each job now resolves and publishes a candidate rollback SHA from deployment
+    history (with fallback)
 - Added CLI-impacting release gate in `.github/workflows/release.yml`:
   - `verify-cli-smoke` validates packaged CLI commands before publish:
     - `r2 help`
     - `r2 bucket help`
     - `r2 share help`
     - `r2 share worker help`
+  - gate installs Nix and imports exported closure metadata before executing the
+    packaged `r2` artifact, so runtime store dependencies are present
 - Added operator runbook for CLI rollback:
   - `docs/operators/rollback-cli-release.md`
   - linked from `docs/operators/index.md` and `docs/versioning.md`

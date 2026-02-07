@@ -101,6 +101,13 @@ Required environment secrets in both environments:
 - `R2E_SMOKE_BUCKET`
 - `R2E_SMOKE_KEY`
 
+Optional smoke tuning environment variables:
+
+- `R2E_SMOKE_TIMEOUT` (seconds, default `60`)
+- `R2E_SMOKE_CONNECT_TIMEOUT` (seconds, default `10`)
+- `R2E_SMOKE_RETRIES` (non-negative integer, default `0`)
+- `R2E_SMOKE_RETRY_DELAY_SEC` (seconds, default `2`)
+
 Recommended protection:
 
 - require protected branches for deployments

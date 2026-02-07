@@ -116,16 +116,45 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-preview, smoke-preview]
     steps:
+      - name: Resolve rollback target
+        id: rollback_target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          deployments_json="$(gh api "repos/${GITHUB_REPOSITORY}/deployments?environment=preview&per_page=50")"
+          candidate="$(
+            printf '%s' "${deployments_json}" |
+              jq -r --arg current "${GITHUB_SHA}" --arg ref "${GITHUB_HEAD_REF}" \
+                '.[] | select(.sha != $current and .ref == $ref) | .sha' |
+              head -n1
+          )"
+
+          if [[ -z "${candidate}" ]]; then
+            candidate="${PR_BASE_SHA}"
+          fi
+          if [[ -z "${candidate}" ]]; then
+            candidate="<last-known-good-ref>"
+          fi
+
+          echo "sha=${candidate}" >> "${GITHUB_OUTPUT}"
+
       - name: Publish rollback guidance
         run: |
           set -euo pipefail
 
+          rollback_sha="${{ steps.rollback_target.outputs.sha }}"
           runbook_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/operators/rollback-worker-share.md"
+          rollback_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${rollback_sha}"
           {
             echo "## Preview smoke checks failed"
             echo
             echo "Follow the Worker rollback runbook immediately:"
             echo "- ${runbook_url}"
+            echo "- Candidate rollback SHA: \`${rollback_sha}\`"
+            echo "- Candidate rollback tree: ${rollback_url}"
             echo
             echo "Required operator actions:"
             echo "1. Identify the last known-good Worker revision and matching env snapshot."
@@ -135,7 +164,7 @@ jobs:
             echo "Command checklist:"
             echo '```bash'
             echo 'git fetch origin'
-            echo 'git checkout <last-known-good-ref>'
+            echo "git checkout ${rollback_sha}"
             echo 'cd r2-explorer'
             echo 'pnpm install --frozen-lockfile'
             echo 'pnpm run deploy -- --env preview'
@@ -206,6 +235,8 @@ jobs:
       R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
       R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
       R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
+      R2E_SMOKE_RETRIES: "2"
+      R2E_SMOKE_RETRY_DELAY_SEC: "3"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -241,16 +272,41 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-production, smoke-production]
     steps:
+      - name: Resolve rollback target
+        id: rollback_target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          deployments_json="$(gh api "repos/${GITHUB_REPOSITORY}/deployments?environment=production&per_page=50")"
+          candidate="$(
+            printf '%s' "${deployments_json}" |
+              jq -r --arg current "${GITHUB_SHA}" \
+                '.[] | select(.sha != $current) | .sha' |
+              head -n1
+          )"
+
+          if [[ -z "${candidate}" ]]; then
+            candidate="<last-known-good-ref>"
+          fi
+
+          echo "sha=${candidate}" >> "${GITHUB_OUTPUT}"
+
       - name: Publish rollback guidance
         run: |
           set -euo pipefail
 
+          rollback_sha="${{ steps.rollback_target.outputs.sha }}"
           runbook_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/operators/rollback-worker-share.md"
+          rollback_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${rollback_sha}"
           {
             echo "## Production smoke checks failed"
             echo
             echo "Immediate rollback path:"
             echo "- ${runbook_url}"
+            echo "- Candidate rollback SHA: \`${rollback_sha}\`"
+            echo "- Candidate rollback tree: ${rollback_url}"
             echo
             echo "Required operator actions:"
             echo "1. Roll back to the last known-good Worker revision."
@@ -260,7 +316,7 @@ jobs:
             echo "Command checklist:"
             echo '```bash'
             echo 'git fetch origin'
-            echo 'git checkout <last-known-good-ref>'
+            echo "git checkout ${rollback_sha}"
             echo 'cd r2-explorer'
             echo 'pnpm install --frozen-lockfile'
             echo 'pnpm run deploy'

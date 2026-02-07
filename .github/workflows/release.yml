@@ -141,6 +141,12 @@ jobs:
           nix --accept-flake-config path-info -S .#r2 > artifacts/root/path-info-size.txt
           echo "${system}" > artifacts/root/system.txt
           nix-store --query --requisites "${out_path}" > artifacts/root/closure-paths.txt
+          mapfile -t closure_paths < artifacts/root/closure-paths.txt
+          if [[ ${#closure_paths[@]} -eq 0 ]]; then
+            echo "Expected non-empty closure path list for ${out_path}." >&2
+            exit 1
+          fi
+          nix-store --export "${closure_paths[@]}" > artifacts/root/closure.nar
 
           tar -czf "artifacts/root/r2-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
 
@@ -229,6 +235,16 @@ jobs:
     runs-on: ubuntu-latest
     needs: [preflight, build-root]
     steps:
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            require-sigs = false
+            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+            extra-trusted-public-keys = nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
       - name: Download root artifacts
         uses: actions/download-artifact@v4
         with:
@@ -251,6 +267,13 @@ jobs:
             echo "Expected exactly one root CLI artifact tarball for ${RELEASE_TAG}, found ${#tarballs[@]}." >&2
             exit 1
           fi
+
+          if [[ ! -f release-artifacts/root/closure.nar ]]; then
+            echo "Missing closure export: release-artifacts/root/closure.nar" >&2
+            exit 1
+          fi
+
+          nix-store --import < release-artifacts/root/closure.nar >/dev/null
 
           extract_dir="$(mktemp -d "${RUNNER_TEMP}/r2-cli-smoke.XXXXXX")"
           trap 'rm -rf "${extract_dir}"' EXIT
