@@ -6,20 +6,20 @@ Activation condition: `services.r2-restic.enable = true`.
 
 ## Options
 
-| Option | Type | Default | Required when enabled | Notes |
-| --- | --- | --- | --- | --- |
-| `services.r2-restic.enable` | boolean | `false` | no | Enables backup service + timer. |
-| `services.r2-restic.credentialsFile` | `null` or path | `null` | yes | Environment file for AWS/R2 auth values. |
-| `services.r2-restic.accountId` | string | `""` | yes | Used in R2 endpoint URL. |
-| `services.r2-restic.passwordFile` | `null` or path | `null` | yes | Exported as `RESTIC_PASSWORD_FILE`. |
-| `services.r2-restic.bucket` | string | `""` | yes | Bucket name used in `RESTIC_REPOSITORY`. |
-| `services.r2-restic.paths` | list of paths | `[]` | yes (non-empty) | Backup input paths. |
-| `services.r2-restic.exclude` | list of strings | `[]` | no | Converted to `--exclude` flags. |
-| `services.r2-restic.schedule` | string | `"daily"` | no | `systemd` `OnCalendar` expression. |
-| `services.r2-restic.retention.daily` | integer | `7` | no | Must be `>= 0`. |
-| `services.r2-restic.retention.weekly` | integer | `4` | no | Must be `>= 0`. |
-| `services.r2-restic.retention.monthly` | integer | `12` | no | Must be `>= 0`. |
-| `services.r2-restic.retention.yearly` | integer | `3` | no | Must be `>= 0`. |
+| Option                                 | Type            | Default   | Required when enabled | Notes                                    |
+| -------------------------------------- | --------------- | --------- | --------------------- | ---------------------------------------- |
+| `services.r2-restic.enable`            | boolean         | `false`   | no                    | Enables backup service + timer.          |
+| `services.r2-restic.credentialsFile`   | `null` or path  | `null`    | yes                   | Environment file for AWS/R2 auth values. |
+| `services.r2-restic.accountId`         | string          | `""`      | yes                   | Used in R2 endpoint URL.                 |
+| `services.r2-restic.passwordFile`      | `null` or path  | `null`    | yes                   | Exported as `RESTIC_PASSWORD_FILE`.      |
+| `services.r2-restic.bucket`            | string          | `""`      | yes                   | Bucket name used in `RESTIC_REPOSITORY`. |
+| `services.r2-restic.paths`             | list of paths   | `[]`      | yes (non-empty)       | Backup input paths.                      |
+| `services.r2-restic.exclude`           | list of strings | `[]`      | no                    | Converted to `--exclude` flags.          |
+| `services.r2-restic.schedule`          | string          | `"daily"` | no                    | `systemd` `OnCalendar` expression.       |
+| `services.r2-restic.retention.daily`   | integer         | `7`       | no                    | Must be `>= 0`.                          |
+| `services.r2-restic.retention.weekly`  | integer         | `4`       | no                    | Must be `>= 0`.                          |
+| `services.r2-restic.retention.monthly` | integer         | `12`      | no                    | Must be `>= 0`.                          |
+| `services.r2-restic.retention.yearly`  | integer         | `3`       | no                    | Must be `>= 0`.                          |
 
 ## Failure semantics
 

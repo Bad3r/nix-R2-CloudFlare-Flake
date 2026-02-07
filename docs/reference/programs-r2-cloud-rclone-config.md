@@ -10,12 +10,12 @@ Activation condition:
 
 ## Driving options
 
-| Option | Type | Default | Required when remote is enabled | Notes |
-| --- | --- | --- | --- | --- |
-| `programs.r2-cloud.enableRcloneRemote` | boolean | `true` | yes (must remain true to manage config) | Controls whether config is generated. |
-| `programs.r2-cloud.rcloneConfigPath` | path | `${config.xdg.configHome}/rclone/rclone.conf` | yes | Must stay within `config.xdg.configHome`. |
-| `programs.r2-cloud.rcloneRemoteName` | string | `"r2"` | yes | Remote section header in generated config. |
-| `programs.r2-cloud.accountId` | string | `""` | yes | Used to render endpoint URL. |
+| Option                                 | Type    | Default                                       | Required when remote is enabled         | Notes                                      |
+| -------------------------------------- | ------- | --------------------------------------------- | --------------------------------------- | ------------------------------------------ |
+| `programs.r2-cloud.enableRcloneRemote` | boolean | `true`                                        | yes (must remain true to manage config) | Controls whether config is generated.      |
+| `programs.r2-cloud.rcloneConfigPath`   | path    | `${config.xdg.configHome}/rclone/rclone.conf` | yes                                     | Must stay within `config.xdg.configHome`.  |
+| `programs.r2-cloud.rcloneRemoteName`   | string  | `"r2"`                                        | yes                                     | Remote section header in generated config. |
+| `programs.r2-cloud.accountId`          | string  | `""`                                          | yes                                     | Used to render endpoint URL.               |
 
 ## Failure semantics
 

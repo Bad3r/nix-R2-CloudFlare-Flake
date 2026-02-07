@@ -6,15 +6,15 @@ Activation condition: `programs.r2-cloud.enable = true`.
 
 ## Options
 
-| Option | Type | Default | Required when enabled | Notes |
-| --- | --- | --- | --- | --- |
-| `programs.r2-cloud.enable` | boolean | `false` | no | Installs wrapper `r2` command into `home.packages`. |
-| `programs.r2-cloud.accountId` | string | `""` | yes | Exported to wrapper as `R2_DEFAULT_ACCOUNT_ID`. |
-| `programs.r2-cloud.credentialsFile` | path | `${config.xdg.configHome}/cloudflare/r2/env` | yes | Exported as `R2_CREDENTIALS_FILE`. |
-| `programs.r2-cloud.enableRcloneRemote` | boolean | `true` | no | Drives managed rclone config behavior. |
-| `programs.r2-cloud.rcloneRemoteName` | string | `"r2"` | yes when `enableRcloneRemote = true` | Used by rclone config generation + wrappers. |
-| `programs.r2-cloud.rcloneConfigPath` | path | `${config.xdg.configHome}/rclone/rclone.conf` | no | Exported as `R2_RCLONE_CONFIG`. |
-| `programs.r2-cloud.installTools` | boolean | `true` | no | Installs runtime dependencies (`rclone`, `restic`, optional `git-annex`, optional `wrangler`). |
+| Option                                 | Type    | Default                                       | Required when enabled                | Notes                                                                                          |
+| -------------------------------------- | ------- | --------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `programs.r2-cloud.enable`             | boolean | `false`                                       | no                                   | Installs wrapper `r2` command into `home.packages`.                                            |
+| `programs.r2-cloud.accountId`          | string  | `""`                                          | yes                                  | Exported to wrapper as `R2_DEFAULT_ACCOUNT_ID`.                                                |
+| `programs.r2-cloud.credentialsFile`    | path    | `${config.xdg.configHome}/cloudflare/r2/env`  | yes                                  | Exported as `R2_CREDENTIALS_FILE`.                                                             |
+| `programs.r2-cloud.enableRcloneRemote` | boolean | `true`                                        | no                                   | Drives managed rclone config behavior.                                                         |
+| `programs.r2-cloud.rcloneRemoteName`   | string  | `"r2"`                                        | yes when `enableRcloneRemote = true` | Used by rclone config generation + wrappers.                                                   |
+| `programs.r2-cloud.rcloneConfigPath`   | path    | `${config.xdg.configHome}/rclone/rclone.conf` | no                                   | Exported as `R2_RCLONE_CONFIG`.                                                                |
+| `programs.r2-cloud.installTools`       | boolean | `true`                                        | no                                   | Installs runtime dependencies (`rclone`, `restic`, optional `git-annex`, optional `wrangler`). |
 
 ## Failure semantics
 

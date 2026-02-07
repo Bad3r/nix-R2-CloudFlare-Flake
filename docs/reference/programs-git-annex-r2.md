@@ -6,13 +6,13 @@ Activation condition: `programs.git-annex-r2.enable = true`.
 
 ## Options
 
-| Option | Type | Default | Required when enabled | Notes |
-| --- | --- | --- | --- | --- |
-| `programs.git-annex-r2.enable` | boolean | `false` | no | Installs git-annex packages and `git-annex-r2-init`. |
-| `programs.git-annex-r2.credentialsFile` | `null` or path | `null` | yes | Used by helper to source auth env. |
-| `programs.git-annex-r2.rcloneRemoteName` | string | `"r2"` | yes | Default `rcloneremotename` passed to `git annex initremote`. |
-| `programs.git-annex-r2.defaultBucket` | `null` or string | `null` | no | Hint used by helper when bucket arg is omitted. |
-| `programs.git-annex-r2.defaultPrefix` | `null` or string | `null` | no | Default `rcloneprefix` when prefix arg is omitted. |
+| Option                                   | Type             | Default | Required when enabled | Notes                                                        |
+| ---------------------------------------- | ---------------- | ------- | --------------------- | ------------------------------------------------------------ |
+| `programs.git-annex-r2.enable`           | boolean          | `false` | no                    | Installs git-annex packages and `git-annex-r2-init`.         |
+| `programs.git-annex-r2.credentialsFile`  | `null` or path   | `null`  | yes                   | Used by helper to source auth env.                           |
+| `programs.git-annex-r2.rcloneRemoteName` | string           | `"r2"`  | yes                   | Default `rcloneremotename` passed to `git annex initremote`. |
+| `programs.git-annex-r2.defaultBucket`    | `null` or string | `null`  | no                    | Hint used by helper when bucket arg is omitted.              |
+| `programs.git-annex-r2.defaultPrefix`    | `null` or string | `null`  | no                    | Default `rcloneprefix` when prefix arg is omitted.           |
 
 ## Failure semantics
 

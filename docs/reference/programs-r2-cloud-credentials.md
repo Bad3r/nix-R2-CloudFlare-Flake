@@ -6,13 +6,13 @@ Activation condition: `programs.r2-cloud.credentials.manage = true`.
 
 ## Options
 
-| Option | Type | Default | Required when enabled | Notes |
-| --- | --- | --- | --- | --- |
-| `programs.r2-cloud.credentials.manage` | boolean | `false` | no | Enables activation step that writes env file with `0400` mode. |
-| `programs.r2-cloud.credentials.accountId` | string | `""` | yes unless inherited from `programs.r2-cloud.accountId` | Effective accountId comes from this option first, then top-level `programs.r2-cloud.accountId`. |
-| `programs.r2-cloud.credentials.accessKeyIdFile` | `null` or path | `null` | yes | Must point to readable file containing AWS access key id. |
-| `programs.r2-cloud.credentials.secretAccessKeyFile` | `null` or path | `null` | yes | Must point to readable file containing AWS secret key. |
-| `programs.r2-cloud.credentials.outputFile` | path | `${config.xdg.configHome}/cloudflare/r2/env` | no | Generated env file location. |
+| Option                                              | Type           | Default                                      | Required when enabled                                   | Notes                                                                                           |
+| --------------------------------------------------- | -------------- | -------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `programs.r2-cloud.credentials.manage`              | boolean        | `false`                                      | no                                                      | Enables activation step that writes env file with `0400` mode.                                  |
+| `programs.r2-cloud.credentials.accountId`           | string         | `""`                                         | yes unless inherited from `programs.r2-cloud.accountId` | Effective accountId comes from this option first, then top-level `programs.r2-cloud.accountId`. |
+| `programs.r2-cloud.credentials.accessKeyIdFile`     | `null` or path | `null`                                       | yes                                                     | Must point to readable file containing AWS access key id.                                       |
+| `programs.r2-cloud.credentials.secretAccessKeyFile` | `null` or path | `null`                                       | yes                                                     | Must point to readable file containing AWS secret key.                                          |
+| `programs.r2-cloud.credentials.outputFile`          | path           | `${config.xdg.configHome}/cloudflare/r2/env` | no                                                      | Generated env file location.                                                                    |
 
 ## Failure semantics
 

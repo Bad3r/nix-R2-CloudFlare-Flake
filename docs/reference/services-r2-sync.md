@@ -6,20 +6,20 @@ Activation condition: `services.r2-sync.enable = true`.
 
 ## Options
 
-| Option | Type | Default | Required when enabled | Notes |
-| --- | --- | --- | --- | --- |
-| `services.r2-sync.enable` | boolean | `false` | no | Enables service and timer generation. |
-| `services.r2-sync.credentialsFile` | `null` or path | `null` | yes | Environment file loaded by systemd units. |
-| `services.r2-sync.accountId` | string | `""` | yes | Used to build `https://<accountId>.r2.cloudflarestorage.com`. |
-| `services.r2-sync.mounts` | attrset of submodules | `{}` | yes (must contain at least one mount) | One mount profile per attr key. |
-| `services.r2-sync.mounts.<name>.bucket` | string | none | yes | Remote bucket name; must be non-empty. |
-| `services.r2-sync.mounts.<name>.mountPoint` | path | none | yes | Local mount location for `rclone mount`. |
-| `services.r2-sync.mounts.<name>.localPath` | `null` or path | `null` | no | Local bisync side; falls back to `mountPoint`. |
-| `services.r2-sync.mounts.<name>.syncInterval` | string | `"5m"` | no | `OnUnitActiveSec` value for bisync timer. |
-| `services.r2-sync.mounts.<name>.trashRetention` | integer | `30` | no | Policy hint only; not currently enforced in unit logic. |
-| `services.r2-sync.mounts.<name>.vfsCache.mode` | enum `off|minimal|writes|full` | `"full"` | no | Passed to `--vfs-cache-mode`. |
-| `services.r2-sync.mounts.<name>.vfsCache.maxSize` | string | `"10G"` | no | Passed to `--vfs-cache-max-size`. |
-| `services.r2-sync.mounts.<name>.vfsCache.maxAge` | string | `"24h"` | no | Passed to `--vfs-cache-max-age`. |
+| Option                                            | Type                  | Default | Required when enabled                 | Notes                                                         |
+| ------------------------------------------------- | --------------------- | ------- | ------------------------------------- | ------------------------------------------------------------- | -------- | --- | ----------------------------- |
+| `services.r2-sync.enable`                         | boolean               | `false` | no                                    | Enables service and timer generation.                         |
+| `services.r2-sync.credentialsFile`                | `null` or path        | `null`  | yes                                   | Environment file loaded by systemd units.                     |
+| `services.r2-sync.accountId`                      | string                | `""`    | yes                                   | Used to build `https://<accountId>.r2.cloudflarestorage.com`. |
+| `services.r2-sync.mounts`                         | attrset of submodules | `{}`    | yes (must contain at least one mount) | One mount profile per attr key.                               |
+| `services.r2-sync.mounts.<name>.bucket`           | string                | none    | yes                                   | Remote bucket name; must be non-empty.                        |
+| `services.r2-sync.mounts.<name>.mountPoint`       | path                  | none    | yes                                   | Local mount location for `rclone mount`.                      |
+| `services.r2-sync.mounts.<name>.localPath`        | `null` or path        | `null`  | no                                    | Local bisync side; falls back to `mountPoint`.                |
+| `services.r2-sync.mounts.<name>.syncInterval`     | string                | `"5m"`  | no                                    | `OnUnitActiveSec` value for bisync timer.                     |
+| `services.r2-sync.mounts.<name>.trashRetention`   | integer               | `30`    | no                                    | Policy hint only; not currently enforced in unit logic.       |
+| `services.r2-sync.mounts.<name>.vfsCache.mode`    | enum `off             | minimal | writes                                | full`                                                         | `"full"` | no  | Passed to `--vfs-cache-mode`. |
+| `services.r2-sync.mounts.<name>.vfsCache.maxSize` | string                | `"10G"` | no                                    | Passed to `--vfs-cache-max-size`.                             |
+| `services.r2-sync.mounts.<name>.vfsCache.maxAge`  | string                | `"24h"` | no                                    | Passed to `--vfs-cache-max-age`.                              |
 
 ## Failure semantics
 
