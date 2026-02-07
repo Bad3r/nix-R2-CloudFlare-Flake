@@ -25,6 +25,8 @@ jobs:
     if: github.repository == 'Bad3r/nix-R2-CloudFlare-Flake'
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
       - run: scripts/ci/sync-wiki.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

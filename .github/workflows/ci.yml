@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -56,6 +58,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -88,6 +92,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -120,6 +126,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -151,6 +159,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main

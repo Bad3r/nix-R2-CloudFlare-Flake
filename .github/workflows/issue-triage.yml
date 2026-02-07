@@ -6,6 +6,10 @@ on:
   issues:
     types: [opened]
 
+concurrency:
+  group: issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   triage-issue:
     runs-on: ubuntu-latest
@@ -19,7 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       # NOTE: requires a .claude/commands/label-issue.md file in the repo
       - name: Run Claude Code for Issue Triage
