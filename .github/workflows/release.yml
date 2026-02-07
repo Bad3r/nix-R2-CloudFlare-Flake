@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p artifacts/root
+          mkdir -p artifacts/root artifacts/runtime
           out_path="$(nix --accept-flake-config path-info .#r2)"
           system="$(nix --accept-flake-config eval --raw .#r2.system)"
 
@@ -146,7 +146,7 @@ jobs:
             echo "Expected non-empty closure path list for ${out_path}." >&2
             exit 1
           fi
-          nix-store --export "${closure_paths[@]}" > artifacts/root/closure.nar
+          nix-store --export "${closure_paths[@]}" > artifacts/runtime/closure.nar
 
           tar -czf "artifacts/root/r2-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
 
@@ -155,6 +155,13 @@ jobs:
         with:
           name: root-release-artifacts
           path: artifacts/root/*
+          if-no-files-found: error
+
+      - name: Upload root closure runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-closure-runtime
+          path: artifacts/runtime/closure.nar
           if-no-files-found: error
 
   build-worker:
@@ -251,6 +258,12 @@ jobs:
           name: root-release-artifacts
           path: release-artifacts/root
 
+      - name: Download root closure runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: root-closure-runtime
+          path: release-artifacts/runtime
+
       - name: Run CLI smoke checks from packaged artifact
         run: |
           set -euo pipefail
@@ -268,12 +281,12 @@ jobs:
             exit 1
           fi
 
-          if [[ ! -f release-artifacts/root/closure.nar ]]; then
-            echo "Missing closure export: release-artifacts/root/closure.nar" >&2
+          if [[ ! -f release-artifacts/runtime/closure.nar ]]; then
+            echo "Missing closure export: release-artifacts/runtime/closure.nar" >&2
             exit 1
           fi
 
-          nix-store --import < release-artifacts/root/closure.nar >/dev/null
+          nix-store --import < release-artifacts/runtime/closure.nar >/dev/null
 
           extract_dir="$(mktemp -d "${RUNNER_TEMP}/r2-cli-smoke.XXXXXX")"
           trap 'rm -rf "${extract_dir}"' EXIT
