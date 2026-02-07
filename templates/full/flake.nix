@@ -34,6 +34,11 @@
               fsType = "tmpfs";
             };
             boot.loader.grub.devices = [ "nodev" ];
+            users.users.${username} = {
+              isNormalUser = true;
+              group = username;
+            };
+            users.groups.${username} = { };
 
             services.r2-sync = {
               enable = true;
