@@ -4,6 +4,8 @@ This section contains operator-facing procedures for R2-Explorer sharing
 operations.
 
 For share mode architecture and end-user behavior, see `docs/sharing.md`.
+For first-line triage across auth/sync/restic/multipart/token failures, start
+with `docs/troubleshooting.md`.
 
 ## Runbooks
 

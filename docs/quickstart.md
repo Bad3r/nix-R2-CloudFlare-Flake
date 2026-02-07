@@ -144,14 +144,16 @@ Expected result:
 - worker list includes the created token record
 
 For Access policy and Worker token behavior details, continue in `docs/sharing.md`.
+For failure diagnosis across sync/backup/share/auth flows, use
+`docs/troubleshooting.md`.
 
 ## 9. Contract map (template -> command -> expected unit)
 
-| Template | Config Path | Verification Command | Expected Unit/Effect |
-| --- | --- | --- | --- |
-| minimal | `services.r2-sync.mounts.documents` | `systemctl status r2-mount-documents` | mount service exists |
-| minimal | `services.r2-sync.mounts.documents.syncInterval` | `systemctl list-timers \| grep r2-bisync-documents` | bisync timer exists |
-| full | `services.r2-sync.mounts.workspace` | `systemctl status r2-mount-workspace` | mount service exists |
-| full | `services.r2-restic.bucket` | `systemctl status r2-restic-backup` | restic oneshot unit exists |
-| full | `programs.git-annex-r2.*` | `command -v git-annex-r2-init` | helper is installed |
-| full | `programs.r2-cloud.enable` | `command -v r2` | wrapper CLI is installed |
+| Template | Config Path                                      | Verification Command                                | Expected Unit/Effect       |
+| -------- | ------------------------------------------------ | --------------------------------------------------- | -------------------------- |
+| minimal  | `services.r2-sync.mounts.documents`              | `systemctl status r2-mount-documents`               | mount service exists       |
+| minimal  | `services.r2-sync.mounts.documents.syncInterval` | `systemctl list-timers \| grep r2-bisync-documents` | bisync timer exists        |
+| full     | `services.r2-sync.mounts.workspace`              | `systemctl status r2-mount-workspace`               | mount service exists       |
+| full     | `services.r2-restic.bucket`                      | `systemctl status r2-restic-backup`                 | restic oneshot unit exists |
+| full     | `programs.git-annex-r2.*`                        | `command -v git-annex-r2-init`                      | helper is installed        |
+| full     | `programs.r2-cloud.enable`                       | `command -v r2`                                     | wrapper CLI is installed   |

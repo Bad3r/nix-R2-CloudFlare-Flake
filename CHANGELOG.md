@@ -46,6 +46,14 @@ and this project follows Conventional Commits.
   - `programs.r2-cloud.credentials`
   - managed rclone config behavior for `programs.r2-cloud`
   - `programs.git-annex-r2`
+- Troubleshooting matrix documentation in `docs/troubleshooting.md` with
+  command-level diagnostic and repair workflows for:
+  - authentication
+  - lifecycle
+  - bisync
+  - restic
+  - multipart upload
+  - share token validation
 
 ### Changed
 
@@ -93,6 +101,16 @@ and this project follows Conventional Commits.
   hard-fails on stale `Phase <n>` language outside `docs/plan.md`, verifies
   required option-reference pages, and checks required reference links.
 - `docs/plan.md` milestone status now marks `6.2` and `6.6` complete.
+- User/operator docs now link to `docs/troubleshooting.md` as the first-line
+  triage entrypoint:
+  - `docs/quickstart.md`
+  - `docs/sync.md`
+  - `docs/versioning.md`
+  - `docs/sharing.md`
+  - `docs/operators/index.md`
+- Documentation status tracking now reflects completed troubleshooting
+  and runbook milestones in `README.md` and marks Phase `6.5` complete
+  in `docs/plan.md`.
 
 ### Fixed
 

@@ -14,8 +14,10 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 
 ## Documentation Status
 
-- Completed: template hardening, option reference docs, end-user workflows, and docs quality gate.
-- Remaining documentation milestones: operator runbooks and troubleshooting matrix.
+- Completed: template hardening, option reference docs, operator runbooks,
+  troubleshooting matrix, and docs quality gate.
+- In progress: end-user workflow refinements (see `docs/plan.md` Phase `6.4`
+  reopen note).
 
 ## Layout
 
@@ -26,6 +28,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - `r2-explorer/`: Worker subflake and deployment tooling
 - `templates/`: starter flake templates
 - `docs/`: usage and design documentation
+  - includes first-line triage in `docs/troubleshooting.md`
 
 ## Option Reference
 

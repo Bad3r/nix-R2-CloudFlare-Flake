@@ -3,6 +3,8 @@
 This page covers the versioning workflows used by the `templates/full` profile.
 
 Option reference: `docs/reference/index.md`, `docs/reference/services-r2-restic.md`, and `docs/reference/programs-git-annex-r2.md`.
+If snapshot or auth checks fail, use `docs/troubleshooting.md` for first-line
+triage before operator escalation.
 
 ## Restic snapshots (`services.r2-restic`)
 

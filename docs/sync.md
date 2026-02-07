@@ -3,6 +3,8 @@
 This page validates the sync flows defined by the repository templates.
 
 Option reference: `docs/reference/index.md` and `docs/reference/services-r2-sync.md`.
+If any step fails, use `docs/troubleshooting.md` for command-level diagnosis and
+repair paths.
 
 ## Minimal template (`documents` mount)
 

@@ -5,6 +5,8 @@ This repository supports two sharing modes.
 Option reference for CLI and credentials behavior: `docs/reference/index.md`.
 
 Quickstart entrypoint: run the sharing checkpoint in `docs/quickstart.md` first, then use this page for detailed mode-specific behavior and policy setup.
+For auth/token/multipart failures, use `docs/troubleshooting.md` first, then
+escalate to operator runbooks as needed.
 
 ## 1) Presigned URLs (R2 S3 endpoint)
 
