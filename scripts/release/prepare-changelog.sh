@@ -77,8 +77,19 @@ if ((unreleased_start > total_lines || unreleased_end < unreleased_start)); then
   fail "[Unreleased] section in ${file} is empty or malformed"
 fi
 
-if ! sed -n "${unreleased_start},${unreleased_end}p" "${file}" | grep -Eq '[[:alnum:]]'; then
+section_content="$(sed -n "${unreleased_start},${unreleased_end}p" "${file}")"
+if ! printf '%s\n' "${section_content}" | grep -Eq '[[:alnum:]]'; then
   fail "[Unreleased] section in ${file} has no release content"
+fi
+
+bullet_lines="$(printf '%s\n' "${section_content}" | grep -E '^[[:space:]]*-[[:space:]]+' || true)"
+if [[ -z ${bullet_lines} ]]; then
+  fail "[Unreleased] section in ${file} has no changelog bullet entries"
+fi
+
+meaningful_bullets="$(printf '%s\n' "${bullet_lines}" | grep -Eiv '^[[:space:]]*-[[:space:]]*(_No changes yet\._|TODO|TBD)([[:space:][:punct:]]|$)' || true)"
+if [[ -z ${meaningful_bullets} ]]; then
+  fail "[Unreleased] section in ${file} contains only placeholder entries (_No changes yet._/TODO/TBD)"
 fi
 
 tmp_file="$(mktemp "${TMPDIR:-/tmp}/prepare-changelog.XXXXXX")"

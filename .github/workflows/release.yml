@@ -177,8 +177,20 @@ jobs:
         run: pnpm run check
 
       - name: Test
+        id: worker-tests
         working-directory: r2-explorer
-        run: pnpm test
+        run: |
+          set -euo pipefail
+          mkdir -p test-results
+          pnpm test 2>&1 | tee test-results/vitest.log
+
+      - name: Upload worker test results (on failure)
+        if: ${{ failure() && steps.worker-tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-test-results
+          path: r2-explorer/test-results/
+          if-no-files-found: ignore
 
       - name: Package worker release artifacts
         run: |
