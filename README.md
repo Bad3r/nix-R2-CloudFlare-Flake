@@ -4,7 +4,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 
 ## Status
 
-This repository is currently in **Phase 4** from `docs/plan.md`:
+This repository is currently in **Phase 5** from `docs/plan.md`:
 
 - Phase 1 scaffold completed.
 - Phase 2 NixOS modules implemented:
@@ -18,7 +18,11 @@ This repository is currently in **Phase 4** from `docs/plan.md`:
   - `packages/r2-cli.nix` provides the single `r2` subcommand CLI
   - compatibility-specific binaries/aliases were removed
   - Home Manager injects config defaults and delegates execution to the package
-- Phases 5-7 remain in progress.
+- Phase 5 R2-Explorer subflake implemented:
+  - Worker routes for list/preview/download/upload/move/delete
+  - Worker share token lifecycle (`/api/share/*`, `/share/<token>`)
+  - KV-backed random share tokens and admin keyset verification
+- Phases 6-7 remain in progress.
 
 ## Layout
 
@@ -26,7 +30,7 @@ This repository is currently in **Phase 4** from `docs/plan.md`:
 - `modules/`: NixOS and Home Manager modules
 - `packages/`: CLI package derivations
 - `lib/r2.nix`: shared library helpers
-- `r2-explorer/`: Worker subflake scaffold
+- `r2-explorer/`: Worker subflake and deployment tooling
 - `templates/`: starter flake templates
 - `docs/`: usage and design documentation
 
@@ -43,6 +47,8 @@ as well as Home Manager module assertions for Phase 4 CLI wiring (`programs.r2-c
 and `programs.r2-cloud.credentials`) to catch option/schema regressions early, and
 runs both formatting (`nix fmt`) and
 all pre-commit hooks (`lefthook run pre-commit --all-files`) in an isolated temp checkout.
+The validation flow also runs Worker checks/tests in `r2-explorer`
+(`pnpm run check`, `pnpm test`) through `nix develop ./r2-explorer`.
 If cache access is unavailable, validation disables substituters for that run to avoid
 repeated timeout loops. Override cache selection with `NIX_VALIDATE_SUBSTITUTERS`.
 

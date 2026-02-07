@@ -45,7 +45,7 @@ graph TB
         BROWSER["Web file browser"]
         UPLOAD["Upload/Download"]
         PREVIEW["File preview"]
-        SHARE["Access-protected<br/>share links"]
+        SHARE["Tokenized public<br/>share links"]
         DOMAIN["files.domain.com"]
 
         ACCESS <--> WORKER
@@ -163,14 +163,35 @@ r2-cloud-nix/
 ├── lib/
 │   └── r2.nix                   # Shared library functions
 │
-├── r2-explorer/                 # Cloudflare Worker (subflake)
+├── r2-explorer/                 # Cloudflare Worker subflake
 │   ├── flake.nix
-│   ├── src/
-│   │   └── index.ts             # Worker entry point
+│   ├── package.json
+│   ├── pnpm-lock.yaml
+│   ├── tsconfig.json
+│   ├── vitest.config.ts
 │   ├── wrangler.toml
+│   ├── src/
+│   │   ├── index.ts             # Worker entry point
+│   │   ├── app.ts               # Hono app + route handlers
+│   │   ├── schemas.ts           # Zod request/response contracts
+│   │   ├── auth.ts              # Access/HMAC auth helpers
+│   │   ├── kv.ts                # Share KV state operations
+│   │   ├── r2.ts                # R2 object operations
+│   │   ├── http.ts              # Error/response helpers
+│   │   ├── ui.ts                # Embedded dashboard UI
+│   │   ├── types.ts             # Worker environment/types
+│   │   └── version.ts
+│   ├── tests/
+│   │   ├── auth.spec.ts
+│   │   ├── share.spec.ts
+│   │   ├── multipart.spec.ts
+│   │   ├── readonly.spec.ts
+│   │   ├── server-info.spec.ts
+│   │   └── helpers/
+│   │       └── memory.ts
 │   └── .github/
 │       └── workflows/
-│           └── deploy.yml       # CI/CD deployment
+│           └── deploy.yml       # Phase 7 hardening target
 │
 ├── templates/
 │   ├── minimal/                 # Minimal setup template
@@ -812,72 +833,56 @@ in
 
 ## R2-Explorer Subflake
 
-The `r2-explorer/` directory is a separate subflake for the web interface:
+The `r2-explorer/` directory is an independent Worker subflake with
+contract-first APIs and local test coverage.
 
-```nix
-# r2-explorer/flake.nix
-{
-  description = "R2-Explorer Cloudflare Worker";
+Phase 5 implementation includes:
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  };
+- Hono-based router composition in `r2-explorer/src/app.ts`.
+- Zod request/response schemas in `r2-explorer/src/schemas.ts` used across API
+  handlers.
+- Central middleware layering:
+  - Access identity extraction
+  - readonly enforcement (`R2E_READONLY=true`)
+  - route-level auth (Access-only or Access/HMAC hybrid)
+  - structured error responses
+- Object operations:
+  - list/meta/download/preview
+  - multipart upload init/part/complete/abort
+  - object move and soft-delete to `.trash/`
+- Share lifecycle:
+  - create/list/revoke on `/api/share/*`
+  - public token download on `/share/<token>`
+- KV-backed random share token records (`R2E_SHARES_KV`).
+- Admin HMAC keyset + nonce replay tracking (`R2E_KEYS_KV`).
+- Runtime capability endpoint: `GET /api/server/info`.
+- Worker test suite (`vitest`) covering auth, share lifecycle, replay
+  protection, readonly mode, multipart flow, and server info.
 
-  outputs = { nixpkgs, ... }:
-    let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-    in
-    {
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs; [
-            nodejs
-            nodePackages.pnpm
-            nodePackages.wrangler
-          ];
-        };
-      });
+Current API surface:
 
-      # CI deployment script
-      packages = forAllSystems (pkgs: {
-        deploy = pkgs.writeShellScriptBin "deploy-r2-explorer" ''
-          cd ${./.}
-          ${pkgs.nodePackages.pnpm}/bin/pnpm install
-          ${pkgs.nodePackages.wrangler}/bin/wrangler deploy
-        '';
-      });
-    };
-}
-```
+| Route                       | Purpose                                          |
+| --------------------------- | ------------------------------------------------ |
+| `GET /api/list`             | List objects/prefixes                            |
+| `GET /api/meta`             | Object metadata                                  |
+| `GET /api/download`         | Download with attachment disposition             |
+| `GET /api/preview`          | Inline/attachment preview by content type        |
+| `POST /api/upload/init`     | Start multipart upload                           |
+| `POST /api/upload/part`     | Upload multipart part                            |
+| `POST /api/upload/complete` | Complete multipart upload                        |
+| `POST /api/upload/abort`    | Abort multipart upload                           |
+| `POST /api/object/delete`   | Soft-delete object to `.trash/`                  |
+| `POST /api/object/move`     | Move/rename object                               |
+| `POST /api/share/create`    | Create share token (Access or HMAC admin auth)   |
+| `POST /api/share/revoke`    | Revoke share token (Access or HMAC admin auth)   |
+| `GET /api/share/list`       | List share records for key (Access or HMAC auth) |
+| `GET /api/server/info`      | Runtime capabilities and effective limits        |
+| `GET /share/<token>`        | Public tokenized object access                   |
 
 ### CI/CD Deployment
 
-```yaml
-# r2-explorer/.github/workflows/deploy.yml
-name: Deploy R2-Explorer
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Build and Deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          nix develop --command bash -c "pnpm install && wrangler deploy"
-```
+Stage 5 keeps deployment automation lightweight and local-first. CI hardening
+and managed deploy workflows remain in Phase 7.
 
 ## Authentication Setup
 
@@ -892,9 +897,9 @@ Configure in Cloudflare dashboard:
 
 2. **Access Application**:
    - Domain: `files.yourdomain.com`
-   - Policies:
-     - Allow: GitHub org members
-     - Allow: Specific email addresses
+   - Path policy split:
+     - `/*` → **Allow** trusted identities (org/users)
+     - `/share/*` → **Bypass** for public token links
 
 ### Sharing Modes and Constraints
 
@@ -912,42 +917,40 @@ r2 share documents report.pdf
 r2 share documents report.pdf 168h
 ```
 
-#### Access-Protected Share Links (custom domain)
+#### Worker Share Links (custom domain)
 
 Use the Worker (R2-Explorer) to mint share tokens and proxy downloads on the custom
-domain. Links are served under `https://files.yourdomain.com/share/<token>` and are
-protected by Cloudflare Access. The Worker validates the HMAC token and fetches the
-object from R2.
+domain. Links are served under `https://files.yourdomain.com/share/<token>` and use
+KV-backed random token records with expiry/revocation/download-limit checks.
 
-## Files to Create
+`/api/*` routes require Cloudflare Access identity. CLI-driven Worker share
+operations (`r2 share worker ...`) authenticate with admin HMAC headers
+validated against `R2E_KEYS_KV`.
 
-| File                                      | Purpose                     |
-| ----------------------------------------- | --------------------------- |
-| `flake.nix`                               | Main flake with all outputs |
-| `modules/nixos/default.nix`               | NixOS module aggregator     |
-| `modules/nixos/r2-sync.nix`               | Mount + bisync service      |
-| `modules/nixos/r2-restic.nix`             | Restic backup service       |
-| `modules/nixos/git-annex.nix`             | git-annex module (optional) |
-| `modules/home-manager/default.nix`        | HM module aggregator        |
-| `modules/home-manager/r2-cli.nix`         | CLI integration wrappers    |
-| `modules/home-manager/r2-credentials.nix` | Credentials management      |
-| `packages/r2-cli.nix`                     | Primary `r2` subcommand CLI |
-| `lib/r2.nix`                              | Shared library functions    |
-| `r2-explorer/flake.nix`                   | Worker subflake             |
-| `r2-explorer/wrangler.toml`               | Worker config               |
-| `templates/minimal/flake.nix`             | Minimal usage template      |
-| `templates/full/flake.nix`                | Full usage template         |
-| `README.md`                               | Documentation               |
+## Files (Current State)
+
+| File                                  | Purpose                                                  |
+| ------------------------------------- | -------------------------------------------------------- |
+| `packages/r2-cli.nix`                 | Primary `r2` CLI with presigned + Worker share commands  |
+| `r2-explorer/flake.nix`               | Worker subflake tooling/dev shell/deploy helper          |
+| `r2-explorer/wrangler.toml`           | Worker bindings + runtime vars (`R2E_*`)                 |
+| `r2-explorer/src/index.ts`            | Worker entrypoint                                        |
+| `r2-explorer/src/app.ts`              | Hono router, middleware chain, handlers                  |
+| `r2-explorer/src/schemas.ts`          | Zod contracts for query/body/response payloads           |
+| `r2-explorer/src/auth.ts`             | Access and admin HMAC verification logic                 |
+| `r2-explorer/src/kv.ts`               | Share record persistence and listing in KV               |
+| `r2-explorer/src/r2.ts`               | R2 object helpers (list/get/move/soft-delete/multipart)  |
+| `r2-explorer/src/ui.ts`               | Embedded dashboard interface                             |
+| `r2-explorer/src/version.ts`          | Worker version constant exposed by `/api/server/info`    |
+| `r2-explorer/tests/*.spec.ts`         | Worker tests (auth/share/readonly/multipart/server info) |
+| `r2-explorer/tests/helpers/memory.ts` | In-memory R2+KV test harness                             |
+| `docs/sharing.md`                     | Sharing modes + Access bypass policy guidance            |
 
 ## Verification
 
 ### After Repository Setup
 
 ```bash
-# Create the repository
-mkdir r2-cloud-nix && cd r2-cloud-nix
-git init
-
 # Build and check
 nix flake check
 nix build .#r2
@@ -955,8 +958,14 @@ nix build .#r2
 # Test CLI tools
 nix run .#r2 -- help
 nix run .#r2 -- bucket help
+nix run .#r2 -- share help
+nix run .#r2 -- share worker help
+nix run .#r2 -- rclone --help
 
-# Enter dev shell
+# Run full local validation (formats + hooks + module eval + worker tests)
+./scripts/ci/validate.sh
+
+# Enter dev shell for manual work
 nix develop
 ```
 
@@ -975,15 +984,18 @@ ls /mnt/r2/documents
 # Test sync
 echo "test" > /mnt/r2/documents/test.txt
 sudo systemctl start r2-bisync-documents
-r2 ls r2:documents/
+r2 rclone ls r2:documents/
 
 # Test sharing
 # Presigned (S3 endpoint only)
 r2 share documents test.txt
 
-# Access-protected (custom domain via Worker)
-curl -I https://files.yourdomain.com/share/<token>
-# Should redirect to Cloudflare Access when not authenticated
+# Worker share (custom domain)
+export R2_EXPLORER_BASE_URL="https://files.yourdomain.com"
+export R2_EXPLORER_ADMIN_KID="<active-kid>"
+export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
+r2 share worker create files documents/test.txt 24h --max-downloads 1
+r2 share worker list files documents/test.txt
 ```
 
 ### R2-Explorer Deployment
@@ -992,13 +1004,23 @@ curl -I https://files.yourdomain.com/share/<token>
 cd r2-explorer
 nix develop
 wrangler login
+pnpm install
+pnpm run check
+pnpm test
 wrangler deploy
 
 # Verify
 curl -I https://files.yourdomain.com
 # Should redirect to Cloudflare Access
 curl -I https://files.yourdomain.com/share/<token>
-# Should redirect to Cloudflare Access when not authenticated
+# Should return object response when token is valid (public link path)
+
+# Verify API remains Access-protected
+curl -I https://files.yourdomain.com/api/list
+# Should require Cloudflare Access session
+
+# Verify runtime capability endpoint (with Access session)
+curl -s https://files.yourdomain.com/api/server/info | jq .
 ```
 
 ## Implementation Order
@@ -1007,6 +1029,6 @@ curl -I https://files.yourdomain.com/share/<token>
 2. [x] **Phase 2**: NixOS modules (r2-sync.nix, r2-restic.nix)
 3. [x] **Phase 3**: Home Manager modules (`r2` wrapper, credentials assembly, managed `rclone.conf`)
 4. [x] **Phase 4**: CLI package extraction/refactor (single `r2` package CLI + HM wrapper delegation)
-5. [ ] **Phase 5**: R2-Explorer subflake
+5. [x] **Phase 5**: R2-Explorer subflake (Hono+Zod contracts, middleware layering, `/api/server/info`, worker tests)
 6. [ ] **Phase 6**: Templates and documentation
 7. [ ] **Phase 7**: CI/CD setup
