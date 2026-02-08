@@ -1275,3 +1275,28 @@ CI automation does not remove break-glass/manual deployment workflows.
 6. CLI release smoke gate:
    - `verify-cli-smoke` must pass (`r2 help`, `bucket help`, `share help`,
      `share worker help`) before release publish/tag steps
+
+### 7.5 Operational Acceptance Note (2026-02-08)
+
+- Executed preview success scenario with same-repo PR path:
+  - `Deploy R2-Explorer` run `21789276067` passed `deploy-preview` and
+    `smoke-preview`.
+- Executed preview rollback drill:
+  - set invalid preview `R2E_SMOKE_KEY`
+  - run `21789308933` produced expected behavior:
+    - `deploy-preview` passed
+    - `smoke-preview` failed
+    - `rollback-guidance-preview` passed
+    - `smoke-preview-logs` artifact uploaded
+  - restored preview `R2E_SMOKE_KEY` and revalidated with successful run
+    `21789337439`.
+- Rotated smoke admin credentials (`R2E_SMOKE_ADMIN_KID`,
+  `R2E_SMOKE_ADMIN_SECRET`) for preview and production by updating
+  `admin:keyset:active` in `R2E_KEYS_KV` and syncing GitHub environment
+  secrets.
+  - preview post-rotation validation passed (rerun of `21789394556`)
+  - production post-rotation validation passed (`21789485700`)
+- Updated preview environment deployment branch policy to allow PR deployment
+  refs (`refs/pull/*/merge`) under custom branch policies.
+- Production required-reviewer gate intentionally remains disabled as a
+  single-maintainer exception.
