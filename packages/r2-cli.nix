@@ -394,6 +394,11 @@ writeShellApplication {
 
     run_share_worker() {
       local subcommand="''${1:-help}"
+      if [[ "''${subcommand}" =~ ^(-h|--help|help)$ ]]; then
+        usage_share_worker
+        return
+      fi
+
       shift || true
 
       case "$subcommand" in
@@ -407,9 +412,6 @@ writeShellApplication {
         list)
           [[ "$#" -eq 2 ]] || fail "usage: r2 share worker list <bucket> <key>"
           run_share_worker_list "$1" "$2"
-          ;;
-        help|-h|--help)
-          usage_share_worker
           ;;
         *)
           fail "unknown share worker subcommand '$subcommand'"
