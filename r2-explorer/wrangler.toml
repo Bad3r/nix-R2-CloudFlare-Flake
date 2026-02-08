@@ -10,6 +10,8 @@ R2E_UI_MAX_LIST_LIMIT = "1000"
 R2E_READONLY = "false"
 # Optional. If omitted, Worker derives base URL from the request.
 R2E_PUBLIC_BASE_URL = ""
+# Optional. JSON map of bucket alias -> binding name (must include {"files":"FILES_BUCKET"}).
+R2E_BUCKET_MAP = ""
 
 [[r2_buckets]]
 binding = "FILES_BUCKET"
@@ -37,6 +39,8 @@ R2E_UI_MAX_LIST_LIMIT = "1000"
 R2E_READONLY = "false"
 # Optional. If omitted, Worker derives base URL from the request.
 R2E_PUBLIC_BASE_URL = ""
+# Optional. JSON map of bucket alias -> binding name (must include {"files":"FILES_BUCKET"}).
+R2E_BUCKET_MAP = ""
 
 [[env.preview.r2_buckets]]
 binding = "FILES_BUCKET"

@@ -20,7 +20,10 @@ and this project follows Conventional Commits.
 
 ### Fixed
 
-- _No changes yet._
+- Home Manager `r2` wrapper now exports rclone endpoint when `enableRcloneRemote` is enabled.
+- CLI worker share signing now includes `awk` via `gawk` runtime input.
+- Worker share quickstart/docs now use the correct `url` response field.
+- Worker share downloads now honor per-record bucket aliases via `R2E_BUCKET_MAP`.
 
 ## [v0.1.0] - 2026-02-07
 

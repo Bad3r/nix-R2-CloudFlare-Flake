@@ -11,6 +11,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - Home Manager credentials assembly: `programs.r2-cloud.credentials`
 - Home Manager managed `rclone.conf`: generated from `programs.r2-cloud` options
 - Worker subflake: R2-Explorer routes, share token lifecycle, and tests
+- Worker share tokens support multi-bucket aliases via `R2E_BUCKET_MAP`
 
 ## Documentation Status
 

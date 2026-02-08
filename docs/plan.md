@@ -889,6 +889,7 @@ Phase 5 implementation includes:
 - Share lifecycle:
   - create/list/revoke on `/api/share/*`
   - public token download on `/share/<token>`
+- Multi-bucket share aliases via `R2E_BUCKET_MAP` (must include `{"files":"FILES_BUCKET"}`).
 - KV-backed random share token records (`R2E_SHARES_KV`).
 - Admin HMAC keyset + nonce replay tracking (`R2E_KEYS_KV`).
 - Runtime capability endpoint: `GET /api/server/info`.

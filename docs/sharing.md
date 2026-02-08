@@ -51,6 +51,18 @@ Required environment variables for Worker-mode CLI calls:
 - `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
 - `R2_EXPLORER_ADMIN_SECRET` (matching key material)
 
+Multi-bucket aliases:
+
+- Optional `R2E_BUCKET_MAP` defines bucket aliases to Worker bindings.
+- The map must include `{"files":"FILES_BUCKET"}` to keep default behavior.
+- Each additional alias requires a matching `[[r2_buckets]]` binding in `wrangler.toml`.
+
+Example:
+
+```bash
+export R2E_BUCKET_MAP='{"files":"FILES_BUCKET","photos":"PHOTOS_BUCKET"}'
+```
+
 Behavior and constraints:
 
 - Share URL format: `https://files.example.com/share/<token-id>`
