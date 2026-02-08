@@ -42,8 +42,8 @@
 
             services.r2-sync = {
               enable = true;
-              accountId = "replace-with-cloudflare-account-id";
-              credentialsFile = "/run/secrets/r2-credentials";
+              accountIdFile = "/run/secrets/r2/account-id";
+              credentialsFile = "/run/secrets/r2/credentials.env";
               mounts.workspace = {
                 bucket = "files";
                 mountPoint = "/mnt/r2/workspace";
@@ -54,9 +54,9 @@
 
             services.r2-restic = {
               enable = true;
-              accountId = "replace-with-cloudflare-account-id";
-              credentialsFile = "/run/secrets/r2-credentials";
-              passwordFile = "/run/secrets/restic-password";
+              accountIdFile = "/run/secrets/r2/account-id";
+              credentialsFile = "/run/secrets/r2/credentials.env";
+              passwordFile = "/run/secrets/r2/restic-password";
               bucket = "backups";
               paths = [
                 "/srv/r2/workspace"
@@ -66,7 +66,7 @@
 
             programs.git-annex-r2 = {
               enable = true;
-              credentialsFile = "/run/secrets/r2-credentials";
+              credentialsFile = "/run/secrets/r2/credentials.env";
               rcloneRemoteName = "r2";
               defaultBucket = "files";
               defaultPrefix = "annex/workspace";
@@ -80,8 +80,8 @@
                 home.stateVersion = "25.05";
                 programs.r2-cloud = {
                   enable = true;
-                  accountId = "replace-with-cloudflare-account-id";
-                  credentialsFile = "/run/secrets/r2-credentials";
+                  accountIdFile = "/run/secrets/r2/account-id";
+                  credentialsFile = "/run/secrets/r2/credentials.env";
                   rcloneRemoteName = "r2";
                   installTools = true;
                 };
@@ -104,8 +104,8 @@
             };
             programs.r2-cloud = {
               enable = true;
-              accountId = "replace-with-cloudflare-account-id";
-              credentialsFile = "/home/${username}/.config/cloudflare/r2/env";
+              accountIdFile = "/run/secrets/r2/account-id";
+              credentialsFile = "/run/secrets/r2/credentials.env";
             };
           }
         ];
