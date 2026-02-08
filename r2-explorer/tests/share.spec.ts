@@ -155,4 +155,80 @@ describe("share lifecycle", () => {
     expect(download.status).toBe(200);
     expect(await download.text()).toBe("meow");
   });
+
+  it("rejects unknown bucket alias on share create", async () => {
+    const { env, kid, secret } = await createTestEnv();
+    const app = createApp();
+
+    const createBody = JSON.stringify({
+      bucket: "unknown",
+      key: "docs/missing.txt",
+      ttl: "1h",
+    });
+    const createUrl = "https://files.example.com/api/share/create";
+    const createHeaders = signedHeaders(
+      new Request(createUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: createBody,
+      }),
+      kid,
+      secret,
+      createBody,
+    );
+    const createResponse = await app.fetch(
+      new Request(createUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...createHeaders,
+        },
+        body: createBody,
+      }),
+      env,
+    );
+    expect(createResponse.status).toBe(400);
+    const payload = (await createResponse.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("bucket_unknown");
+  });
+
+  it("rejects missing bucket binding on share create", async () => {
+    const { env, kid, secret } = await createTestEnv();
+    env.R2E_BUCKET_MAP = JSON.stringify({
+      files: "FILES_BUCKET",
+      logs: "LOGS_BUCKET",
+    });
+    const app = createApp();
+
+    const createBody = JSON.stringify({
+      bucket: "logs",
+      key: "logs/boot.txt",
+      ttl: "1h",
+    });
+    const createUrl = "https://files.example.com/api/share/create";
+    const createHeaders = signedHeaders(
+      new Request(createUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: createBody,
+      }),
+      kid,
+      secret,
+      createBody,
+    );
+    const createResponse = await app.fetch(
+      new Request(createUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...createHeaders,
+        },
+        body: createBody,
+      }),
+      env,
+    );
+    expect(createResponse.status).toBe(500);
+    const payload = (await createResponse.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("bucket_binding_missing");
+  });
 });
