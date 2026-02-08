@@ -122,5 +122,7 @@ Optional smoke tuning environment variables:
 
 Recommended protection:
 
-- require protected branches for deployments
-- require reviewer approval on `production`
+- `preview`: use custom branch policies and include `refs/pull/*/merge` so PR
+  deploys are allowed
+- `production`: require protected branches for deployments
+- `production`: require reviewer approval unless operating as a single maintainer
