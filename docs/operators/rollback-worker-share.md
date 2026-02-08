@@ -24,7 +24,10 @@ regression.
 - Last known-good values for:
   - `R2E_READONLY`
   - keyset/secret references for admin auth
-  - bound KV namespace configuration
+  - bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
+    `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
+    `R2E_SHARES_KV_ID_PREVIEW`, `R2E_KEYS_KV_ID`,
+    `R2E_KEYS_KV_ID_PREVIEW`)
 - Target domain for verification (`https://files.example.com`)
 
 ## Procedure (CLI-first)
@@ -39,8 +42,9 @@ regression.
 5. Deploy rollback revision:
 
 ```bash
+./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
 cd r2-explorer
-wrangler deploy
+wrangler deploy --config wrangler.ci.toml
 ```
 
 6. Validate lifecycle and route behavior:
