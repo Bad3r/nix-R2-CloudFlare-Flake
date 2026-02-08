@@ -42,7 +42,7 @@
 
             services.r2-sync = {
               enable = true;
-              accountIdFile = "/run/secrets/r2/account-id";
+              accountId = "YOUR_CLOUDFLARE_ACCOUNT_ID";
               credentialsFile = "/run/secrets/r2/credentials.env";
               mounts.workspace = {
                 bucket = "files";
@@ -54,7 +54,7 @@
 
             services.r2-restic = {
               enable = true;
-              accountIdFile = "/run/secrets/r2/account-id";
+              accountId = "YOUR_CLOUDFLARE_ACCOUNT_ID";
               credentialsFile = "/run/secrets/r2/credentials.env";
               passwordFile = "/run/secrets/r2/restic-password";
               bucket = "backups";
@@ -80,7 +80,7 @@
                 home.stateVersion = "25.05";
                 programs.r2-cloud = {
                   enable = true;
-                  accountIdFile = "/run/secrets/r2/account-id";
+                  accountId = "YOUR_CLOUDFLARE_ACCOUNT_ID";
                   credentialsFile = "/run/secrets/r2/credentials.env";
                   rcloneRemoteName = "r2";
                   installTools = true;
@@ -104,7 +104,7 @@
             };
             programs.r2-cloud = {
               enable = true;
-              accountIdFile = "/run/secrets/r2/account-id";
+              accountId = "YOUR_CLOUDFLARE_ACCOUNT_ID";
               credentialsFile = "/run/secrets/r2/credentials.env";
             };
           }

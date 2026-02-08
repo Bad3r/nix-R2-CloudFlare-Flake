@@ -611,7 +611,7 @@ run_target_root_cli_module_eval() {
   nix_eval_expect "home-manager rclone config (positive)" "ok" "${HM_RCLONE_CONFIG_POSITIVE_EXPR}"
   nix_eval_expect_failure \
     "home-manager r2-cloud assertions (negative)" \
-    "programs.r2-cloud.accountId must be set when programs.r2-cloud.enable = true" \
+    "programs.r2-cloud.accountId or programs.r2-cloud.accountIdFile must be set when programs.r2-cloud.enable = true" \
     "${HM_R2_CLI_ASSERTION_EXPR}"
   nix_eval_expect_failure \
     "home-manager credentials assertions (negative)" \
