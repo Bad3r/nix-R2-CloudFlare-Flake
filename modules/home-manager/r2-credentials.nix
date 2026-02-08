@@ -12,9 +12,14 @@ let
   ] { } config;
   topEnable = topCfg ? enable && topCfg.enable;
   topCredentialsFile = if topCfg ? credentialsFile then toString topCfg.credentialsFile else null;
-  effectiveAccountId = if cfg.accountId != "" then cfg.accountId else (topCfg.accountId or "");
+  topAccountId = topCfg.accountId or "";
+  topAccountIdFile = topCfg.accountIdFile or null;
+  hasAccountId =
+    cfg.accountId != "" || topAccountId != "" || cfg.accountIdFile != null || topAccountIdFile != null;
   outputFile = toString cfg.outputFile;
   outputDir = builtins.dirOf outputFile;
+  accountIdFile = if cfg.accountIdFile == null then "" else toString cfg.accountIdFile;
+  topAccountIdFileValue = if topAccountIdFile == null then "" else toString topAccountIdFile;
   accessKeyIdFile = if cfg.accessKeyIdFile == null then "" else toString cfg.accessKeyIdFile;
   secretAccessKeyFile =
     if cfg.secretAccessKeyFile == null then "" else toString cfg.secretAccessKeyFile;
@@ -27,6 +32,12 @@ in
       type = lib.types.str;
       default = "";
       description = "Cloudflare account ID";
+    };
+
+    accountIdFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to file containing Cloudflare account ID";
     };
 
     accessKeyIdFile = lib.mkOption {
@@ -51,8 +62,8 @@ in
   config = lib.mkIf cfg.manage {
     assertions = [
       {
-        assertion = effectiveAccountId != "";
-        message = "programs.r2-cloud.credentials.accountId (or programs.r2-cloud.accountId) must be set when programs.r2-cloud.credentials.manage = true";
+        assertion = hasAccountId;
+        message = "programs.r2-cloud.credentials.accountId or accountIdFile (or programs.r2-cloud.accountId/accountIdFile) must be set when programs.r2-cloud.credentials.manage = true";
       }
       {
         assertion = cfg.accessKeyIdFile != null;
@@ -73,7 +84,10 @@ in
 
       output_file=${lib.escapeShellArg outputFile}
       output_dir=${lib.escapeShellArg outputDir}
-      account_id=${lib.escapeShellArg effectiveAccountId}
+      account_id_literal=${lib.escapeShellArg cfg.accountId}
+      account_id_file=${lib.escapeShellArg accountIdFile}
+      top_account_id_literal=${lib.escapeShellArg topAccountId}
+      top_account_id_file=${lib.escapeShellArg topAccountIdFileValue}
       access_key_id_file=${lib.escapeShellArg accessKeyIdFile}
       secret_access_key_file=${lib.escapeShellArg secretAccessKeyFile}
 
@@ -83,6 +97,22 @@ in
       fi
       if [[ ! -r "$secret_access_key_file" ]]; then
         echo "Error: secret key file is missing or unreadable: $secret_access_key_file" >&2
+        exit 1
+      fi
+
+      account_id=""
+      if [[ -n "$account_id_literal" ]]; then
+        account_id="$account_id_literal"
+      elif [[ -n "$top_account_id_literal" ]]; then
+        account_id="$top_account_id_literal"
+      elif [[ -n "$account_id_file" && -r "$account_id_file" ]]; then
+        { IFS= read -r account_id || true; } < "$account_id_file"
+      elif [[ -n "$top_account_id_file" && -r "$top_account_id_file" ]]; then
+        { IFS= read -r account_id || true; } < "$top_account_id_file"
+      fi
+
+      if [[ -z "$account_id" ]]; then
+        echo "Error: account ID could not be resolved from literal or file inputs." >&2
         exit 1
       fi
 
