@@ -8,6 +8,10 @@ Option reference: `docs/reference/index.md`, `docs/reference/services-r2-restic.
 If snapshot or auth checks fail, use `docs/troubleshooting.md` for first-line
 triage before operator escalation.
 
+Credentials are expected at `/run/secrets/r2/credentials.env`, and restic
+password at `/run/secrets/r2/restic-password`, both derived from
+`secrets/r2.yaml`.
+
 ## Automated release workflow
 
 Repository releases are automated by `.github/workflows/release.yml` and run
@@ -100,9 +104,9 @@ Repository checkpoint:
 
 ```bash
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
-export RESTIC_PASSWORD_FILE=/run/secrets/restic-password
+export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
 
 restic -r "s3:https://<account-id>.r2.cloudflarestorage.com/backups" snapshots
 ```

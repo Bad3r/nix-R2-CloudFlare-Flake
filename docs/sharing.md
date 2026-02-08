@@ -28,6 +28,8 @@ Notes:
 - URLs are generated against the R2 S3 endpoint.
 - Credentials are loaded from `R2_CREDENTIALS_FILE` (default:
   `~/.config/cloudflare/r2/env`).
+- System-wide deployments typically point `R2_CREDENTIALS_FILE` at
+  `/run/secrets/r2/credentials.env` rendered from `secrets/r2.yaml`.
 - Required variables in the sourced credentials file:
   - `R2_ACCOUNT_ID` (or HM-injected `R2_DEFAULT_ACCOUNT_ID`)
   - `AWS_ACCESS_KEY_ID`

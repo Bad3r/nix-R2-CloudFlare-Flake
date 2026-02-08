@@ -12,6 +12,11 @@ Use this format for each issue:
 - `Verify`: expected post-fix behavior.
 - `Escalate`: operator runbook if triage is not sufficient.
 
+Credentials file convention:
+
+- `/run/secrets/r2/credentials.env` rendered from `secrets/r2.yaml` via sops
+  templates.
+
 ## 1) Authentication
 
 ### A. `rclone`/R2 auth fails (`403`, `SignatureDoesNotMatch`, or access denied)
@@ -24,7 +29,7 @@ Confirm:
 
 ```bash
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
 
 env | grep -E '^(R2_ACCOUNT_ID|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)='
@@ -46,7 +51,7 @@ Repair:
 
 ```bash
 # Use the intended credentials source explicitly
-export R2_CREDENTIALS_FILE="${R2_CREDENTIALS_FILE:-/run/secrets/r2-credentials}"
+export R2_CREDENTIALS_FILE="${R2_CREDENTIALS_FILE:-/run/secrets/r2/credentials.env}"
 set -a
 source "${R2_CREDENTIALS_FILE}"
 set +a
@@ -123,7 +128,7 @@ sudo systemctl start r2-bisync-workspace
 sudo ls -la /srv/r2/workspace/.trash
 
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
 rclone lsf :s3:files/.trash \
   --config=/dev/null \
@@ -254,9 +259,9 @@ sudo systemctl status r2-restic-backup
 sudo journalctl -u r2-restic-backup -n 200 --no-pager
 
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
-export RESTIC_PASSWORD_FILE=/run/secrets/restic-password
+export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
 
 restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
 ```
@@ -271,7 +276,7 @@ Repair:
 
 ```bash
 # Confirm password file exists and is readable
-sudo test -r /run/secrets/restic-password
+sudo test -r /run/secrets/r2/restic-password
 
 # If repository is not initialized yet:
 restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" init
