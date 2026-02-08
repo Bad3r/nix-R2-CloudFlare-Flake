@@ -40,6 +40,7 @@ jobs:
       R2E_SHARES_KV_ID_PREVIEW: ${{ vars.R2E_SHARES_KV_ID_PREVIEW }}
       R2E_KEYS_KV_ID: ${{ vars.R2E_KEYS_KV_ID }}
       R2E_KEYS_KV_ID_PREVIEW: ${{ vars.R2E_KEYS_KV_ID_PREVIEW }}
+      R2E_BUCKET_MAP: ${{ vars.R2E_BUCKET_MAP }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -213,6 +214,7 @@ jobs:
       R2E_SHARES_KV_ID_PREVIEW: ${{ vars.R2E_SHARES_KV_ID_PREVIEW }}
       R2E_KEYS_KV_ID: ${{ vars.R2E_KEYS_KV_ID }}
       R2E_KEYS_KV_ID_PREVIEW: ${{ vars.R2E_KEYS_KV_ID_PREVIEW }}
+      R2E_BUCKET_MAP: ${{ vars.R2E_BUCKET_MAP }}
     steps:
       - name: Reject non-main production deploy ref
         run: |
