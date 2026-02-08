@@ -101,6 +101,15 @@ Required environment secrets in both environments:
 - `R2E_SMOKE_BUCKET`
 - `R2E_SMOKE_KEY`
 
+Required environment variables in both environments (non-secret binding IDs/names):
+
+- `R2E_FILES_BUCKET`
+- `R2E_FILES_BUCKET_PREVIEW`
+- `R2E_SHARES_KV_ID`
+- `R2E_SHARES_KV_ID_PREVIEW`
+- `R2E_KEYS_KV_ID`
+- `R2E_KEYS_KV_ID_PREVIEW`
+
 Optional smoke tuning environment variables:
 
 - `R2E_SMOKE_TIMEOUT` (seconds, default `60`)
