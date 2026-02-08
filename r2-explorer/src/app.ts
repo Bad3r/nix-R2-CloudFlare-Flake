@@ -6,6 +6,7 @@ import {
   requireApiIdentity,
   verifyAdminSignature,
 } from "./auth";
+import { listBucketBindings, resolveBucket } from "./buckets";
 import { apiError, contentDisposition, HttpError, json, notFound } from "./http";
 import { getShareRecord, listSharesForObject, putShareRecord } from "./kv";
 import {
@@ -497,8 +498,9 @@ export function createApp(): Hono<AppContext> {
   app.post("/api/share/create", async (c) => {
     const body = readJsonBody(c, shareCreateBodySchema);
     const key = normalizeObjectKey(body.key);
-    const bucket = body.bucket ?? "files";
-    const exists = await headObject(c.env.FILES_BUCKET, key);
+    const bucketAlias = body.bucket ?? "files";
+    const { bucket: r2Bucket } = resolveBucket(c.env, bucketAlias);
+    const exists = await headObject(r2Bucket, key);
     if (!exists) {
       throw new HttpError(404, "object_not_found", `Object not found: ${key}`);
     }
@@ -513,7 +515,7 @@ export function createApp(): Hono<AppContext> {
     const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
     const record: ShareRecord = {
       tokenId,
-      bucket,
+      bucket: bucketAlias,
       key,
       createdAt,
       expiresAt,
@@ -529,7 +531,7 @@ export function createApp(): Hono<AppContext> {
       url: `${baseUrl(c.req.raw, c.env)}/share/${tokenId}`,
       expiresAt,
       maxDownloads,
-      bucket,
+      bucket: bucketAlias,
       key,
     });
   });
@@ -553,9 +555,10 @@ export function createApp(): Hono<AppContext> {
 
   app.get("/api/share/list", async (c) => {
     const query = validateSchema(shareListQuerySchema, queryPayload(c.req.raw), "query");
+    const { alias: bucketAlias } = resolveBucket(c.env, query.bucket);
     const listing = await listSharesForObject(
       c.env.R2E_SHARES_KV,
-      query.bucket,
+      bucketAlias,
       normalizeObjectKey(query.key),
       query.limit,
       query.cursor,
@@ -581,6 +584,7 @@ export function createApp(): Hono<AppContext> {
         alias: "files" as const,
         binding: "FILES_BUCKET" as const,
       },
+      buckets: listBucketBindings(c.env),
       share: {
         mode: "kv-random-token" as const,
         kvNamespace: "R2E_SHARES_KV" as const,
@@ -597,7 +601,8 @@ export function createApp(): Hono<AppContext> {
       throw new HttpError(404, "share_not_found", "Share token missing.");
     }
     const record = await incrementShareDownload(c.env, tokenId);
-    const object = await getObject(c.env.FILES_BUCKET, record.key);
+    const { bucket: r2Bucket } = resolveBucket(c.env, record.bucket);
+    const object = await getObject(r2Bucket, record.key);
     return responseFromObject(object, record.key, record.contentDisposition);
   });
 
