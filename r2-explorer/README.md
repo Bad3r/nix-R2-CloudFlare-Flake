@@ -110,6 +110,9 @@ Required environment variables in both environments (non-secret binding IDs/name
 - `R2E_KEYS_KV_ID`
 - `R2E_KEYS_KV_ID_PREVIEW`
 
+Do not commit concrete binding IDs or bucket names into `wrangler.toml`; keep
+them in GitHub Environment variables and render `wrangler.ci.toml` during CI.
+
 Optional smoke tuning environment variables:
 
 - `R2E_SMOKE_TIMEOUT` (seconds, default `60`)
