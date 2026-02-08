@@ -13,7 +13,10 @@ and this project follows Conventional Commits.
 
 ### Changed
 
-- _No changes yet._
+- Secrets now standardize on `secrets/r2.yaml` with `/run/secrets/r2/*` outputs,
+  and system credentials rendered to `/run/secrets/r2/credentials.env`.
+- NixOS and Home Manager modules now support `accountIdFile` and runtime
+  endpoint resolution for endpoint-less rclone remotes.
 
 ### Fixed
 

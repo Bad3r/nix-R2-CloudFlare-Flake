@@ -41,8 +41,8 @@ nix flake init -t "${TEMPLATE_SOURCE}#full"
 
 Template values to replace before deployment:
 
-- `replace-with-cloudflare-account-id`
-- secret file paths under `/run/secrets/`
+- `secrets/r2.yaml` content (account ID, keys, restic password)
+- SOPS policy to include `secrets/r2.yaml` and template output
 
 ## 3. Evaluate and smoke-test template output
 
@@ -113,7 +113,7 @@ Minimal remote checkpoint:
 
 ```bash
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
 
 rclone lsf :s3:documents \
@@ -152,7 +152,7 @@ Full remote checkpoints:
 
 ```bash
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
 
 rclone lsf :s3:files \
@@ -161,7 +161,7 @@ rclone lsf :s3:files \
   --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 
-export RESTIC_PASSWORD_FILE=/run/secrets/restic-password
+export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
 restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
 ```
 

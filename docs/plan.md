@@ -319,12 +319,26 @@ in
     credentialsFile = lib.mkOption {
       type = lib.types.path;
       description = "Path to env file with R2 credentials";
-      example = "/run/secrets/r2-credentials";
+      example = "/run/secrets/r2/credentials.env";
     };
 
     accountId = lib.mkOption {
       type = lib.types.str;
       description = "Cloudflare account ID";
+    };
+
+    accountIdFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to file containing Cloudflare account ID";
+      example = "/run/secrets/r2/account-id";
+    };
+
+    accountIdFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to file containing Cloudflare account ID";
+      example = "/run/secrets/r2/account-id";
     };
 
     mounts = lib.mkOption {
@@ -457,6 +471,12 @@ in
   };
 }
 ```
+
+Credentials model note (system scope):
+
+- Secrets live in `secrets/r2.yaml`.
+- sops-nix extracts keys to `/run/secrets/r2/*`.
+- sops templates render `/run/secrets/r2/credentials.env` for system services.
 
 ### 2. NixOS Module: r2-restic.nix
 
@@ -617,7 +637,7 @@ in
     credentialsFile = lib.mkOption {
       type = lib.types.path;
       description = "Path to R2 credentials env file";
-      example = "/run/secrets/r2-credentials";
+      example = "/run/secrets/r2/credentials.env";
     };
   };
 
@@ -659,6 +679,7 @@ in
     enable = lib.mkEnableOption "R2 cloud CLI helpers";
 
     accountId = lib.mkOption { type = lib.types.str; default = ""; };
+    accountIdFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
     credentialsFile = lib.mkOption { type = lib.types.path; default = "${config.xdg.configHome}/cloudflare/r2/env"; };
     enableRcloneRemote = lib.mkOption { type = lib.types.bool; default = true; };
     rcloneRemoteName = lib.mkOption { type = lib.types.str; default = "r2"; };
@@ -668,7 +689,7 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
-      { assertion = cfg.accountId != ""; message = "programs.r2-cloud.accountId must be set when programs.r2-cloud.enable = true"; }
+      { assertion = cfg.accountId != "" || cfg.accountIdFile != null; message = "programs.r2-cloud.accountId or accountIdFile must be set when programs.r2-cloud.enable = true"; }
       { assertion = cfg.rcloneRemoteName != "" || !cfg.enableRcloneRemote; message = "programs.r2-cloud.rcloneRemoteName must be non-empty when remote generation is enabled"; }
     ];
 
@@ -698,12 +719,17 @@ strict validation while injecting configuration defaults (`R2_CREDENTIALS_FILE`,
 let
   cfg = config.programs.r2-cloud.credentials;
   effectiveAccountId =
-    if cfg.accountId != "" then cfg.accountId else config.programs.r2-cloud.accountId;
+    if cfg.accountId != "" then cfg.accountId else
+    if config.programs.r2-cloud.accountId != "" then config.programs.r2-cloud.accountId else
+    if cfg.accountIdFile != null then builtins.readFile cfg.accountIdFile else
+    if config.programs.r2-cloud.accountIdFile != null then builtins.readFile config.programs.r2-cloud.accountIdFile else
+    "";
 in
 {
   options.programs.r2-cloud.credentials = {
     manage = lib.mkEnableOption "Manage R2 credentials env file";
     accountId = lib.mkOption { type = lib.types.str; default = ""; };
+    accountIdFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
     accessKeyIdFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
     secretAccessKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
     outputFile = lib.mkOption { type = lib.types.path; default = "${config.xdg.configHome}/cloudflare/r2/env"; };
@@ -711,7 +737,7 @@ in
 
   config = lib.mkIf cfg.manage {
     assertions = [
-      { assertion = effectiveAccountId != ""; message = "R2 account ID must be set for credential management"; }
+      { assertion = effectiveAccountId != ""; message = "R2 account ID must be set for credential management (literal or file)"; }
       { assertion = cfg.accessKeyIdFile != null; message = "accessKeyIdFile is required when manage = true"; }
       { assertion = cfg.secretAccessKeyFile != null; message = "secretAccessKeyFile is required when manage = true"; }
     ];
@@ -772,8 +798,8 @@ in
         {
           services.r2-sync = {
             enable = true;
-            accountId = "abc123def456";
-            credentialsFile = "/run/secrets/r2-credentials";
+            accountIdFile = "/run/secrets/r2/account-id";
+            credentialsFile = "/run/secrets/r2/credentials.env";
             mounts.documents = {
               bucket = "my-documents";
               mountPoint = "/mnt/r2/documents";
@@ -790,7 +816,7 @@ in
         {
           programs.r2-cloud = {
             enable = true;
-            accountId = "abc123def456";
+            accountIdFile = "/run/secrets/r2/account-id";
           };
         }
       ];
@@ -805,8 +831,8 @@ in
 {
   services.r2-sync = {
     enable = true;
-    accountId = "abc123def456";
-    credentialsFile = "/run/secrets/r2-credentials";
+    accountIdFile = "/run/secrets/r2/account-id";
+    credentialsFile = "/run/secrets/r2/credentials.env";
 
     mounts = {
       documents = {
@@ -825,9 +851,9 @@ in
 
   services.r2-restic = {
     enable = true;
-    accountId = "abc123def456";
-    credentialsFile = "/run/secrets/r2-credentials";
-    passwordFile = "/run/secrets/restic-password";
+    accountIdFile = "/run/secrets/r2/account-id";
+    credentialsFile = "/run/secrets/r2/credentials.env";
+    passwordFile = "/run/secrets/r2/restic-password";
     bucket = "backups";
     paths = [ "/home/user/important" "/mnt/r2/documents" ];
     exclude = [ "*.tmp" ".cache" "node_modules" ];

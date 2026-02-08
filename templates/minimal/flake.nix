@@ -33,8 +33,8 @@
             # Required for services.r2-sync.
             services.r2-sync = {
               enable = true;
-              accountId = "replace-with-cloudflare-account-id";
-              credentialsFile = "/run/secrets/r2-credentials";
+              accountIdFile = "/run/secrets/r2/account-id";
+              credentialsFile = "/run/secrets/r2/credentials.env";
               mounts.documents = {
                 bucket = "documents";
                 mountPoint = "/mnt/r2/documents";

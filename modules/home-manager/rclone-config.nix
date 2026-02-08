@@ -16,6 +16,7 @@ let
   rcloneConfigRelative = lib.removePrefix rcloneConfigPrefix rcloneConfigPath;
   remoteName = if cfg != null && cfg ? rcloneRemoteName then cfg.rcloneRemoteName else "r2";
   accountId = if cfg != null && cfg ? accountId then cfg.accountId else "";
+  hasAccountId = accountId != "";
 in
 {
   config = lib.mkIf enableRcloneConfig {
@@ -32,10 +33,6 @@ in
         assertion = remoteName != "";
         message = "programs.r2-cloud.rcloneRemoteName must be a non-empty string when programs.r2-cloud.enableRcloneRemote = true";
       }
-      {
-        assertion = accountId != "";
-        message = "programs.r2-cloud.accountId must be set when programs.r2-cloud.enableRcloneRemote = true";
-      }
     ];
 
     xdg.configFile."${rcloneConfigRelative}".text = ''
@@ -43,7 +40,7 @@ in
       type = s3
       provider = Cloudflare
       env_auth = true
-      endpoint = https://${accountId}.r2.cloudflarestorage.com
+      ${lib.optionalString hasAccountId "endpoint = https://${accountId}.r2.cloudflarestorage.com"}
     '';
   };
 }

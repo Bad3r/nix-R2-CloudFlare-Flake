@@ -4,13 +4,17 @@ Provides rclone mount + bisync services/timers for one or more R2 buckets.
 
 Activation condition: `services.r2-sync.enable = true`.
 
+Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
+`secrets/r2.yaml` via sops templates).
+
 ## Options
 
 | Option                                            | Type                  | Default | Required when enabled                 | Notes                                                         |
 | ------------------------------------------------- | --------------------- | ------- | ------------------------------------- | ------------------------------------------------------------- | -------- | --- | ----------------------------- |
 | `services.r2-sync.enable`                         | boolean               | `false` | no                                    | Enables service and timer generation.                         |
 | `services.r2-sync.credentialsFile`                | `null` or path        | `null`  | yes                                   | Environment file loaded by systemd units.                     |
-| `services.r2-sync.accountId`                      | string                | `""`    | yes                                   | Used to build `https://<accountId>.r2.cloudflarestorage.com`. |
+| `services.r2-sync.accountId`                      | string                | `""`    | yes (if file unset)                   | Used to build `https://<accountId>.r2.cloudflarestorage.com`. |
+| `services.r2-sync.accountIdFile`                  | `null` or path        | `null`  | yes (if literal unset)                | File-based account ID source.                                 |
 | `services.r2-sync.mounts`                         | attrset of submodules | `{}`    | yes (must contain at least one mount) | One mount profile per attr key.                               |
 | `services.r2-sync.mounts.<name>.bucket`           | string                | none    | yes                                   | Remote bucket name; must be non-empty.                        |
 | `services.r2-sync.mounts.<name>.mountPoint`       | path                  | none    | yes                                   | Local mount location for `rclone mount`.                      |
@@ -26,7 +30,7 @@ Activation condition: `services.r2-sync.enable = true`.
 When `enable = true`, evaluation fails if any assertion below is violated:
 
 - `services.r2-sync.credentialsFile must be set when services.r2-sync.enable = true`
-- `services.r2-sync.accountId must be set when services.r2-sync.enable = true`
+- `services.r2-sync.accountId or services.r2-sync.accountIdFile must be set when services.r2-sync.enable = true`
 - `services.r2-sync.mounts must define at least one mount when services.r2-sync.enable = true`
 - `services.r2-sync.mounts.<name>.bucket must be a non-empty string`
 
@@ -44,8 +48,8 @@ For each mount name (example: `documents`):
 {
   services.r2-sync = {
     enable = true;
-    credentialsFile = "/run/secrets/r2-credentials";
-    accountId = "abc123def456";
+    credentialsFile = "/run/secrets/r2/credentials.env";
+    accountIdFile = "/run/secrets/r2/account-id";
 
     mounts.documents = {
       bucket = "documents";
@@ -61,8 +65,8 @@ For each mount name (example: `documents`):
 {
   services.r2-sync = {
     enable = true;
-    credentialsFile = "/run/secrets/r2-credentials";
-    accountId = "abc123def456";
+    credentialsFile = "/run/secrets/r2/credentials.env";
+    accountIdFile = "/run/secrets/r2/account-id";
 
     mounts.workspace = {
       bucket = "files";

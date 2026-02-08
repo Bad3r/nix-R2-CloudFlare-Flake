@@ -25,6 +25,10 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 
 Runtime helper failures are explicit and fatal if credentials are missing or malformed.
 
+When endpoint-less rclone remotes are used, `git-annex-r2-init` exports
+`RCLONE_CONFIG_<REMOTE>_ENDPOINT` based on `R2_ACCOUNT_ID` from the credentials
+file.
+
 ## Generated runtime artifacts
 
 Packages added to `environment.systemPackages`:
@@ -39,7 +43,7 @@ Packages added to `environment.systemPackages`:
 {
   programs.git-annex-r2 = {
     enable = true;
-    credentialsFile = "/run/secrets/r2-credentials";
+    credentialsFile = "/run/secrets/r2/credentials.env";
   };
 }
 ```
@@ -50,7 +54,7 @@ Packages added to `environment.systemPackages`:
 {
   programs.git-annex-r2 = {
     enable = true;
-    credentialsFile = "/run/secrets/r2-credentials";
+    credentialsFile = "/run/secrets/r2/credentials.env";
     rcloneRemoteName = "r2";
     defaultBucket = "project-files";
     defaultPrefix = "annex/project-files";

@@ -7,6 +7,9 @@ Option reference: `docs/reference/index.md` and `docs/reference/services-r2-sync
 If any step fails, use `docs/troubleshooting.md` for command-level diagnosis and
 repair paths.
 
+Credentials are expected at `/run/secrets/r2/credentials.env`, rendered from
+`secrets/r2.yaml` via sops templates.
+
 ## Minimal template (`documents` mount)
 
 Template defaults:
@@ -39,7 +42,7 @@ Remote checkpoint:
 
 ```bash
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
 
 rclone lsf :s3:documents \
@@ -106,7 +109,7 @@ Remote checkpoint:
 
 ```bash
 set -a
-source /run/secrets/r2-credentials
+source /run/secrets/r2/credentials.env
 set +a
 
 rclone lsf :s3:files \

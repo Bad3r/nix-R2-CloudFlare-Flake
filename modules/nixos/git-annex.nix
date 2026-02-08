@@ -67,6 +67,13 @@ let
         exit 1
       fi
 
+      remote_env_name="$(${pkgs.coreutils}/bin/printf '%s' "$rclone_remote_default" | ${pkgs.coreutils}/bin/tr '[:lower:]' '[:upper:]')"
+      if [[ ! "$remote_env_name" =~ ^[A-Z0-9_]+$ ]]; then
+        echo "Error: rclone remote name must be env-var-safe for endpoint export: $rclone_remote_default" >&2
+        exit 1
+      fi
+      export "RCLONE_CONFIG_''${remote_env_name}_ENDPOINT=https://''${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
       if ! git config --get annex.uuid >/dev/null 2>&1; then
         git annex init "$(${pkgs.coreutils}/bin/uname -n)"
       fi
@@ -104,7 +111,7 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Path to credentials env file used by git-annex/rclone (env_auth)";
-      example = "/run/secrets/r2-credentials";
+      example = "/run/secrets/r2/credentials.env";
     };
 
     rcloneRemoteName = lib.mkOption {

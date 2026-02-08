@@ -6,7 +6,13 @@
 }:
 let
   cfg = config.services.r2-sync;
-  endpoint = "https://${cfg.accountId}.r2.cloudflarestorage.com";
+  r2lib = import ../../lib/r2.nix { inherit lib; };
+  resolveAccountIdShell = r2lib.mkResolveAccountIdShell {
+    literalAccountId = cfg.accountId;
+    inherit (cfg) accountIdFile;
+    envVar = "R2_ACCOUNT_ID";
+    outputVar = "R2_RESOLVED_ACCOUNT_ID";
+  };
   hasMounts = cfg.mounts != { };
 
   mkMountService =
@@ -15,7 +21,23 @@ let
       mountPoint = toString mount.mountPoint;
       mountPointArg = lib.escapeShellArg mountPoint;
       remoteArg = lib.escapeShellArg ":s3:${mount.bucket}";
-      endpointArg = lib.escapeShellArg endpoint;
+      mountScript = pkgs.writeShellScript "r2-mount-${name}" ''
+        set -euo pipefail
+        ${resolveAccountIdShell}
+        endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+        exec ${pkgs.rclone}/bin/rclone mount \
+          --config=/dev/null \
+          --s3-provider=Cloudflare \
+          --s3-endpoint="$endpoint" \
+          --s3-env-auth \
+          --vfs-cache-mode=${mount.vfsCache.mode} \
+          --vfs-cache-max-size=${lib.escapeShellArg mount.vfsCache.maxSize} \
+          --vfs-cache-max-age=${lib.escapeShellArg mount.vfsCache.maxAge} \
+          --cache-dir=/var/lib/r2-sync-${name}/cache \
+          --allow-other \
+          ${remoteArg} \
+          ${mountPointArg}
+      '';
     in
     {
       name = "r2-mount-${name}";
@@ -30,20 +52,7 @@ let
         serviceConfig = {
           Type = "simple";
           EnvironmentFile = cfg.credentialsFile;
-          ExecStart = ''
-            ${pkgs.rclone}/bin/rclone mount \
-              --config=/dev/null \
-              --s3-provider=Cloudflare \
-              --s3-endpoint=${endpointArg} \
-              --s3-env-auth \
-              --vfs-cache-mode=${mount.vfsCache.mode} \
-              --vfs-cache-max-size=${lib.escapeShellArg mount.vfsCache.maxSize} \
-              --vfs-cache-max-age=${lib.escapeShellArg mount.vfsCache.maxAge} \
-              --cache-dir=/var/lib/r2-sync-${name}/cache \
-              --allow-other \
-              ${remoteArg} \
-              ${mountPointArg}
-          '';
+          ExecStart = mountScript;
           ExecStop = ''
             ${pkgs.util-linux}/bin/mountpoint -q ${mountPointArg} && \
               (${pkgs.fuse}/bin/fusermount -u ${mountPointArg} || ${pkgs.util-linux}/bin/umount ${mountPointArg}) || true
@@ -70,7 +79,21 @@ let
       localTrashArg = lib.escapeShellArg "${localPath}/.trash";
       remoteArg = lib.escapeShellArg ":s3:${mount.bucket}";
       remoteTrashArg = lib.escapeShellArg ":s3:${mount.bucket}/.trash";
-      endpointArg = lib.escapeShellArg endpoint;
+      bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
+        set -euo pipefail
+        ${resolveAccountIdShell}
+        endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+        exec ${pkgs.rclone}/bin/rclone bisync \
+          --config=/dev/null \
+          --s3-provider=Cloudflare \
+          --s3-endpoint="$endpoint" \
+          --s3-env-auth \
+          ${localPathArg} ${remoteArg} \
+          --backup-dir1=${localTrashArg} \
+          --backup-dir2=${remoteTrashArg} \
+          --max-delete=50% \
+          --check-access
+      '';
     in
     {
       name = "r2-bisync-${name}";
@@ -85,18 +108,7 @@ let
         serviceConfig = {
           Type = "oneshot";
           EnvironmentFile = cfg.credentialsFile;
-          ExecStart = ''
-            ${pkgs.rclone}/bin/rclone bisync \
-              --config=/dev/null \
-              --s3-provider=Cloudflare \
-              --s3-endpoint=${endpointArg} \
-              --s3-env-auth \
-              ${localPathArg} ${remoteArg} \
-              --backup-dir1=${localTrashArg} \
-              --backup-dir2=${remoteTrashArg} \
-              --max-delete=50% \
-              --check-access
-          '';
+          ExecStart = bisyncScript;
           NoNewPrivileges = true;
           PrivateTmp = true;
           ProtectKernelTunables = true;
@@ -130,7 +142,7 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Path to env file with R2 credentials";
-      example = "/run/secrets/r2-credentials";
+      example = "/run/secrets/r2/credentials.env";
     };
 
     accountId = lib.mkOption {
@@ -138,6 +150,13 @@ in
       default = "";
       description = "Cloudflare account ID";
       example = "abc123def456";
+    };
+
+    accountIdFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to file containing Cloudflare account ID";
+      example = "/run/secrets/r2/account-id";
     };
 
     mounts = lib.mkOption {
@@ -214,8 +233,8 @@ in
         message = "services.r2-sync.credentialsFile must be set when services.r2-sync.enable = true";
       }
       {
-        assertion = cfg.accountId != "";
-        message = "services.r2-sync.accountId must be set when services.r2-sync.enable = true";
+        assertion = cfg.accountId != "" || cfg.accountIdFile != null;
+        message = "services.r2-sync.accountId or services.r2-sync.accountIdFile must be set when services.r2-sync.enable = true";
       }
       {
         assertion = hasMounts;

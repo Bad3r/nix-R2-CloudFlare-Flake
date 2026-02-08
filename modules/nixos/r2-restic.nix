@@ -6,7 +6,13 @@
 }:
 let
   cfg = config.services.r2-restic;
-  endpoint = "https://${cfg.accountId}.r2.cloudflarestorage.com";
+  r2lib = import ../../lib/r2.nix { inherit lib; };
+  resolveAccountIdShell = r2lib.mkResolveAccountIdShell {
+    literalAccountId = cfg.accountId;
+    inherit (cfg) accountIdFile;
+    envVar = "R2_ACCOUNT_ID";
+    outputVar = "R2_RESOLVED_ACCOUNT_ID";
+  };
 
   excludeFlags = lib.concatMapStringsSep " " (
     pattern: "--exclude=${lib.escapeShellArg pattern}"
@@ -15,6 +21,9 @@ let
 
   resticBackupScript = pkgs.writeShellScript "r2-restic-backup" ''
     set -euo pipefail
+    ${resolveAccountIdShell}
+    endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+    export RESTIC_REPOSITORY="s3:$endpoint/${cfg.bucket}"
 
     ${pkgs.restic}/bin/restic backup \
       ${excludeFlags} \
@@ -36,7 +45,7 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Path to env file with R2 credentials";
-      example = "/run/secrets/r2-credentials";
+      example = "/run/secrets/r2/credentials.env";
     };
 
     accountId = lib.mkOption {
@@ -46,11 +55,18 @@ in
       example = "abc123def456";
     };
 
+    accountIdFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to file containing Cloudflare account ID";
+      example = "/run/secrets/r2/account-id";
+    };
+
     passwordFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Path to restic repository password file";
-      example = "/run/secrets/restic-password";
+      example = "/run/secrets/r2/restic-password";
     };
 
     bucket = lib.mkOption {
@@ -117,8 +133,8 @@ in
         message = "services.r2-restic.credentialsFile must be set when services.r2-restic.enable = true";
       }
       {
-        assertion = cfg.accountId != "";
-        message = "services.r2-restic.accountId must be set when services.r2-restic.enable = true";
+        assertion = cfg.accountId != "" || cfg.accountIdFile != null;
+        message = "services.r2-restic.accountId or services.r2-restic.accountIdFile must be set when services.r2-restic.enable = true";
       }
       {
         assertion = cfg.passwordFile != null;
@@ -148,7 +164,6 @@ in
       wants = [ "network-online.target" ];
 
       environment = {
-        RESTIC_REPOSITORY = "s3:${endpoint}/${cfg.bucket}";
         RESTIC_PASSWORD_FILE = toString cfg.passwordFile;
       };
 

@@ -29,6 +29,12 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - `docs/`: usage and design documentation
   - includes first-line triage in `docs/troubleshooting.md`
 
+## Secrets Model
+
+System secrets are standardized in `secrets/r2.yaml` and extracted by sops-nix
+to `/run/secrets/r2/*`. System services consume the rendered env file at
+`/run/secrets/r2/credentials.env` (from sops templates).
+
 ## Option Reference
 
 - `docs/reference/index.md` is the canonical option reference entrypoint.
