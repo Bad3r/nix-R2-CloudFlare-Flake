@@ -161,12 +161,12 @@ run_docs_checks() {
     local output_file="$1"
     case "${search_backend}" in
     rg)
-      rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" \
+      rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" --glob "!docs/plan-*.md" \
         "Phase[[:space:]]+[0-9]+" README.md docs >"${output_file}"
       ;;
     grep)
       grep -R --line-number --extended-regexp --include "README.md" \
-        --include "*.md" --exclude "plan.md" "Phase[[:space:]]+[0-9]+" \
+        --include "*.md" --exclude "plan.md" --exclude "plan-*.md" "Phase[[:space:]]+[0-9]+" \
         README.md docs >"${output_file}"
       ;;
     *)
@@ -257,12 +257,14 @@ run_template_checks() {
   (
     cd "${minimal_dir}"
     run nix flake init -t "${source_flake}#minimal"
+    run nix flake lock --override-input r2-cloud "${source_flake}"
     run nix flake check
   )
 
   (
     cd "${full_dir}"
     run nix flake init -t "${source_flake}#full"
+    run nix flake lock --override-input r2-cloud "${source_flake}"
     run nix flake check
   )
 
@@ -611,7 +613,7 @@ run_target_root_cli_module_eval() {
   nix_eval_expect "home-manager rclone config (positive)" "ok" "${HM_RCLONE_CONFIG_POSITIVE_EXPR}"
   nix_eval_expect_failure \
     "home-manager r2-cloud assertions (negative)" \
-    "programs.r2-cloud.accountId must be set when programs.r2-cloud.enable = true" \
+    "programs.r2-cloud.accountId or programs.r2-cloud.accountIdFile must be set when programs.r2-cloud.enable = true" \
     "${HM_R2_CLI_ASSERTION_EXPR}"
   nix_eval_expect_failure \
     "home-manager credentials assertions (negative)" \

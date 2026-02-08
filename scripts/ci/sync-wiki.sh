@@ -31,6 +31,7 @@ find "${WIKI_DIR}" -maxdepth 1 -not -name '.git' -not -path "${WIKI_DIR}" -exec 
 
 # ---------------------------------------------------------------------------
 # File mapping: source path (relative to DOCS_DIR) -> wiki filename (no .md)
+# Plan docs (plan*.md) are intentionally excluded from wiki sync.
 # ---------------------------------------------------------------------------
 declare -A FILE_MAP=(
   # Top-level guides
@@ -74,6 +75,10 @@ title_case_stem() {
 # ---------------------------------------------------------------------------
 echo "Copying docs to wiki..."
 for src in "${!FILE_MAP[@]}"; do
+  if [[ ${src} == plan*.md || ${src} == */plan*.md ]]; then
+    echo "Skipping plan doc: docs/${src}"
+    continue
+  fi
   wiki_name="${FILE_MAP[${src}]}"
   if [[ ! -f "${DOCS_DIR}/${src}" ]]; then
     echo "WARNING: source file docs/${src} not found, skipping"
@@ -100,8 +105,9 @@ build_sed_script() {
     sed_script+="s|\`${escaped_src}\`|[${display_title}](${wiki_name})|g;"
   done
 
-  # 2) Rewrite backtick reference to excluded plan.md
-  sed_script+="s|\`docs/plan.md\`|[Plan](${REPO_URL}/blob/main/docs/plan.md)|g;"
+  # 2) Rewrite backtick references to excluded plan files
+  sed_script+='s|`docs/plan.md`|[Plan]('"${REPO_URL}"'/blob/main/docs/plan.md)|g;'
+  sed_script+='s|`docs/plan-[^`]*\.md`|[Plan]('"${REPO_URL}"'/tree/main/docs)|g;'
 
   # 3) Rewrite relative links in operators/: (./foo.md) -> (Operators-Foo)
   for src in "${!FILE_MAP[@]}"; do
