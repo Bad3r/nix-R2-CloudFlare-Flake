@@ -1042,6 +1042,7 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 5. [x] **Phase 5**: R2-Explorer subflake (Hono+Zod contracts, middleware layering, `/api/server/info`, worker tests)
 6. [x] **Phase 6**: Templates and documentation (expanded matrix below)
 7. [x] **Phase 7**: CI/CD setup (expanded matrix below)
+8. [ ] **Phase 8**: Real-user adoption via `~/nixos` integration (consumer input wiring + runtime validation + docs feedback loop)
 
 ## Phase 6 Milestone Matrix (Templates + Documentation)
 
@@ -1300,3 +1301,44 @@ CI automation does not remove break-glass/manual deployment workflows.
   refs (`refs/pull/*/merge`) under custom branch policies.
 - Production required-reviewer gate intentionally remains disabled as a
   single-maintainer exception.
+
+## Phase 8 Milestone Matrix (`~/nixos` Integration + Runtime Validation)
+
+| Milestone                                 | Scope / Tasks                                                                                                                                                | Deliverables                                                                             | Exit Criteria                                                                                            | Status |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| **8.1 Consumer integration in `~/nixos`** | Integrate this flake as an input in the main system config and wire `nixosModules.default` (+ Home Manager module where used) into target host/user configs. | Updated `~/nixos` flake wiring and host/user module imports.                             | `nixos-rebuild dry-activate --flake ~/nixos#<host>` passes with module assertions satisfied.             | [ ]    |
+| **8.2 Staged service enablement**         | Enable core options in staged order (`r2-sync` first, then `r2-restic`, then `git-annex` and CLI wrappers) to isolate failures cleanly.                      | Host config with explicit staged enablement and secrets mapping.                         | `nixos-rebuild switch --flake ~/nixos#<host>` succeeds for each stage without hidden/manual patching.    | [ ]    |
+| **8.3 Runtime service verification**      | Verify mount/bisync/restic/timers/CLI surfaces on the real host managed by `~/nixos`.                                                                        | Service/timer + command verification checklist with observed outputs.                    | Core units/timers are active/invokable and `r2`/`git-annex-r2-init` resolve in PATH.                     | [ ]    |
+| **8.4 Remote connectivity validation**    | Validate live R2 and restic connectivity using runtime secrets on the managed host.                                                                          | Successful `rclone`/`restic` checkpoints (or explicit failure signatures + fixes).       | Remote `files` listing and `restic snapshots` checks pass with expected auth semantics.                  | [ ]    |
+| **8.5 Sharing UX validation**             | Validate presigned and Worker-based share flows from the managed system, including Access split behavior.                                                    | End-to-end share test evidence (`r2 share`, `r2 share worker create/list`, curl probes). | Tokenized share works and `/api/*` remains Access-protected.                                             | [ ]    |
+| **8.6 Acceptance + feedback loop**        | Record evidence, unresolved issues, and feed real-user friction back into quickstart/runbooks/troubleshooting docs.                                          | Phase 8 closure note + doc refinements informed by first-user run.                       | One successful full-stack run documented with reproducible commands and outcomes from `~/nixos` context. | [ ]    |
+
+### 8.1 Main-Config Bring-Up Checklist (Draft)
+
+1. Treat `~/nixos` as the source of truth for actual usage (do not run daily
+   operations from a standalone template project).
+2. Add this repo as a flake input in `~/nixos/flake.nix`:
+   - local iteration: `path:/home/vx/git/nix-R2-CloudFlare-Flake`
+   - optional later promotion: `github:Bad3r/nix-R2-CloudFlare-Flake?ref=main`
+3. Wire module imports into target configs:
+   - host: `r2-cloud.nixosModules.default`
+   - user (if Home Manager-managed): `r2-cloud.homeManagerModules.default`
+4. Configure required options in `~/nixos` host/user modules and ensure
+   required `/run/secrets/*` files exist.
+5. Validate in `~/nixos`:
+   - `nix flake check`
+   - `sudo nixos-rebuild dry-activate --flake ~/nixos#<host>`
+6. Apply on host:
+   - `sudo nixos-rebuild switch --flake ~/nixos#<host>`
+7. Verify runtime units/timers and CLI on the host:
+   - `r2-mount-*`, `r2-bisync-*`, `r2-restic-backup`, timers
+   - `command -v r2`
+   - `command -v git-annex-r2-init`
+8. Verify remote connectivity:
+   - `rclone lsf :s3:files ...`
+   - `restic ... snapshots`
+9. Verify sharing UX from the managed system:
+   - `r2 share ...`
+   - `r2 share worker create/list ...`
+   - `curl -I <share_url>`
+   - `curl -I https://files.example.com/api/list`
