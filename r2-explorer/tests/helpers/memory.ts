@@ -371,12 +371,14 @@ export function signedHeaders(
 export async function createTestEnv(): Promise<{
   env: Env;
   bucket: MemoryR2Bucket;
+  photosBucket: MemoryR2Bucket;
   sharesKv: MemoryKV;
   keysKv: MemoryKV;
   kid: string;
   secret: string;
 }> {
   const bucket = new MemoryR2Bucket();
+  const photosBucket = new MemoryR2Bucket();
   const sharesKv = new MemoryKV();
   const keysKv = new MemoryKV();
   const kid = "k-test";
@@ -397,6 +399,7 @@ export async function createTestEnv(): Promise<{
 
   const env: Env = {
     FILES_BUCKET: bucket as unknown as R2Bucket,
+    PHOTOS_BUCKET: photosBucket as unknown as R2Bucket,
     R2E_SHARES_KV: sharesKv as unknown as KVNamespace,
     R2E_KEYS_KV: keysKv as unknown as KVNamespace,
     R2E_ADMIN_AUTH_WINDOW_SEC: "300",
@@ -405,11 +408,16 @@ export async function createTestEnv(): Promise<{
     R2E_UI_MAX_LIST_LIMIT: "1000",
     R2E_PUBLIC_BASE_URL: "https://files.example.com",
     R2E_READONLY: "false",
+    R2E_BUCKET_MAP: JSON.stringify({
+      files: "FILES_BUCKET",
+      photos: "PHOTOS_BUCKET",
+    }),
   };
 
   return {
     env,
     bucket,
+    photosBucket,
     sharesKv,
     keysKv,
     kid,
