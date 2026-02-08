@@ -101,7 +101,7 @@ If key mismatch persists, perform key rotation workflow.
 
 Verify:
 
-- `r2 share worker create ...` succeeds and returns a `shareUrl`.
+- `r2 share worker create ...` succeeds and returns a `url`.
 - `r2 share worker list ...` returns token records.
 
 Escalate:
@@ -373,7 +373,7 @@ If fresh token still fails, re-validate Access split for:
 
 Verify:
 
-- Fresh `shareUrl` is reachable publicly.
+- Fresh `url` is reachable publicly.
 - `/api/*` remains Access-protected.
 
 Escalate:
