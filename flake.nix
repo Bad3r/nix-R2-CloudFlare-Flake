@@ -195,6 +195,7 @@
               pkgs.restic
               pkgs.nodejs
               pkgs.jq
+              pkgs.python3
             ]
             ++ optionalPkg "git-annex"
             ++ hookToolPackages
@@ -206,6 +207,7 @@
             packages = [
               pkgs.coreutils
               pkgs.git
+              pkgs.python3
             ]
             ++ hookToolPackages
             ++ optionalPkg "vulnix";
