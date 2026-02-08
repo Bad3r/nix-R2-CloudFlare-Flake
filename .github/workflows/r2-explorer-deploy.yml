@@ -75,7 +75,7 @@ jobs:
 
       - name: Deploy preview
         working-directory: r2-explorer
-        run: pnpm run deploy -- --config wrangler.ci.toml --env preview
+        run: pnpm exec wrangler deploy --config wrangler.ci.toml --env preview
 
   smoke-preview:
     name: Smoke preview
@@ -192,7 +192,7 @@ jobs:
             echo './scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml'
             echo 'cd r2-explorer'
             echo 'pnpm install --frozen-lockfile'
-            echo 'pnpm run deploy -- --config wrangler.ci.toml --env preview'
+            echo 'pnpm exec wrangler deploy --config wrangler.ci.toml --env preview'
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -256,7 +256,7 @@ jobs:
 
       - name: Deploy production
         working-directory: r2-explorer
-        run: pnpm run deploy -- --config wrangler.ci.toml
+        run: pnpm exec wrangler deploy --config wrangler.ci.toml --env ""
 
   smoke-production:
     name: Smoke production
@@ -366,6 +366,6 @@ jobs:
             echo './scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml'
             echo 'cd r2-explorer'
             echo 'pnpm install --frozen-lockfile'
-            echo 'pnpm run deploy -- --config wrangler.ci.toml'
+            echo 'pnpm exec wrangler deploy --config wrangler.ci.toml --env ""'
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
