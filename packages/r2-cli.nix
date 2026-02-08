@@ -3,6 +3,7 @@
   writeShellApplication,
   coreutils,
   curl,
+  gawk,
   jq,
   openssl,
   rclone,
@@ -13,6 +14,7 @@ writeShellApplication {
   runtimeInputs = [
     coreutils
     curl
+    gawk
     jq
     openssl
     rclone
