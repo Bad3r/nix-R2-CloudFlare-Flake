@@ -101,7 +101,7 @@ If key mismatch persists, perform key rotation workflow.
 
 Verify:
 
-- `r2 share worker create ...` succeeds and returns a `shareUrl`.
+- `r2 share worker create ...` succeeds and returns a `url`.
 - `r2 share worker list ...` returns token records.
 
 Escalate:
@@ -358,12 +358,19 @@ Likely root causes:
 - Token expired/revoked/or max-downloads exceeded.
 - `R2E_SHARES_KV` binding mismatch in active deployment.
 - Access policy split drift (`/share/*` no longer bypassed).
+- Bucket alias missing from `R2E_BUCKET_MAP` or binding missing for the stored bucket.
 
 Repair:
 
 ```bash
 # Mint a fresh token and retest immediately
 r2 share worker create files workspace/demo.txt 1h --max-downloads 1
+```
+
+If the bucket mapping is suspect, verify Worker settings:
+
+```bash
+curl -s https://files.example.com/api/server/info | jq '.buckets'
 ```
 
 If fresh token still fails, re-validate Access split for:
@@ -373,7 +380,7 @@ If fresh token still fails, re-validate Access split for:
 
 Verify:
 
-- Fresh `shareUrl` is reachable publicly.
+- Fresh `url` is reachable publicly.
 - `/api/*` remains Access-protected.
 
 Escalate:

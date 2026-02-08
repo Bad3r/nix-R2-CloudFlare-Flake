@@ -240,6 +240,16 @@ export const serverInfoResponseSchema = z
         binding: z.literal("FILES_BUCKET"),
       })
       .strict(),
+    buckets: z
+      .array(
+        z
+          .object({
+            alias: z.string(),
+            binding: z.string(),
+          })
+          .strict(),
+      )
+      .min(1),
     share: z
       .object({
         mode: z.literal("kv-random-token"),

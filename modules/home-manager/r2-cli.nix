@@ -41,7 +41,7 @@ let
       ${resolveAccountIdShell}
       export R2_DEFAULT_ACCOUNT_ID="$R2_RESOLVED_ACCOUNT_ID"
 
-      enable_rclone_remote=${lib.escapeShellArg cfg.enableRcloneRemote}
+      enable_rclone_remote=${lib.boolToString cfg.enableRcloneRemote}
       literal_account_id=${lib.escapeShellArg cfg.accountId}
       if [[ "$enable_rclone_remote" == "true" && -z "$literal_account_id" ]]; then
         rclone_remote=${lib.escapeShellArg cfg.rcloneRemoteName}

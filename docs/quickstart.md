@@ -179,7 +179,7 @@ Prerequisite: R2-Explorer is deployed and Worker admin environment variables are
 r2 share files workspace/demo.txt 24h
 share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 1)"
 echo "${share_json}"
-share_url="$(printf '%s' "${share_json}" | jq -r '.shareUrl')"
+share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
 r2 share worker list files workspace/demo.txt
 curl -I "${share_url}"
 curl -I https://files.example.com/api/list
@@ -188,9 +188,9 @@ curl -I https://files.example.com/api/list
 Expected result:
 
 - presigned command returns an R2 S3 URL
-- worker create returns a `shareUrl` on your custom domain
+- worker create returns a `url` on your custom domain
 - worker list includes the created token record
-- `GET <shareUrl>` returns object response headers for a valid token
+- `GET <url>` returns object response headers for a valid token
 - `GET /api/list` remains Cloudflare-Access protected (not public)
 
 For Access policy and Worker token behavior details, continue in `docs/sharing.md`.

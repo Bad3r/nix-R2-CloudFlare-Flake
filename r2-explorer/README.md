@@ -18,6 +18,7 @@ Set these in `wrangler.toml`:
 - `R2E_SHARES_KV` (share token state)
 - `R2E_KEYS_KV` (admin keyset + nonce replay keys)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/*`)
+- `R2E_BUCKET_MAP` (optional JSON map of bucket alias -> binding name; must include `{"files":"FILES_BUCKET"}`)
 
 ## Initialize admin keyset
 
@@ -109,6 +110,7 @@ Required environment variables in both environments (non-secret binding IDs/name
 - `R2E_SHARES_KV_ID_PREVIEW`
 - `R2E_KEYS_KV_ID`
 - `R2E_KEYS_KV_ID_PREVIEW`
+- `R2E_BUCKET_MAP` (optional; JSON alias map. If unset, CI renders a default map from `R2E_FILES_BUCKET*`.)
 
 Do not commit concrete binding IDs or bucket names into `wrangler.toml`; keep
 them in GitHub Environment variables and render `wrangler.ci.toml` during CI.

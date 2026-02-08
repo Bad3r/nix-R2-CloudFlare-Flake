@@ -8,6 +8,8 @@ export interface Env {
   R2E_UI_MAX_LIST_LIMIT?: string;
   R2E_PUBLIC_BASE_URL?: string;
   R2E_READONLY?: string;
+  R2E_BUCKET_MAP?: string;
+  [key: string]: unknown;
 }
 
 export interface AccessIdentity {
