@@ -291,15 +291,18 @@ async function responseFromObject(
 }
 
 const accessMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
-  const identity = await requireApiIdentity(c.req.raw);
+  const identity = await requireApiIdentity(c.req.raw, c.env);
+  c.set("accessIdentity", identity);
   c.set("actor", identity.email ?? identity.userId ?? "access-user");
   c.set("authMode", "access");
   await next();
 };
 
 const accessOrHmacMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
-  const identity = c.get("accessIdentity");
-  if (identity) {
+  const identityHint = c.get("accessIdentity");
+  if (identityHint) {
+    const identity = await requireApiIdentity(c.req.raw, c.env);
+    c.set("accessIdentity", identity);
     c.set("actor", identity.email ?? identity.userId ?? "access-user");
     c.set("authMode", "access");
     await next();

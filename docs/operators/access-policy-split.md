@@ -47,6 +47,8 @@ curl -I https://files.example.com/share/<token-id>
 - `/api/*` requires Access-authenticated session.
 - `/share/<token-id>` is reachable without Access membership and still enforces
   token validity.
+- Worker is configured with `R2E_ACCESS_TEAM_DOMAIN` and `R2E_ACCESS_AUD`, and
+  `/api/*` rejects invalid or missing Access JWT assertions.
 
 ## Failure Signatures and Triage
 

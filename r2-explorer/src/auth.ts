@@ -2,6 +2,38 @@ import { HttpError } from "./http";
 import type { AccessIdentity, AdminKeyset, Env } from "./types";
 
 const ADMIN_KEYSET_KV_KEY = "admin:keyset:active";
+const ACCESS_JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type AccessJwtHeader = {
+  alg?: unknown;
+  kid?: unknown;
+};
+
+type AccessJwtPayload = {
+  iss?: unknown;
+  aud?: unknown;
+  exp?: unknown;
+  nbf?: unknown;
+  sub?: unknown;
+  email?: unknown;
+};
+
+type AccessJwk = JsonWebKey & {
+  kid?: string;
+};
+
+type CachedAccessSigningKeys = {
+  fetchedAtMs: number;
+  keysByKid: Map<string, CryptoKey>;
+  fallbackKey: CryptoKey | null;
+};
+
+const accessSigningKeyCache = new Map<string, CachedAccessSigningKeys>();
+
+/** Clear the JWKS signing key cache. Exported for test teardown. */
+export function resetAccessSigningKeyCache(): void {
+  accessSigningKeyCache.clear();
+}
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -28,6 +60,289 @@ export function extractAccessIdentity(request: Request): AccessIdentity | null {
   }
 
   return { email, userId, jwt };
+}
+
+function normalizeAccessTeamDomain(env: Env): string {
+  const raw = env.R2E_ACCESS_TEAM_DOMAIN?.trim() ?? "";
+  if (raw.length === 0) {
+    throw new HttpError(
+      500,
+      "access_config_invalid",
+      "Missing required Worker variable R2E_ACCESS_TEAM_DOMAIN for Access JWT validation.",
+    );
+  }
+
+  const withoutScheme = raw.replace(/^https?:\/\//i, "");
+  if (!/^[a-z0-9.-]+$/i.test(withoutScheme) || withoutScheme.includes("/")) {
+    throw new HttpError(
+      500,
+      "access_config_invalid",
+      "R2E_ACCESS_TEAM_DOMAIN must be a hostname like team.cloudflareaccess.com.",
+    );
+  }
+  return withoutScheme.toLowerCase();
+}
+
+function requiredAccessAudience(env: Env): string {
+  const aud = env.R2E_ACCESS_AUD?.trim() ?? "";
+  if (aud.length === 0) {
+    throw new HttpError(
+      500,
+      "access_config_invalid",
+      "Missing required Worker variable R2E_ACCESS_AUD for Access JWT validation.",
+    );
+  }
+  return aud;
+}
+
+function decodeBase64Url(input: string): Uint8Array {
+  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+  const remainder = normalized.length % 4;
+  if (remainder === 1) {
+    throw new HttpError(401, "access_jwt_invalid", "Malformed Access JWT.");
+  }
+  const padded =
+    remainder === 0 ? normalized : remainder === 2 ? `${normalized}==` : `${normalized}=`;
+  let decoded = "";
+  try {
+    decoded = atob(padded);
+  } catch {
+    throw new HttpError(401, "access_jwt_invalid", "Malformed Access JWT.");
+  }
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i += 1) {
+    bytes[i] = decoded.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function decodeJwtJson<T>(segment: string): T {
+  const bytes = decodeBase64Url(segment);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new HttpError(401, "access_jwt_invalid", "Malformed Access JWT payload.");
+  }
+  return parsed as T;
+}
+
+function parseAccessJwt(jwt: string): {
+  encodedHeader: string;
+  encodedPayload: string;
+  encodedSignature: string;
+  header: AccessJwtHeader;
+  payload: AccessJwtPayload;
+} {
+  const parts = jwt.split(".");
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+    throw new HttpError(401, "access_jwt_invalid", "Malformed Access JWT.");
+  }
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const header = decodeJwtJson<AccessJwtHeader>(encodedHeader);
+  const payload = decodeJwtJson<AccessJwtPayload>(encodedPayload);
+  return { encodedHeader, encodedPayload, encodedSignature, header, payload };
+}
+
+function parseNumericClaim(value: unknown, claim: string): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  throw new HttpError(401, "access_jwt_invalid", `Invalid Access JWT claim: ${claim}.`);
+}
+
+function claimString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function validateAccessClaims(payload: AccessJwtPayload, teamDomain: string, expectedAud: string): void {
+  const expectedIssuer = `https://${teamDomain}`;
+  const issuer = claimString(payload.iss);
+  if (!issuer || (issuer !== expectedIssuer && issuer !== `${expectedIssuer}/`)) {
+    throw new HttpError(401, "access_jwt_invalid", "Access JWT issuer does not match expected team domain.");
+  }
+
+  const aud = payload.aud;
+  if (typeof aud === "string") {
+    if (aud !== expectedAud) {
+      throw new HttpError(401, "access_jwt_invalid", "Access JWT audience does not match expected value.");
+    }
+  } else if (Array.isArray(aud)) {
+    const matches = aud.some((value) => value === expectedAud);
+    if (!matches) {
+      throw new HttpError(401, "access_jwt_invalid", "Access JWT audience does not match expected value.");
+    }
+  } else {
+    throw new HttpError(401, "access_jwt_invalid", "Access JWT audience claim is missing or invalid.");
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = parseNumericClaim(payload.exp, "exp");
+  if (exp <= nowSec) {
+    throw new HttpError(401, "access_jwt_invalid", "Access JWT is expired.");
+  }
+
+  if (payload.nbf !== undefined) {
+    const nbf = parseNumericClaim(payload.nbf, "nbf");
+    if (nbf > nowSec + 30) {
+      throw new HttpError(401, "access_jwt_invalid", "Access JWT is not valid yet.");
+    }
+  }
+}
+
+async function fetchAccessSigningKeys(teamDomain: string): Promise<CachedAccessSigningKeys> {
+  const certsUrl = `https://${teamDomain}/cdn-cgi/access/certs`;
+  let response: Response;
+  try {
+    response = await fetch(certsUrl, { method: "GET" });
+  } catch (error) {
+    throw new HttpError(401, "access_jwt_invalid", "Failed to fetch Access signing keys.", {
+      cause: String(error),
+      certsUrl,
+    });
+  }
+
+  if (!response.ok) {
+    throw new HttpError(401, "access_jwt_invalid", "Failed to fetch Access signing keys.", {
+      certsUrl,
+      status: response.status,
+    });
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new HttpError(401, "access_jwt_invalid", "Access signing keys response is not valid JSON.", {
+      cause: String(error),
+      certsUrl,
+    });
+  }
+
+  const keysRaw = (payload as { keys?: unknown })?.keys;
+  if (!Array.isArray(keysRaw) || keysRaw.length === 0) {
+    throw new HttpError(401, "access_jwt_invalid", "Access signing keys response is missing keys.");
+  }
+
+  const keysByKid = new Map<string, CryptoKey>();
+  let fallbackKey: CryptoKey | null = null;
+  for (const candidate of keysRaw) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    const jwk = candidate as AccessJwk;
+    if (jwk.kty !== "RSA") {
+      continue;
+    }
+    let key: CryptoKey;
+    try {
+      key = await crypto.subtle.importKey(
+        "jwk",
+        jwk,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["verify"],
+      );
+    } catch {
+      continue;
+    }
+    if (!fallbackKey) {
+      fallbackKey = key;
+    }
+    if (typeof jwk.kid === "string" && jwk.kid.length > 0) {
+      keysByKid.set(jwk.kid, key);
+    }
+  }
+
+  if (!fallbackKey) {
+    throw new HttpError(401, "access_jwt_invalid", "No usable Access signing keys were found.");
+  }
+
+  return {
+    fetchedAtMs: Date.now(),
+    keysByKid,
+    fallbackKey,
+  };
+}
+
+async function accessSigningKeys(teamDomain: string, forceRefresh = false): Promise<CachedAccessSigningKeys> {
+  const nowMs = Date.now();
+  const cached = accessSigningKeyCache.get(teamDomain);
+  if (!forceRefresh && cached && nowMs - cached.fetchedAtMs < ACCESS_JWKS_CACHE_TTL_MS) {
+    return cached;
+  }
+  const fresh = await fetchAccessSigningKeys(teamDomain);
+  accessSigningKeyCache.set(teamDomain, fresh);
+  return fresh;
+}
+
+function keyForJwt(header: AccessJwtHeader, keys: CachedAccessSigningKeys): CryptoKey | null {
+  const kid = claimString(header.kid);
+  if (kid) {
+    return keys.keysByKid.get(kid) ?? null;
+  }
+  return keys.fallbackKey;
+}
+
+async function verifyJwtSignature(
+  signingInput: string,
+  encodedSignature: string,
+  key: CryptoKey,
+): Promise<boolean> {
+  const signature = decodeBase64Url(encodedSignature);
+  const signatureBuffer = new Uint8Array(signature.byteLength);
+  signatureBuffer.set(signature);
+  return crypto.subtle.verify(
+    { name: "RSASSA-PKCS1-v1_5" },
+    key,
+    signatureBuffer.buffer,
+    new TextEncoder().encode(signingInput),
+  );
+}
+
+async function validateAccessJwt(jwt: string, env: Env): Promise<AccessJwtPayload> {
+  const teamDomain = normalizeAccessTeamDomain(env);
+  const expectedAud = requiredAccessAudience(env);
+  const parsed = parseAccessJwt(jwt);
+  if (parsed.header.alg !== "RS256") {
+    throw new HttpError(401, "access_jwt_invalid", "Access JWT must use RS256.");
+  }
+
+  const signingInput = `${parsed.encodedHeader}.${parsed.encodedPayload}`;
+  let keys = await accessSigningKeys(teamDomain);
+  let key = keyForJwt(parsed.header, keys);
+  if (!key) {
+    keys = await accessSigningKeys(teamDomain, true);
+    key = keyForJwt(parsed.header, keys);
+  }
+  if (!key) {
+    throw new HttpError(401, "access_jwt_invalid", "Access JWT key id was not found in current cert set.");
+  }
+
+  let verified = false;
+  try {
+    verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, key);
+  } catch {
+    verified = false;
+  }
+  if (!verified) {
+    const refreshed = await accessSigningKeys(teamDomain, true);
+    const refreshedKey = keyForJwt(parsed.header, refreshed);
+    if (!refreshedKey) {
+      throw new HttpError(401, "access_jwt_invalid", "Access JWT key id was not found in current cert set.");
+    }
+    try {
+      verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey);
+    } catch {
+      verified = false;
+    }
+  }
+  if (!verified) {
+    throw new HttpError(401, "access_jwt_invalid", "Access JWT signature validation failed.");
+  }
+
+  validateAccessClaims(parsed.payload, teamDomain, expectedAud);
+  return parsed.payload;
 }
 
 async function getAdminKeyset(env: Env): Promise<AdminKeyset> {
@@ -191,7 +506,7 @@ export async function verifyAdminSignature(request: Request, env: Env, rawBody: 
   return kid;
 }
 
-export async function requireApiIdentity(request: Request): Promise<AccessIdentity> {
+export async function requireApiIdentity(request: Request, env: Env): Promise<AccessIdentity> {
   const identity = extractAccessIdentity(request);
   if (!identity) {
     throw new HttpError(
@@ -200,7 +515,17 @@ export async function requireApiIdentity(request: Request): Promise<AccessIdenti
       "Cloudflare Access identity is required for /api routes.",
     );
   }
-  return identity;
+  if (!identity.jwt) {
+    throw new HttpError(401, "access_required", "Cf-Access-Jwt-Assertion header is required for /api routes.");
+  }
+  const jwtPayload = await validateAccessJwt(identity.jwt, env);
+  const jwtEmail = claimString(jwtPayload.email);
+  const jwtUserId = claimString(jwtPayload.sub);
+  return {
+    email: jwtEmail,
+    userId: jwtUserId,
+    jwt: identity.jwt,
+  };
 }
 
 export async function requireAccessOrAdminSignature(
@@ -210,7 +535,8 @@ export async function requireAccessOrAdminSignature(
 ): Promise<{ mode: "access" | "hmac"; actor: string }> {
   const identity = extractAccessIdentity(request);
   if (identity) {
-    const actor = identity.email ?? identity.userId ?? "access-user";
+    const verifiedIdentity = await requireApiIdentity(request, env);
+    const actor = verifiedIdentity.email ?? verifiedIdentity.userId ?? "access-user";
     return { mode: "access", actor };
   }
 

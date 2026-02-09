@@ -595,12 +595,24 @@ run_target_root_flake_template_docs() {
   run nix flake check
   run_template_checks
   run_docs_checks
+  if command -v rg >/dev/null 2>&1; then
+    if rg -n "require-sigs = false" .github/workflows >/dev/null; then
+      echo "Workflow hardening check failed: found 'require-sigs = false' in .github/workflows." >&2
+      rg -n "require-sigs = false" .github/workflows >&2
+      exit 1
+    fi
+  elif grep -R --line-number "require-sigs = false" .github/workflows >/dev/null; then
+    echo "Workflow hardening check failed: found 'require-sigs = false' in .github/workflows." >&2
+    grep -R --line-number "require-sigs = false" .github/workflows >&2
+    exit 1
+  fi
 }
 
 run_target_root_cli_module_eval() {
   run nix build .#r2
   run nix run .#r2 -- help
   run nix run .#r2 -- bucket help
+  run nix run .#r2 -- bucket lifecycle help
   run nix run .#r2 -- share help
   run nix run .#r2 -- share worker help
   nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"

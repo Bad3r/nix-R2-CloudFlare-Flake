@@ -49,7 +49,7 @@ Required environment variables for Worker-mode CLI calls:
 
 - `R2_EXPLORER_BASE_URL` (for example `https://files.example.com`)
 - `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
-- `R2_EXPLORER_ADMIN_SECRET` (matching key material)
+- `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
 
 Multi-bucket aliases:
 
@@ -69,9 +69,20 @@ Behavior and constraints:
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
 - Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
-- `/api/*` routes require Cloudflare Access identity.
+- `/api/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
 - `r2 share worker ...` can authenticate with HMAC headers (no browser Access
   session required).
+
+Required Worker vars for `/api/*` JWT verification:
+
+- `R2E_ACCESS_TEAM_DOMAIN` (for example `team.cloudflareaccess.com`)
+- `R2E_ACCESS_AUD` (Access application audience value)
+
+Failure semantics:
+
+- Missing `Cf-Access-Jwt-Assertion` for `/api/*`: `401 access_required`
+- Invalid JWT signature/claims: `401 access_jwt_invalid`
+- Missing verifier config (`R2E_ACCESS_TEAM_DOMAIN` or `R2E_ACCESS_AUD`): `500 access_config_invalid`
 
 ## Cloudflare Access policy model
 
@@ -93,6 +104,9 @@ public token links work as intended:
 
 This keeps `/api/*` and `/` behind Access while allowing `GET /share/<token>`
 to work for recipients without Access membership.
+
+Important: Access policy split alone is not sufficient. The Worker must also
+verify Access JWT signature and claims on `/api/*`.
 
 ## Operator runbooks
 

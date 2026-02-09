@@ -1012,9 +1012,9 @@ nix develop
 # On consumer system after nixos-rebuild
 r2 bucket list
 r2 bucket create test-bucket
-r2 bucket lifecycle test-bucket 30
+r2 bucket lifecycle add test-bucket trash-cleanup .trash/ --expire-days 30
 # Verify lifecycle (requires wrangler in PATH)
-wrangler r2 bucket lifecycle get test-bucket
+wrangler r2 bucket lifecycle list test-bucket
 sudo systemctl status r2-mount-documents
 ls /mnt/r2/documents
 
@@ -1256,7 +1256,8 @@ CI automation does not remove break-glass/manual deployment workflows.
   - Worker share creation via `r2 share worker create`
   - first `/share/<token>` access returns success
   - second `/share/<token>` access returns expected token exhaustion (`410`)
-  - unauthenticated `/api/server/info` remains Access-protected (`401`)
+  - unauthenticated `/api/server/info` remains blocked (`302` Access redirect or Worker `401`)
+  - authenticated `/api/server/info` succeeds (`200`) via Access service-token headers
   - configurable timeout/retry controls:
     - `R2E_SMOKE_TIMEOUT`, `R2E_SMOKE_CONNECT_TIMEOUT`
     - `R2E_SMOKE_RETRIES`, `R2E_SMOKE_RETRY_DELAY_SEC`
@@ -1298,7 +1299,8 @@ CI automation does not remove break-glass/manual deployment workflows.
    - `smoke-production` fails
    - `rollback-guidance-production` runs with operator rollback steps
 5. Access regression detection:
-   - if unauthenticated `/api/server/info` no longer returns `401`
+   - if unauthenticated `/api/server/info` is not blocked (`302`/`401`)
+   - if authenticated `/api/server/info` fails to return `200`
    - smoke checks fail with explicit status mismatch
 6. CLI release smoke gate:
    - `verify-cli-smoke` must pass (`r2 help`, `bucket help`, `share help`,

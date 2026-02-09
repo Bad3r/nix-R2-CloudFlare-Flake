@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "cloudflare-agents": {
-      "type": "http",
-      "url": "https://agents.mcp.cloudflare.com/mcp"
+    "sequentialthinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },
     "cloudflare-docs": {
       "type": "http",

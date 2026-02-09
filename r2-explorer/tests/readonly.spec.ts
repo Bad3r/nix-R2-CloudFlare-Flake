@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import { accessHeaders, createTestEnv } from "./helpers/memory";
+import { accessHeaders, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
 
 describe("readonly middleware", () => {
+  useAccessJwksFetchMock();
+
   it("blocks API mutations when R2E_READONLY=true", async () => {
     const { env, bucket } = await createTestEnv();
     env.R2E_READONLY = "true";

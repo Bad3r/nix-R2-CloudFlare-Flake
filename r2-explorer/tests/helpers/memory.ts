@@ -1,4 +1,6 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { afterEach, beforeEach } from "vitest";
+import { resetAccessSigningKeyCache } from "../../src/auth";
 import type { Env } from "../../src/types";
 
 type KVEntry = {
@@ -341,9 +343,131 @@ function hmacSha256Hex(secret: string, payload: string): string {
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
-export function accessHeaders(email = "engineer@example.com"): HeadersInit {
+export const ACCESS_TEST_TEAM_DOMAIN = "team.example.cloudflareaccess.com";
+export const ACCESS_TEST_AUD = "r2e-access-aud-test";
+
+const ACCESS_TEST_KID = "access-kid-test";
+
+const ACCESS_PRIMARY_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const ACCESS_ALTERNATE_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
+
+const ACCESS_PUBLIC_JWK: JsonWebKey = {
+  ...(ACCESS_PRIMARY_KEYPAIR.publicKey.export({ format: "jwk" }) as JsonWebKey),
+  kid: ACCESS_TEST_KID,
+  use: "sig",
+  alg: "RS256",
+};
+
+function base64UrlEncode(value: string | Uint8Array): string {
+  const raw = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
+  return raw
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+type AccessJwtOptions = {
+  email?: string;
+  sub?: string;
+  aud?: string | string[];
+  iss?: string;
+  expiresInSec?: number;
+  headerKid?: string;
+  signWithAlternateKey?: boolean;
+};
+
+export function createAccessJwt(options: AccessJwtOptions = {}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: "RS256",
+    typ: "JWT",
+    kid: options.headerKid ?? ACCESS_TEST_KID,
+  };
+  const payload = {
+    iss: options.iss ?? `https://${ACCESS_TEST_TEAM_DOMAIN}`,
+    aud: options.aud ?? ACCESS_TEST_AUD,
+    exp: now + (options.expiresInSec ?? 300),
+    iat: now,
+    nbf: now - 5,
+    email: options.email ?? "engineer@example.com",
+    sub: options.sub ?? "access-user-id",
+  };
+
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const signer = createSign("RSA-SHA256");
+  signer.update(signingInput);
+  signer.end();
+  const signature = signer.sign(
+    options.signWithAlternateKey ? ACCESS_ALTERNATE_KEYPAIR.privateKey : ACCESS_PRIMARY_KEYPAIR.privateKey,
+  );
+  const encodedSignature = base64UrlEncode(new Uint8Array(signature));
+  return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
+}
+
+export function installAccessJwksFetchMock(): () => void {
+  const originalFetch = globalThis.fetch;
+  const certsUrl = `https://${ACCESS_TEST_TEAM_DOMAIN}/cdn-cgi/access/certs`;
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === certsUrl) {
+      return new Response(JSON.stringify({ keys: [ACCESS_PUBLIC_JWK] }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }
+    return originalFetch(input, init);
+  };
+
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
+/**
+ * Vitest lifecycle helper: installs the Access JWKS fetch mock before each
+ * test and restores + clears the signing key cache after each test.
+ * Call once at the top level of a describe() block.
+ */
+export function useAccessJwksFetchMock(): void {
+  let restoreFetch: (() => void) | null = null;
+
+  beforeEach(() => {
+    restoreFetch = installAccessJwksFetchMock();
+  });
+
+  afterEach(() => {
+    restoreFetch?.();
+    restoreFetch = null;
+    resetAccessSigningKeyCache();
+  });
+}
+
+export function accessHeaders(email = "engineer@example.com", options: AccessJwtOptions = {}): HeadersInit {
+  const userId = options.sub ?? "access-user-id";
+  const jwt = createAccessJwt({
+    ...options,
+    email,
+    sub: userId,
+  });
   return {
     "cf-access-authenticated-user-email": email,
+    "cf-access-authenticated-user-id": userId,
+    "cf-access-jwt-assertion": jwt,
+  };
+}
+
+export function accessHeadersWithoutJwt(email = "engineer@example.com", userId = "access-user-id"): HeadersInit {
+  return {
+    "cf-access-authenticated-user-email": email,
+    "cf-access-authenticated-user-id": userId,
   };
 }
 
@@ -412,6 +536,8 @@ export async function createTestEnv(): Promise<{
       files: "FILES_BUCKET",
       photos: "PHOTOS_BUCKET",
     }),
+    R2E_ACCESS_TEAM_DOMAIN: ACCESS_TEST_TEAM_DOMAIN,
+    R2E_ACCESS_AUD: ACCESS_TEST_AUD,
   };
 
   return {

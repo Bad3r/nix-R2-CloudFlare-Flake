@@ -6,6 +6,8 @@ fail() {
   exit 1
 }
 
+LAST_HTTP_STATUS=""
+
 parse_positive_int() {
   local value="$1"
   local name="$2"
@@ -80,14 +82,32 @@ should_retry_status() {
   esac
 }
 
+status_in_allowed_set() {
+  local status="$1"
+  shift
+  local candidate
+  for candidate in "$@"; do
+    if [[ ${status} == "${candidate}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 assert_http_status() {
-  local expected_status="$1"
+  local expected_statuses_raw="$1"
   local label="$2"
   local url="$3"
   local body_file="$4"
   local follow_redirects="$5"
+  shift 5
   local max_attempts attempt status curl_exit
-  local -a curl_args
+  local -a curl_args expected_statuses
+
+  IFS=',' read -r -a expected_statuses <<<"${expected_statuses_raw}"
+  if [[ ${#expected_statuses[@]} -eq 0 ]]; then
+    fail "internal error: assert_http_status called without expected status list"
+  fi
 
   max_attempts=$((SMOKE_RETRIES + 1))
   curl_args=(
@@ -108,11 +128,12 @@ assert_http_status() {
 
   for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
     set +e
-    status="$(curl "${curl_args[@]}" "${url}")"
+    status="$(curl "${curl_args[@]}" "$@" "${url}")"
     curl_exit=$?
     set -e
 
-    if [[ ${curl_exit} -eq 0 && ${status} == "${expected_status}" ]]; then
+    if [[ ${curl_exit} -eq 0 ]] && status_in_allowed_set "${status}" "${expected_statuses[@]}"; then
+      LAST_HTTP_STATUS="${status}"
       return 0
     fi
 
@@ -128,7 +149,7 @@ assert_http_status() {
     if [[ ${curl_exit} -ne 0 ]]; then
       fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
     fi
-    fail "${label} expected HTTP ${expected_status}, got ${status}"
+    fail "${label} expected HTTP ${expected_statuses_raw}, got ${status}"
   done
 }
 
@@ -137,6 +158,8 @@ require_env "R2E_SMOKE_ADMIN_KID"
 require_env "R2E_SMOKE_ADMIN_SECRET"
 require_env "R2E_SMOKE_BUCKET"
 require_env "R2E_SMOKE_KEY"
+require_env "R2E_SMOKE_ACCESS_CLIENT_ID"
+require_env "R2E_SMOKE_ACCESS_CLIENT_SECRET"
 
 require_command "jq"
 require_command "curl"
@@ -201,11 +224,28 @@ second_download_body="${tmp_dir}/second-download.body"
 assert_http_status "410" "second download" "${share_url}" "${second_download_body}" "true"
 
 api_probe_body="${tmp_dir}/api-probe.body"
-assert_http_status "401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_probe_body}" "false"
+assert_http_status "302,401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_probe_body}" "false"
 
-api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
-if [[ -n ${api_error_code} && ${api_error_code} != "access_required" ]]; then
-  fail "unauthenticated /api/server/info returned unexpected error code: ${api_error_code}"
+if [[ ${LAST_HTTP_STATUS} == "401" ]]; then
+  api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
+  if [[ -n ${api_error_code} && ${api_error_code} != "access_required" ]]; then
+    fail "unauthenticated /api/server/info returned unexpected error code: ${api_error_code}"
+  fi
+fi
+
+api_authed_probe_body="${tmp_dir}/api-authed-probe.body"
+assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_authed_probe_body}" "false" \
+  -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
+
+api_authed_mode="$(jq -r '.actor.mode // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
+if [[ ${api_authed_mode} != "access" ]]; then
+  fail "authenticated /api/server/info did not return actor.mode=access (got '${api_authed_mode}')"
+fi
+
+api_authed_version="$(jq -r '.version // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
+if [[ -z ${api_authed_version} ]]; then
+  fail "authenticated /api/server/info did not return version"
 fi
 
 revoke_json="$("${R2_BIN}" share worker revoke "${token_id}")"
