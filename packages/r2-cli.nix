@@ -26,6 +26,7 @@ writeShellApplication {
     credentials_file=""
     default_credentials_file="$HOME/.config/cloudflare/r2/env"
     default_rclone_config="$HOME/.config/rclone/rclone.conf"
+    worker_admin_secret_hex=""
 
     usage_main() {
       printf '%s\n' \
@@ -53,8 +54,21 @@ writeShellApplication {
         "  create <name>         Create a bucket" \
         "  list                  List buckets" \
         "  delete <name>         Delete bucket (interactive confirm)" \
-        "  lifecycle <name> [d]  Set .trash/ retention days (default: 30)" \
+        "  lifecycle <subcommand> ...  Manage bucket lifecycle rules" \
         "  help                  Show this help"
+    }
+
+    usage_bucket_lifecycle() {
+      printf '%s\n' \
+        "Usage:" \
+        "  r2 bucket lifecycle list <bucket>" \
+        "  r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]" \
+        "  r2 bucket lifecycle remove <bucket> <rule-id>" \
+        "  r2 bucket lifecycle <bucket> [days]   # legacy alias for trash-cleanup" \
+        "" \
+        "Notes:" \
+        "  - The legacy alias updates rule 'trash-cleanup' for prefix '.trash/' without overwriting full lifecycle config." \
+        "  - At least one of --expire-days, --ia-transition-days, or --abort-multipart-days is required for add."
     }
 
     usage_share() {
@@ -87,7 +101,7 @@ writeShellApplication {
         "Required environment variables:" \
         "  R2_EXPLORER_BASE_URL     e.g. https://files.example.com" \
         "  R2_EXPLORER_ADMIN_KID    key id from R2E_KEYS_KV keyset" \
-        "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64 value)"
+        "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64:<value>)"
     }
 
     usage_rclone() {
@@ -152,6 +166,47 @@ writeShellApplication {
       if [[ -z "''${R2_EXPLORER_ADMIN_SECRET:-}" ]]; then
         fail "R2_EXPLORER_ADMIN_SECRET is required for worker share commands."
       fi
+      if [[ -z "$worker_admin_secret_hex" ]]; then
+        if ! worker_admin_secret_hex="$(normalize_secret_hex "$R2_EXPLORER_ADMIN_SECRET")"; then
+          fail "R2_EXPLORER_ADMIN_SECRET has invalid key material. Use plain text or base64:<value>."
+        fi
+      fi
+    }
+
+    bytes_to_hex() {
+      od -An -tx1 -v | tr -d ' \n'
+    }
+
+    is_valid_base64_payload() {
+      local value="''${1:-}"
+      [[ -n "$value" ]] || return 1
+      [[ "$value" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || return 1
+      (( ''${#value} % 4 == 0 )) || return 1
+      return 0
+    }
+
+    normalize_secret_hex() {
+      local raw="''${1:-}"
+      local value key_hex
+      if [[ "$raw" == base64:* ]]; then
+        value="''${raw#base64:}"
+        if ! is_valid_base64_payload "$value"; then
+          echo "R2_EXPLORER_ADMIN_SECRET has invalid base64 payload after base64: prefix." >&2
+          return 1
+        fi
+        if ! key_hex="$(printf '%s' "$value" | openssl base64 -d -A 2>/dev/null | bytes_to_hex)"; then
+          echo "R2_EXPLORER_ADMIN_SECRET has invalid base64 payload after base64: prefix." >&2
+          return 1
+        fi
+      else
+        key_hex="$(printf '%s' "$raw" | bytes_to_hex)"
+      fi
+
+      if [[ -z "$key_hex" ]]; then
+        echo "R2_EXPLORER_ADMIN_SECRET resolves to empty key material." >&2
+        return 1
+      fi
+      printf '%s\n' "$key_hex"
     }
 
     uri_escape() {
@@ -164,10 +219,12 @@ writeShellApplication {
       printf '%s' "$payload" | openssl dgst -sha256 | awk '{print $2}'
     }
 
-    hmac_sha256_hex() {
-      local secret="''${1:-}"
+    hmac_sha256_hex_with_hex_key() {
+      local secret_hex="''${1:-}"
       local payload="''${2:-}"
-      printf '%s' "$payload" | openssl dgst -sha256 -hmac "$secret" | awk '{print $2}'
+      printf '%s' "$payload" |
+        openssl dgst -sha256 -mac HMAC -macopt "hexkey:$secret_hex" |
+        awk '{print $2}'
     }
 
     worker_sign_request() {
@@ -181,7 +238,7 @@ writeShellApplication {
       nonce="$(openssl rand -hex 16)"
       body_hash="$(sha256_hex "$body")"
       canonical="$(printf '%s\n%s\n%s\n%s\n%s\n%s' "$method" "$path" "$query" "$body_hash" "$ts" "$nonce")"
-      signature="$(hmac_sha256_hex "$R2_EXPLORER_ADMIN_SECRET" "$canonical")"
+      signature="$(hmac_sha256_hex_with_hex_key "$worker_admin_secret_hex" "$canonical")"
       printf '%s|%s|%s\n' "$ts" "$nonce" "$signature"
     }
 
@@ -285,26 +342,137 @@ writeShellApplication {
       echo "Deleted bucket: $name"
     }
 
-    run_bucket_lifecycle() {
-      local name="''${1:-}"
-      local days="''${2:-30}"
-      local rules_file=""
+    require_non_negative_int() {
+      local value="''${1:-}"
+      local label="''${2:-value}"
+      [[ "$value" =~ ^[0-9]+$ ]] || fail "$label must be a non-negative integer (got '$value')."
+    }
 
-      [[ -n "$name" ]] || fail "bucket name is required (usage: r2 bucket lifecycle <name> [days])"
-      [[ "$days" =~ ^[0-9]+$ ]] || fail "retention days must be a non-negative integer (got '$days')."
+    run_bucket_lifecycle_list() {
+      local bucket="''${1:-}"
+      [[ -n "$bucket" ]] || fail "usage: r2 bucket lifecycle list <bucket>"
+
+      load_credentials
+      ensure_wrangler
+      wrangler r2 bucket lifecycle list "$bucket"
+    }
+
+    run_bucket_lifecycle_add() {
+      local bucket="''${1:-}"
+      local rule_id="''${2:-}"
+      local prefix="''${3:-}"
+      local expire_days=""
+      local ia_transition_days=""
+      local abort_multipart_days=""
+      local next
+      local lifecycle_cmd=()
+
+      [[ -n "$bucket" && -n "$rule_id" ]] || \
+        fail "usage: r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
+
+      shift 3 || true
+
+      while [[ "$#" -gt 0 ]]; do
+        next="$1"
+        shift
+        case "$next" in
+          --expire-days)
+            [[ "$#" -gt 0 ]] || fail "--expire-days requires a numeric value"
+            expire_days="$1"
+            shift
+            require_non_negative_int "$expire_days" "--expire-days"
+            ;;
+          --ia-transition-days)
+            [[ "$#" -gt 0 ]] || fail "--ia-transition-days requires a numeric value"
+            ia_transition_days="$1"
+            shift
+            require_non_negative_int "$ia_transition_days" "--ia-transition-days"
+            ;;
+          --abort-multipart-days)
+            [[ "$#" -gt 0 ]] || fail "--abort-multipart-days requires a numeric value"
+            abort_multipart_days="$1"
+            shift
+            require_non_negative_int "$abort_multipart_days" "--abort-multipart-days"
+            ;;
+          *)
+            fail "unknown option for bucket lifecycle add: $next"
+            ;;
+        esac
+      done
+
+      if [[ -z "$expire_days" && -z "$ia_transition_days" && -z "$abort_multipart_days" ]]; then
+        fail "bucket lifecycle add requires at least one lifecycle option (--expire-days, --ia-transition-days, or --abort-multipart-days)."
+      fi
 
       load_credentials
       ensure_wrangler
 
-      rules_file="$(mktemp)"
-      trap 'rm -f "$rules_file"' RETURN
+      lifecycle_cmd=(wrangler r2 bucket lifecycle add "$bucket" "$rule_id" "$prefix" --force)
+      if [[ -n "$expire_days" ]]; then
+        lifecycle_cmd+=(--expire-days "$expire_days")
+      fi
+      if [[ -n "$ia_transition_days" ]]; then
+        lifecycle_cmd+=(--ia-transition-days "$ia_transition_days")
+      fi
+      if [[ -n "$abort_multipart_days" ]]; then
+        lifecycle_cmd+=(--abort-multipart-days "$abort_multipart_days")
+      fi
+      "''${lifecycle_cmd[@]}"
+      echo "Updated lifecycle rule '$rule_id' on bucket: $bucket"
+    }
 
-      printf '%s\n' \
-        "{\"rules\":[{\"id\":\"trash-cleanup\",\"prefix\":\".trash/\",\"expiration\":{\"days\":$days}}]}" \
-        > "$rules_file"
+    run_bucket_lifecycle_remove() {
+      local bucket="''${1:-}"
+      local rule_id="''${2:-}"
+      [[ -n "$bucket" && -n "$rule_id" ]] || fail "usage: r2 bucket lifecycle remove <bucket> <rule-id>"
 
-      wrangler r2 bucket lifecycle set "$name" --file "$rules_file"
-      echo "Set .trash/ retention to $days days for bucket: $name"
+      load_credentials
+      ensure_wrangler
+      wrangler r2 bucket lifecycle remove "$bucket" --name "$rule_id"
+      echo "Removed lifecycle rule '$rule_id' from bucket: $bucket"
+    }
+
+    run_bucket_lifecycle_legacy_alias() {
+      local bucket="''${1:-}"
+      local days="''${2:-30}"
+
+      [[ -n "$bucket" ]] || fail "usage: r2 bucket lifecycle <bucket> [days]"
+      require_non_negative_int "$days" "retention days"
+
+      echo "Warning: 'r2 bucket lifecycle <bucket> [days]' is deprecated." >&2
+      echo "Warning: use 'r2 bucket lifecycle add <bucket> trash-cleanup .trash/ --expire-days <days>' instead." >&2
+      run_bucket_lifecycle_add "$bucket" "trash-cleanup" ".trash/" --expire-days "$days"
+    }
+
+    run_bucket_lifecycle() {
+      local subcommand="''${1:-help}"
+      if [[ "''${subcommand}" =~ ^(-h|--help|help)$ ]]; then
+        usage_bucket_lifecycle
+        return
+      fi
+
+      case "$subcommand" in
+        list)
+          shift || true
+          [[ "$#" -eq 1 ]] || fail "usage: r2 bucket lifecycle list <bucket>"
+          run_bucket_lifecycle_list "$1"
+          ;;
+        add)
+          shift || true
+          [[ "$#" -ge 5 ]] || \
+            fail "usage: r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
+          run_bucket_lifecycle_add "$@"
+          ;;
+        remove)
+          shift || true
+          [[ "$#" -eq 2 ]] || fail "usage: r2 bucket lifecycle remove <bucket> <rule-id>"
+          run_bucket_lifecycle_remove "$1" "$2"
+          ;;
+        *)
+          [[ "$#" -ge 1 && "$#" -le 2 ]] || fail "usage: r2 bucket lifecycle <bucket> [days]"
+          run_bucket_lifecycle_legacy_alias "$@"
+          ;;
+      esac
     }
 
     run_share_presigned() {
@@ -470,7 +638,6 @@ writeShellApplication {
           run_bucket_delete "$1"
           ;;
         lifecycle)
-          [[ "$#" -ge 1 && "$#" -le 2 ]] || fail "usage: r2 bucket lifecycle <name> [days]"
           run_bucket_lifecycle "$@"
           ;;
         help|-h|--help)

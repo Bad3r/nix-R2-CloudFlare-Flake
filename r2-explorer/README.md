@@ -19,6 +19,8 @@ Set these in `wrangler.toml`:
 - `R2E_KEYS_KV` (admin keyset + nonce replay keys)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/*`)
 - `R2E_BUCKET_MAP` (optional JSON map of bucket alias -> binding name; must include `{"files":"FILES_BUCKET"}`)
+- `R2E_ACCESS_TEAM_DOMAIN` (required for Access JWT verification on `/api/*`)
+- `R2E_ACCESS_AUD` (required Access app audience claim for `/api/*`)
 
 ## Initialize admin keyset
 
@@ -57,6 +59,16 @@ Recommended Cloudflare Access policy setup:
 
 This preserves Access on `/` and `/api/*` while allowing tokenized public
 downloads on `/share/<token>`.
+
+Important: Access policy split does not replace app-layer verification.
+`/api/*` requires cryptographic validation of `Cf-Access-Jwt-Assertion`
+(issuer, audience, expiration, and signature).
+
+Failure responses for `/api/*` auth:
+
+- missing JWT: `401 access_required`
+- invalid JWT signature/claims: `401 access_jwt_invalid`
+- missing verifier vars (`R2E_ACCESS_TEAM_DOMAIN` / `R2E_ACCESS_AUD`): `500 access_config_invalid`
 
 ## Runtime introspection endpoint
 
@@ -101,6 +113,8 @@ Required environment secrets in both environments:
 - `R2E_SMOKE_ADMIN_SECRET`
 - `R2E_SMOKE_BUCKET`
 - `R2E_SMOKE_KEY`
+- `R2E_SMOKE_ACCESS_CLIENT_ID` (Cloudflare Access service-token client ID for `/api/*`)
+- `R2E_SMOKE_ACCESS_CLIENT_SECRET` (Cloudflare Access service-token client secret for `/api/*`)
 
 Required environment variables in both environments (non-secret binding IDs/names):
 
@@ -111,6 +125,10 @@ Required environment variables in both environments (non-secret binding IDs/name
 - `R2E_KEYS_KV_ID`
 - `R2E_KEYS_KV_ID_PREVIEW`
 - `R2E_BUCKET_MAP` (optional; JSON alias map. If unset, CI renders a default map from `R2E_FILES_BUCKET*`.)
+- `R2E_ACCESS_TEAM_DOMAIN`
+- `R2E_ACCESS_TEAM_DOMAIN_PREVIEW`
+- `R2E_ACCESS_AUD`
+- `R2E_ACCESS_AUD_PREVIEW`
 
 Do not commit concrete binding IDs or bucket names into `wrangler.toml`; keep
 them in GitHub Environment variables and render `wrangler.ci.toml` during CI.
@@ -121,6 +139,13 @@ Optional smoke tuning environment variables:
 - `R2E_SMOKE_CONNECT_TIMEOUT` (seconds, default `10`)
 - `R2E_SMOKE_RETRIES` (non-negative integer, default `0`)
 - `R2E_SMOKE_RETRY_DELAY_SEC` (seconds, default `2`)
+
+Smoke behavior validated in CI:
+
+- tokenized `/share/*` works and enforces expiry/download limits
+- unauthenticated `/api/server/info` is blocked (`302` Access redirect or Worker `401`)
+- authenticated `/api/server/info` succeeds (`200`) via service-token headers
+- live integration suite (`pnpm run test:live`) runs against deployed Worker (no mocks)
 
 Recommended protection:
 

@@ -9,6 +9,8 @@ export interface Env {
   R2E_PUBLIC_BASE_URL?: string;
   R2E_READONLY?: string;
   R2E_BUCKET_MAP?: string;
+  R2E_ACCESS_TEAM_DOMAIN?: string;
+  R2E_ACCESS_AUD?: string;
   [key: string]: unknown;
 }
 

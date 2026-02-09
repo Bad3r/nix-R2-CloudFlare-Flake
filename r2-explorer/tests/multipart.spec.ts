@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import { accessHeaders, createTestEnv } from "./helpers/memory";
+import { accessHeaders, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
 
 describe("multipart upload flow", () => {
+  useAccessJwksFetchMock();
+
   it("uploads and completes multipart object", async () => {
     const { env } = await createTestEnv();
     const app = createApp();

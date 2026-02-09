@@ -109,6 +109,44 @@ Escalate:
 - `docs/operators/key-rotation.md`
 - `docs/operators/incident-response.md`
 
+### C. `access_jwt_invalid` caused by JWKS infrastructure failure
+
+Failure signature:
+
+- All `/api/*` requests return `401` with code `access_jwt_invalid`.
+- Multiple users affected simultaneously.
+- Previously-working tokens rejected.
+
+Confirm:
+
+```bash
+curl -sS "https://<team-domain>.cloudflareaccess.com/cdn-cgi/access/certs" | jq '.keys | length'
+```
+
+Likely root causes:
+
+- Cloudflare Access JWKS endpoint unavailable or returning errors.
+- DNS resolution failure for the team domain from the Worker runtime.
+
+Note: The Worker returns `401` (not `502`/`503`) for JWKS fetch failures as a
+fail-closed security posture. All infrastructure errors during JWT validation
+surface as `access_jwt_invalid` to avoid leaking internal state.
+
+Repair:
+
+- Check [Cloudflare Status](https://www.cloudflarestatus.com/) for Access incidents.
+- Verify JWKS endpoint reachable from a separate network.
+- If team domain changed, update `R2E_ACCESS_TEAM_DOMAIN` and redeploy.
+
+Verify:
+
+- JWKS endpoint returns JSON with non-empty `keys` array.
+- `/api/server/info` with valid Access credentials returns `200`.
+
+Escalate:
+
+- `docs/operators/incident-response.md`
+
 ## 2) Lifecycle (`.trash` retention and delete behavior)
 
 ### A. Deleted files are not retained in `.trash`
@@ -172,7 +210,7 @@ Failure signature:
 Confirm:
 
 ```bash
-wrangler r2 bucket lifecycle get files
+wrangler r2 bucket lifecycle list files
 ```
 
 Likely root causes:
@@ -183,11 +221,21 @@ Likely root causes:
 Repair:
 
 - Reapply lifecycle configuration for the correct bucket/environment via Wrangler.
+- Use explicit rule operations to avoid replacing unrelated rules:
+
+```bash
+# Add or update the .trash retention rule
+wrangler r2 bucket lifecycle add files trash-cleanup .trash/ --expire-days 30 --force
+
+# Remove a specific lifecycle rule by id
+wrangler r2 bucket lifecycle remove files --name trash-cleanup
+```
+
 - Recheck policy output after apply.
 
 Verify:
 
-- `wrangler r2 bucket lifecycle get <bucket>` shows expected rules.
+- `wrangler r2 bucket lifecycle list <bucket>` shows expected rules.
 
 Escalate:
 

@@ -32,6 +32,10 @@ main() {
   require_env "R2E_SHARES_KV_ID_PREVIEW"
   require_env "R2E_KEYS_KV_ID"
   require_env "R2E_KEYS_KV_ID_PREVIEW"
+  require_env "R2E_ACCESS_TEAM_DOMAIN"
+  require_env "R2E_ACCESS_TEAM_DOMAIN_PREVIEW"
+  require_env "R2E_ACCESS_AUD"
+  require_env "R2E_ACCESS_AUD_PREVIEW"
 
   bucket_map="${R2E_BUCKET_MAP:-}"
   if [[ -z ${bucket_map} ]]; then
@@ -64,6 +68,10 @@ PY
     -e "s|replace-with-shares-kv-namespace-id|$(escape_sed_replacement "${R2E_SHARES_KV_ID}")|g" \
     -e "s|replace-with-keys-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_KEYS_KV_ID_PREVIEW}")|g" \
     -e "s|replace-with-keys-kv-namespace-id|$(escape_sed_replacement "${R2E_KEYS_KV_ID}")|g" \
+    -e "s|replace-with-access-team-domain-preview|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN_PREVIEW}")|g" \
+    -e "s|replace-with-access-team-domain|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN}")|g" \
+    -e "s|replace-with-access-aud-preview|$(escape_sed_replacement "${R2E_ACCESS_AUD_PREVIEW}")|g" \
+    -e "s|replace-with-access-aud|$(escape_sed_replacement "${R2E_ACCESS_AUD}")|g" \
     -e "s|R2E_BUCKET_MAP = \"\"|R2E_BUCKET_MAP = \"${escaped_bucket_map}\"|g" \
     "${template_path}" >"${output_path}"
 
