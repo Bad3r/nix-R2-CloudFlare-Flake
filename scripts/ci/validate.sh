@@ -9,7 +9,7 @@ CACHE_URL="${NIX_VALIDATE_CACHE_URL:-${CACHE_URL_DEFAULT}}"
 CACHE_INFO_URL="${CACHE_URL%/}/nix-cache-info"
 PROJECT_CACHE_URL="https://nix-r2-cloudflare-flake.cachix.org/"
 WRANGLER_CACHE_URL="https://wrangler.cachix.org/"
-CACHE_NIXOS_KEY="cache.nixos.org-1:6NCHdD59X431o0gWypbYQ2I6D8sfr8Y9f3l8S8d5N9Q="
+CACHE_NIXOS_KEY="cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 PROJECT_CACHE_KEY="nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw="
 WRANGLER_CACHE_KEY="wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs="
 
