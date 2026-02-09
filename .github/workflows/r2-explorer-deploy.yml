@@ -113,7 +113,7 @@ jobs:
           node-version: 20
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@v21
         with:
           determinate: false
           extra-conf: |
@@ -315,7 +315,7 @@ jobs:
           node-version: 20
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@v21
         with:
           determinate: false
           extra-conf: |
