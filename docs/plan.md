@@ -1109,7 +1109,8 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 
 #### Triggers
 
-- `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`)
+- `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`,
+  `labeled`, `unlabeled`)
   with path filter:
   - `r2-explorer/**`
   - `.github/workflows/r2-explorer-deploy.yml`
@@ -1120,7 +1121,9 @@ curl -s https://files.yourdomain.com/api/server/info | jq .
 
 - **Preview deploy job**
   - Runs only for same-repository PRs (fork PRs skipped because secrets are
-    unavailable).
+    unavailable), with trusted author association
+    (`OWNER`/`MEMBER`/`COLLABORATOR`), and only when PR label
+    `preview-deploy-approved` is present.
   - Uses GitHub Environment `preview`.
   - Uses concurrency group `r2-explorer-preview-<pr-number>` with
     `cancel-in-progress: true`.
@@ -1169,6 +1172,8 @@ separation.
 - Non-`main` production refs fail immediately with explicit error output.
 - Missing or invalid credentials fail job execution (no silent fallback).
 - No `continue-on-error` behavior is allowed for deploy jobs.
+- Deploy/smoke credentials are scoped to deploy/smoke execution steps (not
+  global job env), reducing exposure in dependency install/test steps.
 
 #### Manual deploy compatibility
 
@@ -1181,7 +1186,9 @@ CI automation does not remove break-glass/manual deployment workflows.
 
 #### Validation and acceptance checks
 
-- Same-repo PR touching `r2-explorer/**` deploys preview successfully.
+- Same-repo trusted-author PR touching `r2-explorer/**` deploys preview
+  successfully only when label `preview-deploy-approved` is present.
+- PR without label `preview-deploy-approved` does not deploy preview.
 - Fork PR does not attempt deployment.
 - `workflow_dispatch` with `ref=main` deploys production (subject to
   environment rules).
