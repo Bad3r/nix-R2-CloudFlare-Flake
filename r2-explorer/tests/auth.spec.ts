@@ -73,6 +73,18 @@ describe("auth middleware", () => {
     expect(payload.error.code).toBe("access_jwt_invalid");
   });
 
+  it("rejects Access JWT with nbf far in the future", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const request = new Request("https://files.example.com/api/list?prefix=", {
+      headers: accessHeaders("ops@example.com", { nbfOffsetSec: 120 }),
+    });
+    const response = await app.fetch(request, env);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(response.status).toBe(401);
+    expect(payload.error.code).toBe("access_jwt_invalid");
+  });
+
   it("fails closed when Access verifier config is missing", async () => {
     const { env } = await createTestEnv();
     env.R2E_ACCESS_AUD = "";

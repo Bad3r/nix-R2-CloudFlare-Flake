@@ -373,6 +373,8 @@ type AccessJwtOptions = {
   aud?: string | string[];
   iss?: string;
   expiresInSec?: number;
+  /** Offset from now for the nbf claim (default: -5). Use a large positive value to test not-yet-valid rejection. */
+  nbfOffsetSec?: number;
   headerKid?: string;
   signWithAlternateKey?: boolean;
 };
@@ -389,7 +391,7 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
     aud: options.aud ?? ACCESS_TEST_AUD,
     exp: now + (options.expiresInSec ?? 300),
     iat: now,
-    nbf: now - 5,
+    nbf: now + (options.nbfOffsetSec ?? -5),
     email: options.email ?? "engineer@example.com",
     sub: options.sub ?? "access-user-id",
   };

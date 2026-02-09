@@ -298,9 +298,13 @@ const accessMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
   await next();
 };
 
+// Accepts either Access JWT or HMAC admin signature.  The `/api/*`
+// catch-all middleware runs first and sets `accessIdentity` via the
+// lightweight `extractAccessIdentity` (header sniff only).  When
+// headers are present we promote to full JWT verification; otherwise
+// we fall through to HMAC signature validation.
 const accessOrHmacMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
-  const identityHint = c.get("accessIdentity");
-  if (identityHint) {
+  if (c.get("accessIdentity")) {
     const identity = await requireApiIdentity(c.req.raw, c.env);
     c.set("accessIdentity", identity);
     c.set("actor", identity.email ?? identity.userId ?? "access-user");
