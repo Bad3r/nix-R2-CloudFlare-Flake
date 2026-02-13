@@ -151,14 +151,14 @@ jobs:
           tar -czf "artifacts/root/r2-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
 
       - name: Upload root release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: root-release-artifacts
           path: artifacts/root/*
           if-no-files-found: error
 
       - name: Upload root closure runtime artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: root-closure-runtime
           path: artifacts/runtime/closure.nar
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-results
           path: r2-explorer/test-results/
@@ -231,7 +231,7 @@ jobs:
             r2-explorer/wrangler.toml
 
       - name: Upload worker release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: worker-release-artifacts
           path: artifacts/worker/*
