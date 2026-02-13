@@ -2,7 +2,7 @@ name: Deploy R2-Explorer
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     paths:
       - "r2-explorer/**"
       - ".github/workflows/r2-explorer-deploy.yml"
@@ -25,15 +25,19 @@ jobs:
     if: >
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
+      !github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'preview-deploy-approved') &&
+      (
+        github.event.pull_request.author_association == 'OWNER' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'COLLABORATOR'
+      )
     runs-on: ubuntu-latest
     environment: preview
     concurrency:
       group: r2-explorer-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       R2E_FILES_BUCKET: ${{ vars.R2E_FILES_BUCKET }}
       R2E_FILES_BUCKET_PREVIEW: ${{ vars.R2E_FILES_BUCKET_PREVIEW }}
       R2E_SHARES_KV_ID: ${{ vars.R2E_SHARES_KV_ID }}
@@ -47,7 +51,7 @@ jobs:
       R2E_ACCESS_AUD_PREVIEW: ${{ vars.R2E_ACCESS_AUD_PREVIEW }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -80,6 +84,9 @@ jobs:
 
       - name: Deploy preview
         working-directory: r2-explorer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy --config wrangler.ci.toml --env preview
 
   smoke-preview:
@@ -87,23 +94,22 @@ jobs:
     if: >
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
+      !github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'preview-deploy-approved') &&
+      (
+        github.event.pull_request.author_association == 'OWNER' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.author_association == 'COLLABORATOR'
+      )
     runs-on: ubuntu-latest
     needs: [deploy-preview]
     environment: preview
     env:
-      R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
-      R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
-      R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
-      R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
-      R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
-      R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
-      R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
       R2E_SMOKE_RETRIES: "1"
       R2E_SMOKE_RETRY_DELAY_SEC: "2"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -136,6 +142,13 @@ jobs:
 
       - name: Run Worker smoke checks
         env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+          R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
+          R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
+          R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
+          R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+          R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
           R2E_SMOKE_R2_BIN: ./result/bin/r2
         run: |
           set -euo pipefail
@@ -144,6 +157,13 @@ jobs:
       - name: Run live integration tests (no mocks)
         working-directory: r2-explorer
         env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+          R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
+          R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
+          R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
+          R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+          R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
           R2E_SMOKE_R2_BIN: ../result/bin/r2
         run: |
           set -euo pipefail
@@ -252,7 +272,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.ref }}
 
@@ -305,7 +325,7 @@ jobs:
       R2E_SMOKE_RETRY_DELAY_SEC: "3"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.ref }}
 
