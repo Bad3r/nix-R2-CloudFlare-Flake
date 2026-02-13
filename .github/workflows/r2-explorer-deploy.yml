@@ -51,7 +51,7 @@ jobs:
       R2E_ACCESS_AUD_PREVIEW: ${{ vars.R2E_ACCESS_AUD_PREVIEW }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -109,7 +109,7 @@ jobs:
       R2E_SMOKE_RETRY_DELAY_SEC: "2"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -272,7 +272,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.ref }}
 
@@ -325,7 +325,7 @@ jobs:
       R2E_SMOKE_RETRY_DELAY_SEC: "3"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.ref }}
 
