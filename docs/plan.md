@@ -16,9 +16,10 @@ high-level architecture diagram and key design decisions.
 5. [x] **Phase 5**: [R2-Explorer subflake (Hono+Zod contracts, middleware layering, `/api/server/info`, worker tests)](./plan/phase-5-worker.md)
 6. [x] **Phase 6**: [Templates and documentation](./plan/phase-6-templates-docs.md)
 7. [x] **Phase 7**: [CI/CD setup](./plan/phase-7-ci-cd.md)
-8. [ ] **Phase 8**: [Real-user adoption via `~/nixos` integration (consumer input wiring + runtime validation + docs feedback loop)](./plan/phase-8-integration.md)
+8. [x] **Phase 8**: [Real-user adoption via `~/nixos` integration (consumer input wiring + runtime validation + docs feedback loop)](./plan/phase-8-integration.md) (complete 2026-02-15)
 
 ## Phase 8 detailed execution docs
 
 - `docs/plan/phase-8-1-consumer-integration.md`: completed 8.1 integration execution record.
 - `docs/plan/phase-8-2-runtime-enablement-validation.md`: gate-driven execution plan for milestones 8.2 through 8.6.
+- `docs/plan/status.md`: current production status snapshot and next actions.

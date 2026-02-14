@@ -7,8 +7,9 @@ This repository now includes both implementation and documentation for a standal
 Roadmap/state tracking:
 
 - `docs/plan.md` is the source of truth for architecture and phased milestones.
-- Phases `1` through `7` are complete; Phase `8` (consumer integration in `~/nixos`) is in progress.
+- Phases `1` through `8` are complete (Phase 8 validated on `system76` on 2026-02-15).
 - `docs/plan/phase-8-1-consumer-integration.md` contains the detailed execution plan for milestone `8.1`.
+- `docs/plan/status.md` contains the current production status snapshot and next actions.
 
 When behavior changes, update the relevant docs in the same change set. If the change affects phase assumptions or milestone status, update `docs/plan.md`.
 

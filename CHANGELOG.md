@@ -9,7 +9,12 @@ and this project follows Conventional Commits.
 
 ### Added
 
-- _No changes yet._
+- `programs.r2-cloud.explorerEnvFile`: optional env file sourced by the `r2`
+  wrapper for Worker-share admin variables (`R2_EXPLORER_*`).
+- New `services.r2-sync.mounts.*.bisync` controls for safer bisync runs:
+- `maxDelete` (integer `--max-delete`)
+- `checkFilename` (remote check file for `--check-access`)
+- `initialResyncMode` (auto `--resync` behavior on first run)
 
 ### Changed
 
@@ -17,16 +22,33 @@ and this project follows Conventional Commits.
   and system credentials rendered to `/run/secrets/r2/credentials.env`.
 - NixOS and Home Manager modules now support `accountIdFile` and runtime
   endpoint resolution for endpoint-less rclone remotes.
+- `services.r2-sync.mounts.*.remotePrefix` is now required (non-empty) for
+  bisync and `.trash/` backup-dir correctness.
 - Planning docs were reorganized: `docs/plan.md` is now a short index, with the
   full phase content split under `docs/plan/` (including Phase 8 execution docs).
 - Wiki sync now ignores planning docs (`docs/plan.md`, `docs/plan/**`).
+- GitHub Actions dependencies were bumped:
+- `actions/setup-node` v6
+- `actions/download-artifact` v7
+- `actions/upload-artifact` v6
 
 ### Fixed
 
 - Home Manager `r2` wrapper now exports rclone endpoint when `enableRcloneRemote` is enabled.
+- `services.r2-sync` FUSE mount unit no longer uses mount-namespace sandboxing
+  that makes mounts invisible outside the unit.
+- `services.r2-sync` bisync now:
+- seeds the remote `--check-access` file to avoid remote mtime drift
+- uses an explicit workdir under `/var/lib/r2-sync-<name>/bisync`
+- auto-runs `--resync` on first run when bisync state is missing
+- uses an integer `--max-delete` value (avoids parse errors from `50%`-style values)
 - CLI worker share signing now includes `awk` via `gawk` runtime input.
 - Worker share quickstart/docs now use the correct `url` response field.
+- Worker share quickstart now uses `tokenId` (and best-effort revoke cleanup)
+  instead of the non-existent `id` field.
 - Worker share downloads now honor per-record bucket aliases via `R2E_BUCKET_MAP`.
+- Operator key rotation guidance now explicitly requires `wrangler kv ... --remote`
+  to avoid updating local Miniflare KV storage instead of the deployed Worker.
 
 ## [v0.1.0] - 2026-02-07
 
