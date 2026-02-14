@@ -29,6 +29,10 @@ let
       remoteArg = lib.escapeShellArg ":s3:${remotePath}";
       mountScript = pkgs.writeShellScript "r2-mount-${name}" ''
         set -euo pipefail
+        # rclone invokes `fusermount3` for FUSE mounts. On NixOS the setuid wrapper
+        # lives in /run/wrappers/bin (the store binary is non-setuid and fails
+        # with "Operation not permitted" for non-root mounts).
+        export PATH="/run/wrappers/bin:$PATH"
         ${resolveAccountIdShell}
         endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
         exec ${pkgs.rclone}/bin/rclone mount \
@@ -110,23 +114,17 @@ let
         ${resolveAccountIdShell}
         endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
         # Ensure the bisync access-check file exists on the remote before running.
-        # Do NOT touch it unconditionally: changing the check file breaks bisync state and
-        # forces a manual --resync.
-        remote_check_json="$(${pkgs.rclone}/bin/rclone lsjson \
+        #
+        # On S3/R2, rclone stores mtimes in metadata. Copying the local check file to
+        # the remote path keeps the remote mtime stable (no drift), which avoids
+        # bisync safety aborts like "all files were changed on Path2".
+        ${pkgs.rclone}/bin/rclone copyto \
           --config=/dev/null \
           --s3-provider=Cloudflare \
           --s3-endpoint="$endpoint" \
           --s3-env-auth \
-          ${remoteCheckArg})"
-        if [ "$(printf '%s' "$remote_check_json" | ${pkgs.coreutils}/bin/tr -d '[:space:]')" = "[]" ]; then
-          ${pkgs.rclone}/bin/rclone copyto \
-            --config=/dev/null \
-            --s3-provider=Cloudflare \
-            --s3-endpoint="$endpoint" \
-            --s3-env-auth \
-            ${localCheckArg} \
-            ${remoteCheckArg}
-        fi
+          ${localCheckArg} \
+          ${remoteCheckArg}
 
         # First run requires an explicit resync to seed bisync state.
         resync_flags=()
