@@ -96,14 +96,27 @@ public token links work as intended:
 - Action: `Allow`
 - Include: your org users/groups
 
-2. Share-link bypass policy:
+2. Share-link bypass policy (public download):
 
 - Domain: `files.unsigned.sh`
 - Path: `/share/*`
 - Action: `Bypass`
 
-This keeps `/api/*` and `/` behind Access while allowing `GET /share/<token>`
-to work for recipients without Access membership.
+3. Share-management API bypass policy (HMAC admin):
+
+- Domain: `files.unsigned.sh`
+- Path: `/api/share/*`
+- Action: `Bypass`
+
+This keeps `/` and `/api/*` behind Access while allowing:
+
+- `GET /share/<token>` to work for recipients without Access membership
+- `r2 share worker create|list|revoke ...` to work via HMAC without a browser
+  Access session
+
+Note: `/api/share/*` is still protected by Worker auth. The Worker requires
+either a valid Cloudflare Access JWT or valid HMAC admin headers for these
+endpoints.
 
 Important: Access policy split alone is not sufficient. The Worker must also
 verify Access JWT signature and claims on `/api/*`.

@@ -63,6 +63,7 @@ Operations:
 - Keep Cloudflare Access policy split on `files.unsigned.sh`:
 - `/*` allow trusted identities
 - `/share/*` bypass for public token links
+- `/api/share/*` bypass so `r2 share worker ...` HMAC admin flows work without an Access browser session
 
 Optional upstream follow-ups:
 
