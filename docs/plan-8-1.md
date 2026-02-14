@@ -1,17 +1,24 @@
 # Phase 8.1 Complete Implementation Plan (Final, Feedback-Integrated)
 
+## Status
+
+- Completed on **2026-02-14**.
+- Execution evidence is recorded in `docs/plan.md` under
+  `8.1 Completion Evidence (2026-02-14)`.
+- Remaining Phase 8 runtime milestones are planned in `docs/plan-8-2.md`.
+
 ## Summary
 
-Phase 8.1 will deliver consumer integration readiness between:
+Phase 8.1 delivered consumer integration readiness between:
 
 1. **nix-R2-CloudFlare-Flake** (producer): add account-ID file support and
    runtime-safe resolution primitives.
 2. **~/nixos** (consumer): wire flake input/modules for host `system76`, add
    required secrets plumbing, and prevent Home Manager collisions.
 
-This phase is intentionally limited to integration/evaluation correctness
-(`flake check` + `dry-activate`) and does not enable operational services yet
-(that remains 8.2 staged enablement).
+This phase was intentionally limited to integration/evaluation correctness
+(`flake check` + `dry-activate`) and did not enable operational services
+(that moves to 8.2 staged enablement).
 
 ## Goals And Exit Criteria
 
