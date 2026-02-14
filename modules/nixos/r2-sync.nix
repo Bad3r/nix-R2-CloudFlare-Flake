@@ -73,10 +73,17 @@ let
           # rclone mount relies on fusermount (setuid) for non-root mounts.
           # Keep the service compatible with running as a real user (e.g. `vx`).
           NoNewPrivileges = false;
-          PrivateTmp = true;
-          ProtectKernelTunables = true;
-          ProtectKernelModules = true;
-          ProtectControlGroups = true;
+          # IMPORTANT: any mount-namespace sandboxing will make the FUSE mount
+          # invisible outside the service (it ends up mounted only inside the
+          # unit's private mount namespace). This unit must run in the host mount
+          # namespace so the mount is usable at `mountPoint` system-wide.
+          #
+          # In practice, `PrivateTmp` and some `Protect*` settings trigger a
+          # private mount namespace in systemd.
+          PrivateTmp = false;
+          ProtectKernelTunables = false;
+          ProtectKernelModules = false;
+          ProtectControlGroups = false;
           RestrictSUIDSGID = false;
           LockPersonality = true;
         };
