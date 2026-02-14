@@ -315,7 +315,7 @@ export function renderAppHtml(): string {
               log("Deleted " + obj.key + " to " + payload.trashKey);
               await refresh(true);
             }, true);
-            addAction("Share+", async function () {
+            addAction("Create share", async function () {
               const ttl = window.prompt("TTL (e.g. 24h, 7d)", "24h") || "24h";
               const maxDownloadsRaw = window.prompt("Max downloads (0 = unlimited)", "0") || "0";
               const payload = await api("/api/share/create", {
@@ -331,7 +331,7 @@ export function renderAppHtml(): string {
               log("Share created: " + payload.url);
               await showShares("files", obj.key);
             });
-            addAction("Shares", async function () {
+            addAction("List shares", async function () {
               await showShares("files", obj.key);
             });
 
@@ -369,7 +369,7 @@ export function renderAppHtml(): string {
           if (shares.length === 0) {
             const empty = document.createElement("div");
             empty.className = "muted";
-            empty.textContent = "No active shares.";
+            empty.textContent = "No active shares. Use Create share to mint a new token.";
             sharesBox.appendChild(empty);
             return;
           }
