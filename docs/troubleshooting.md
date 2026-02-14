@@ -275,6 +275,16 @@ sudo systemctl restart r2-mount-workspace
 sudo systemctl start r2-bisync-workspace
 ```
 
+If logs say `Must run --resync to recover`, reset bisync state (safe: it only
+removes rclone's listing cache, not your data):
+
+```bash
+sudo systemctl stop r2-bisync-workspace.timer r2-bisync-workspace.service
+rm -f /var/lib/r2-sync-workspace/bisync/*.lst*
+sudo systemctl start r2-bisync-workspace.service
+sudo systemctl start r2-bisync-workspace.timer
+```
+
 If overlap is suspected, stop active run before retrying:
 
 ```bash

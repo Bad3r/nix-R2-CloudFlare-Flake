@@ -42,8 +42,9 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 ## Trash and safety behavior
 
 - Bisync uses `--check-access` with a per-mount check file (default:
-  `.r2-check`). The module ensures the file exists locally and remotely before
-  each run.
+  `.r2-check`). The module ensures the file exists locally and creates it on
+  the remote only if missing (it does not update the file once present, since
+  changing the check file forces a manual `--resync` recovery).
 - Bisync uses backup dirs for soft-delete style recovery:
   - local backup dir: sibling of `localPath`, under `<dirOf(localPath)>/.trash/<name>`
   - remote backup dir: at the bucket root, under `.trash/<remotePrefix>`
