@@ -45,6 +45,54 @@ export NEW_SECRET="$(openssl rand -hex 32)"
    overlap. Update KV state so `active` is `NEW_KID` and old key is retained as
    previous.
 
+Concrete KV update (production):
+
+```bash
+set -euo pipefail
+
+# IMPORTANT: always use --remote for KV operations.
+# Wrangler can otherwise talk to local Miniflare storage, which does NOT affect
+# the deployed Worker.
+
+export KEYS_NS_TITLE="nix-r2-cf-r2e-keys-prod"
+keys_ns_id="$(
+  wrangler kv namespace list |
+    jq -r --arg title "$KEYS_NS_TITLE" '.[] | select(.title==$title) | .id'
+)"
+test -n "$keys_ns_id"
+
+existing="$(
+  wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active
+)"
+
+updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+payload="$(
+  jq -cn \
+    --arg newKid "$NEW_KID" \
+    --arg newSecret "$NEW_SECRET" \
+    --arg updatedAt "$updated_at" \
+    --arg existing "$existing" '
+    def base: ($existing | fromjson);
+    {
+      activeKid: $newKid,
+      previousKid: (base.activeKid // null),
+      updatedAt: $updatedAt,
+      keys: (base.keys // {}) + {($newKid): $newSecret}
+    }
+  '
+)"
+
+umask 077
+tmp="$(mktemp)"
+printf '%s' "$payload" > "$tmp"
+wrangler kv key put --remote --namespace-id "$keys_ns_id" --path "$tmp" admin:keyset:active
+rm -f "$tmp"
+
+# Verify without dumping key material
+wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active |
+  jq '{activeKid, previousKid, updatedAt, kids: (.keys|keys)}'
+```
+
 4. Deploy Worker config update:
 
 ```bash

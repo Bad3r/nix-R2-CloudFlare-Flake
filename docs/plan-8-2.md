@@ -5,8 +5,10 @@
 - `8.1` is complete as of **2026-02-14**.
 - This document is the execution plan for the remaining Phase 8 milestones:
   `8.2` through `8.6`.
+- Phase `8.2` through `8.5` were validated on `system76` on **2026-02-15** (see
+  Phase 8 milestone matrix in `docs/plan.md`).
 
-## Cloudflare Real-Domain Snapshot (2026-02-14)
+## Cloudflare Real-Domain Snapshot (2026-02-15)
 
 Investigation against the live Cloudflare account and authenticated `wrangler`
 CLI confirms:
@@ -33,15 +35,15 @@ Implication:
 - Runtime services use the production buckets above.
 - Cloudflare domain/bucket preconditions for Gate `G` are now satisfied.
 
-## Production Blocker Register (2026-02-14)
+## Production Blocker Register (2026-02-15)
 
-| ID     | Blocker                                                                                                    | Status                              | Evidence                                                                                                                              | Action                                                                          |
-| ------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `B-01` | `files.unsigned.sh` unresolved                                                                             | closed                              | `wrangler triggers deploy` attached custom domain; `dig` now returns A records                                                        | keep `routes.custom_domain` config under change control                         |
-| `B-02` | `/run/secrets/r2/credentials.env` rendered as literal `{{ ... }}` placeholders in `~/nixos`                | fixed in source, activation pending | fixed in `~/nixos/modules/security/r2-cloud-secrets.nix` by switching to `config.sops.placeholder.*`                                  | run `sudo nixos-rebuild switch --flake ~/nixos#system76` before Gate `F`        |
-| `B-03` | runtime options still disabled in `~/nixos`                                                                | open                                | `nix eval ...services.r2-sync.enable` / `...r2-restic.enable` / `...git-annex-r2.enable` / HM `...r2-cloud.enable` all return `false` | execute Gates `B`-`D` exactly as written                                        |
-| `B-04` | Worker admin signing env for `r2 share worker create` not yet proven on host                               | open                                | no declarative `R2_EXPLORER_ADMIN_*` wiring found in `~/nixos` modules/secrets                                                        | add host secret/env wiring before Gate `G`                                      |
-| `B-05` | `r2-sync` mount/bisync units fail in real-user mode (FUSE hardening + bisync flags/trash/workdir defaults) | fixed in producer                   | observed: `fusermount ... Operation not permitted`, `--max-delete=50%` parse error, bisync trash overlap constraints                  | update `r2-flake` lock to a rev containing the `r2-sync` fixes; re-run Gate `B` |
+| ID     | Blocker                                                                                                    | Status              | Evidence                                                                                                                                                                            | Action                                                               |
+| ------ | ---------------------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `B-01` | `files.unsigned.sh` unresolved                                                                             | closed              | `wrangler triggers deploy` attached custom domain; `dig` now returns A records                                                                                                      | keep `routes.custom_domain` config under change control              |
+| `B-02` | `/run/secrets/r2/credentials.env` rendered as literal `{{ ... }}` placeholders in `~/nixos`                | closed (2026-02-15) | fixed in `~/nixos/modules/security/r2-cloud-secrets.nix` by switching to `config.sops.placeholder.*`; verified runtime file is readable and no longer contains template braces      | none (keep SOPS placeholders; recheck after secret edits)            |
+| `B-03` | runtime options still disabled in `~/nixos`                                                                | closed (2026-02-15) | `nix eval ...services.r2-sync.enable` / `...r2-restic.enable` / `...git-annex-r2.enable` / HM `...r2-cloud.enable` all return `true`; host units/timers active                      | keep staged enablement in `~/nixos/modules/system76/r2-runtime.nix`  |
+| `B-04` | Worker admin signing env for `r2 share worker create` not yet proven on host                               | closed (2026-02-15) | added SOPS-backed `explorer_admin_{kid,secret}` + rendered `/run/secrets/r2/explorer.env`; updated remote `admin:keyset:active` in `R2E_KEYS_KV`; `r2 share worker create` succeeds | keep KV writes explicit and always use `wrangler ... --remote`       |
+| `B-05` | `r2-sync` mount/bisync units fail in real-user mode (FUSE hardening + bisync flags/trash/workdir defaults) | closed (2026-02-15) | `r2-mount-workspace` is stable, mount is visible host-wide (`mountpoint -q /data/r2/mount/workspace`), and `r2-bisync-workspace` timer runs cleanly on schedule                     | keep mount unit unsandboxed enough to share the host mount namespace |
 
 ## Summary
 
@@ -125,6 +127,8 @@ Use these values directly for Gates `A` through `G`:
 | Worker base URL            | `https://files.unsigned.sh`                          |
 | Cloudflare token file      | `/home/vx/nixos/secrets/decrypted_cf_token.txt`      |
 | Cloudflare account-id file | `/home/vx/nixos/secrets/decrypted_cf_ACCOUNT_ID.txt` |
+| Worker admin env file      | `/run/secrets/r2/explorer.env`                       |
+| Worker admin KID           | `system76-prod-20260214212839`                       |
 
 ## Branch And Change-Control Strategy
 
@@ -166,7 +170,7 @@ Concrete file targets in `~/nixos`:
 
 Run from `~/nixos` worktree and keep one shell session for exported variables:
 
-```bash
+````bash
 set -euo pipefail
 
 # Pull the latest producer changes into the consumer lock file.
@@ -198,26 +202,27 @@ nix eval --json ~/nixos#nixosConfigurations.system76.config.home-manager.users.v
 
 nix flake check
 sudo nixos-rebuild dry-activate --flake ~/nixos#system76
-test -f /run/secrets/r2/account-id
-test -f /run/secrets/r2/credentials.env
-test -f /run/secrets/r2/restic-password
-```
+	test -f /run/secrets/r2/account-id
+	test -f /run/secrets/r2/credentials.env
+	test -f /run/secrets/r2/restic-password
+	test -f /run/secrets/r2/explorer.env
+	```
 
 Capture baseline:
 
 ```bash
 systemctl list-units 'r2-*' --all
 systemctl list-timers 'r2-*' --all
-```
+````
 
 Ensure dedicated buckets exist (create only if missing):
 
 ```bash
 for bucket in "$R2_SYNC_BUCKET" "$R2_PREVIEW_BUCKET" "$R2_RESTIC_BUCKET"; do
   if ! CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
-      nix run nixpkgs#wrangler -- r2 bucket list | rg -q "name:\\s+${bucket}$"; then
+      wrangler r2 bucket list | rg -q "name:\\s+${bucket}$"; then
     CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
-      nix run nixpkgs#wrangler -- r2 bucket create "$bucket"
+      wrangler r2 bucket create "$bucket"
   fi
 done
 ```
@@ -229,13 +234,26 @@ Cloudflare real-domain readiness (required before Gate `G`):
 ```bash
 R2E_PROD_VERSION_ID="$(
   CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
-    nix run nixpkgs#wrangler -- deployments status --name r2-explorer \
-    | awk '/Version\\(s\\):/ { print $NF }'
+    wrangler deployments status --name r2-explorer --json |
+    jq -r '.versions[0].version_id'
 )"
+test -n "$R2E_PROD_VERSION_ID"
 
 CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
-  nix run nixpkgs#wrangler -- versions view "$R2E_PROD_VERSION_ID" --name r2-explorer \
-  | rg 'env\.FILES_BUCKET|env\.R2E_BUCKET_MAP|env\.R2E_PUBLIC_BASE_URL'
+  wrangler versions view "$R2E_PROD_VERSION_ID" --name r2-explorer --json |
+  jq -r '
+    .resources.bindings[]
+    | select(
+        .name=="FILES_BUCKET" or
+        .name=="R2E_BUCKET_MAP" or
+        .name=="R2E_PUBLIC_BASE_URL" or
+        .name=="R2E_KEYS_KV"
+      )
+    | if .type=="r2_bucket" then "\(.name)=\(.bucket_name)"
+      elif .type=="kv_namespace" then "\(.name)=\(.namespace_id)"
+      else "\(.name)=\(.text)"
+      end
+  '
 ```
 
 2. Confirm Worker `FILES_BUCKET` remains bound to `nix-r2-cf-r2e-files-prod`
@@ -399,6 +417,7 @@ home-manager.users.vx.programs.r2-cloud = {
   enable = true;
   accountIdFile = "/run/secrets/r2/account-id";
   credentialsFile = "/run/secrets/r2/credentials.env";
+  explorerEnvFile = "/run/secrets/r2/explorer.env";
 };
 ```
 
@@ -409,6 +428,7 @@ sudo nixos-rebuild switch --flake ~/nixos#system76
 command -v git-annex-r2-init
 command -v r2
 test -r /run/secrets/r2/credentials.env
+test -r /run/secrets/r2/explorer.env
 ```
 
 Fail Gate `D` if either command is unavailable after switch.
@@ -462,18 +482,87 @@ Acceptance:
 
 ### Gate G: Milestone `8.5` Sharing UX Validation
 
-Presigned and Worker checks:
+Preflight (Worker admin signing):
 
 ```bash
+set -euo pipefail
+
+# This is the system-scoped env file used by the `r2` wrapper to run
+# `r2 share worker ...` without manual exports.
+test -r /run/secrets/r2/explorer.env
+
+	# IMPORTANT: always use --remote for KV operations.
+	# Wrangler can otherwise talk to local Miniflare storage, which does NOT affect
+	# the deployed Worker.
+
+	export KEYS_NS_TITLE="nix-r2-cf-r2e-keys-prod"
+	keys_ns_id="$(
+	  CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
+	    wrangler kv namespace list |
+	    jq -r --arg title "$KEYS_NS_TITLE" '.[] | select(.title==$title) | .id'
+	)"
+	test -n "$keys_ns_id"
+
+read -r kid secret < <(
+  sops -d --output-type json ~/nixos/secrets/r2.yaml |
+    jq -r '[.explorer_admin_kid, .explorer_admin_secret] | @tsv'
+)
+
+existing="$(
+  CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
+    wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active
+)"
+
+updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	payload="$(
+	  jq -cn \
+	    --arg newKid "$kid" \
+	    --arg newSecret "$secret" \
+	    --arg updatedAt "$updated_at" \
+	    --arg existing "$existing" '
+	    def base: (try ($existing | fromjson) catch {});
+	    {
+	      activeKid: $newKid,
+	      previousKid: (base.activeKid // null),
+	      updatedAt: $updatedAt,
+	      keys: (base.keys // {}) + {($newKid): $newSecret}
+	    }
+	  '
+	)"
+
+umask 077
+tmp="$(mktemp)"
+printf '%s' "$payload" > "$tmp"
+CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
+  wrangler kv key put --remote --namespace-id "$keys_ns_id" --path "$tmp" admin:keyset:active
+rm -f "$tmp"
+
+# Verify without dumping key material
+CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
+  wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active |
+  jq '{activeKid, previousKid, updatedAt, kids: (.keys|keys)}'
+```
+
+Presigned and Worker checks:
+
+````bash
 r2 share "$R2_SYNC_BUCKET" "$R2_SHARE_OBJECT_KEY" 24h
 
-share_json="$(r2 share worker create "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY" 24h --max-downloads 1)"
-printf '%s\n' "${share_json}"
-share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
-r2 share worker list "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY"
-curl -I "${share_url}"
-curl -I https://files.unsigned.sh/api/list
-```
+	share_json="$(r2 share worker create "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY" 24h --max-downloads 1)"
+	printf '%s\n' "${share_json}"
+	share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
+	token_id="$(printf '%s' "${share_json}" | jq -r '.tokenId')"
+	test -n "${token_id}"
+	test "${token_id}" != "null"
+
+	r2 share worker list "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY"
+	curl -I "${share_url}"
+	curl -I https://files.unsigned.sh/api/list
+
+	# Cleanup: do not leave tokens around after validation.
+	# Ignore 404 if token was already exhausted/revoked during validation.
+	r2 share worker revoke "${token_id}" || true
+	```
 
 Acceptance:
 
@@ -564,7 +653,7 @@ Use one markdown evidence file in `~/nixos` branch (example:
 
 - docs updated:
 - unresolved items:
-```
+````
 
 ## Final Acceptance Criteria For Phase 8 Closure
 

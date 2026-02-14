@@ -173,16 +173,21 @@ Expected result:
 
 ## 8. Sharing checkpoint (full path)
 
-Prerequisite: R2-Explorer is deployed and Worker admin environment variables are available.
+Prerequisite: R2-Explorer is deployed and Worker admin signing inputs are available.
+In managed NixOS deployments, this is typically provided via
+`/run/secrets/r2/explorer.env` (wired through `programs.r2-cloud.explorerEnvFile`).
 
 ```bash
 r2 share nix-r2-cf-r2e-files-prod workspace/demo.txt 24h
 share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 1)"
 echo "${share_json}"
 share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
+token_id="$(printf '%s' "${share_json}" | jq -r '.tokenId')"
 r2 share worker list files workspace/demo.txt
 curl -I "${share_url}"
 curl -I https://files.unsigned.sh/api/list
+# Best-effort cleanup (ignore if token already exhausted/revoked).
+r2 share worker revoke "${token_id}" || true
 ```
 
 Expected result:

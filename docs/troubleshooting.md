@@ -17,6 +17,11 @@ Credentials file convention:
 - `/run/secrets/r2/credentials.env` rendered from `secrets/r2.yaml` via sops
   templates.
 
+Note on permissions:
+
+- Read-only checks (`systemctl status`, `journalctl -u`, `test -r`) are written
+  without `sudo` here. If your host restricts these, prefix with `sudo`.
+
 ## 1) Authentication
 
 ### A. `rclone`/R2 auth fails (`403`, `SignatureDoesNotMatch`, or access denied)
@@ -78,7 +83,11 @@ Failure signature:
 Confirm:
 
 ```bash
-env | grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_ADMIN_KID|R2_EXPLORER_ADMIN_SECRET)='
+# Managed deployments often provide Worker admin signing inputs via a system
+# env file (so your interactive shell may NOT have these exported).
+test -r /run/secrets/r2/explorer.env
+grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_ADMIN_KID)=' /run/secrets/r2/explorer.env
+grep -q '^R2_EXPLORER_ADMIN_SECRET=' /run/secrets/r2/explorer.env
 
 r2 share worker list files workspace/demo.txt
 ```
@@ -88,11 +97,17 @@ Likely root causes:
 - `R2_EXPLORER_ADMIN_KID` not present in `R2E_KEYS_KV`.
 - `R2_EXPLORER_ADMIN_SECRET` mismatch for the configured key ID.
 - Caller/Worker clock skew causing signature validation failures.
+- KV was updated locally (missing `wrangler kv ... --remote`), so the deployed
+  Worker keyset never actually changed.
 
 Repair:
 
 ```bash
-# Refresh to current active key material
+# Refresh to current active key material.
+# For managed NixOS, prefer updating the SOPS-managed source of truth and
+# rebuilding so `/run/secrets/r2/explorer.env` is updated persistently.
+#
+# For ad-hoc testing only:
 export R2_EXPLORER_ADMIN_KID="<active-kid>"
 export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
 ```
@@ -253,9 +268,9 @@ Failure signature:
 Confirm:
 
 ```bash
-sudo systemctl status r2-bisync-workspace
-sudo journalctl -u r2-bisync-workspace -n 200 --no-pager
-sudo systemctl list-timers | grep r2-bisync-workspace
+systemctl status r2-bisync-workspace --no-pager
+journalctl -u r2-bisync-workspace -n 200 --no-pager
+systemctl list-timers | grep r2-bisync-workspace
 ```
 
 Likely root causes:
@@ -313,8 +328,8 @@ Failure signature:
 Confirm:
 
 ```bash
-sudo systemctl status r2-restic-backup
-sudo journalctl -u r2-restic-backup -n 200 --no-pager
+systemctl status r2-restic-backup --no-pager
+journalctl -u r2-restic-backup -n 200 --no-pager
 
 set -a
 source /run/secrets/r2/credentials.env
@@ -334,7 +349,7 @@ Repair:
 
 ```bash
 # Confirm password file exists and is readable
-sudo test -r /run/secrets/r2/restic-password
+test -r /run/secrets/r2/restic-password
 
 # If repository is not initialized yet:
 restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" init

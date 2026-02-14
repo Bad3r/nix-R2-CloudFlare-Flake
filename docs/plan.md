@@ -1339,11 +1339,11 @@ CI automation does not remove break-glass/manual deployment workflows.
 | Milestone                                 | Scope / Tasks                                                                                                                                                | Deliverables                                                                             | Exit Criteria                                                                                            | Status |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
 | **8.1 Consumer integration in `~/nixos`** | Integrate this flake as an input in the main system config and wire `nixosModules.default` (+ Home Manager module where used) into target host/user configs. | Updated `~/nixos` flake wiring and host/user module imports.                             | `nixos-rebuild dry-activate --flake ~/nixos#system76` passes with module assertions satisfied.           | [x]    |
-| **8.2 Staged service enablement**         | Enable core options in staged order (`r2-sync` first, then `r2-restic`, then `git-annex` and CLI wrappers) to isolate failures cleanly.                      | Host config with explicit staged enablement and secrets mapping.                         | `nixos-rebuild switch --flake ~/nixos#system76` succeeds for each stage without hidden/manual patching.  | [ ]    |
-| **8.3 Runtime service verification**      | Verify mount/bisync/restic/timers/CLI surfaces on the real host managed by `~/nixos`.                                                                        | Service/timer + command verification checklist with observed outputs.                    | Core units/timers are active/invokable and `r2`/`git-annex-r2-init` resolve in PATH.                     | [ ]    |
-| **8.4 Remote connectivity validation**    | Validate live R2 and restic connectivity using runtime secrets on the managed host.                                                                          | Successful `rclone`/`restic` checkpoints (or explicit failure signatures + fixes).       | Remote `files` listing and `restic snapshots` checks pass with expected auth semantics.                  | [ ]    |
-| **8.5 Sharing UX validation**             | Validate presigned and Worker-based share flows from the managed system, including Access split behavior.                                                    | End-to-end share test evidence (`r2 share`, `r2 share worker create/list`, curl probes). | Tokenized share works and `/api/*` remains Access-protected.                                             | [ ]    |
-| **8.6 Acceptance + feedback loop**        | Record evidence, unresolved issues, and feed real-user friction back into quickstart/runbooks/troubleshooting docs.                                          | Phase 8 closure note + doc refinements informed by first-user run.                       | One successful full-stack run documented with reproducible commands and outcomes from `~/nixos` context. | [ ]    |
+| **8.2 Staged service enablement**         | Enable core options in staged order (`r2-sync` first, then `r2-restic`, then `git-annex` and CLI wrappers) to isolate failures cleanly.                      | Host config with explicit staged enablement and secrets mapping.                         | `nixos-rebuild switch --flake ~/nixos#system76` succeeds for each stage without hidden/manual patching.  | [x]    |
+| **8.3 Runtime service verification**      | Verify mount/bisync/restic/timers/CLI surfaces on the real host managed by `~/nixos`.                                                                        | Service/timer + command verification checklist with observed outputs.                    | Core units/timers are active/invokable and `r2`/`git-annex-r2-init` resolve in PATH.                     | [x]    |
+| **8.4 Remote connectivity validation**    | Validate live R2 and restic connectivity using runtime secrets on the managed host.                                                                          | Successful `rclone`/`restic` checkpoints (or explicit failure signatures + fixes).       | Remote `files` listing and `restic snapshots` checks pass with expected auth semantics.                  | [x]    |
+| **8.5 Sharing UX validation**             | Validate presigned and Worker-based share flows from the managed system, including Access split behavior.                                                    | End-to-end share test evidence (`r2 share`, `r2 share worker create/list`, curl probes). | Tokenized share works and `/api/*` remains Access-protected.                                             | [x]    |
+| **8.6 Acceptance + feedback loop**        | Record evidence, unresolved issues, and feed real-user friction back into quickstart/runbooks/troubleshooting docs.                                          | Phase 8 closure note + doc refinements informed by first-user run.                       | One successful full-stack run documented with reproducible commands and outcomes from `~/nixos` context. | [x]    |
 
 Detailed execution documents:
 
@@ -1374,7 +1374,7 @@ Detailed execution documents:
 7. Verify sharing UX from the managed system:
    - `r2 share ...`
    - `r2 share worker create/list ...`
-   - `curl -I <share_url>`
+   - `curl -I "<share_url>"` (share URLs often contain `?`, so always quote)
    - `curl -I https://files.unsigned.sh/api/list`
 8. Capture evidence/failures by gate and update quickstart/troubleshooting/docs
    for any first-user friction discovered during runtime validation.
@@ -1409,3 +1409,27 @@ Detailed execution documents:
   - `/run/secrets/r2/secret-access-key`
   - `/run/secrets/r2/restic-password`
   - `/run/secrets/r2/credentials.env` (rendered template symlink target)
+
+### 8.2-8.6 Completion Evidence (2026-02-15)
+
+- `~/nixos` enablement state:
+  - `services.r2-sync.enable` / `services.r2-restic.enable` / `programs.git-annex-r2.enable` all evaluate to `true`.
+  - HM wrapper is enabled for user `vx`:
+    `home-manager.users.vx.programs.r2-cloud.enable = true`.
+- Runtime health on `system76`:
+  - `r2-mount-workspace.service` active and mount is host-visible:
+    `mountpoint -q /data/r2/mount/workspace` succeeds.
+  - timers active: `r2-bisync-workspace.timer`, `r2-restic-backup.timer`.
+- Live remote connectivity (runtime secrets only):
+  - `rclone lsf :s3:nix-r2-cf-r2e-files-prod ...` succeeds.
+  - `restic ... snapshots` succeeds against `nix-r2-cf-backups-prod`.
+- Sharing UX (managed system):
+  - presigned `r2 share nix-r2-cf-r2e-files-prod workspace/demo.txt 1h` returns a URL.
+  - Worker token flow works on `https://files.unsigned.sh/share/<token>`:
+    - first `GET` returns `200`
+    - second `GET` returns `410` when created with `--max-downloads 1`
+  - `curl -I https://files.unsigned.sh/api/list` returns `401` (Access remains enforced).
+- Worker admin signing is persistent (no manual exports required):
+  - `explorer_admin_{kid,secret}` stored in SOPS-managed `~/nixos/secrets/r2.yaml`,
+    rendered to `/run/secrets/r2/explorer.env`,
+    and wired via `programs.r2-cloud.explorerEnvFile`.
