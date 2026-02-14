@@ -253,13 +253,13 @@ jobs:
             extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
 
       - name: Download root artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: root-release-artifacts
           path: release-artifacts/root
 
       - name: Download root closure runtime artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: root-closure-runtime
           path: release-artifacts/runtime
@@ -316,13 +316,13 @@ jobs:
           fetch-depth: 0
 
       - name: Download root artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: root-release-artifacts
           path: release-artifacts/root
 
       - name: Download worker artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: worker-release-artifacts
           path: release-artifacts/worker
