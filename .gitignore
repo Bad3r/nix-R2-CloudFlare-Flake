@@ -1,5 +1,6 @@
 node_modules/
 .wrangler/
+r2-explorer/wrangler.ci.toml
 .claude/*
 !.claude/commands/
 notes.md

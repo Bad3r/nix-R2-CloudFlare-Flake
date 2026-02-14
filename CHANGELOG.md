@@ -49,6 +49,9 @@ and this project follows Conventional Commits.
 - Worker share downloads now honor per-record bucket aliases via `R2E_BUCKET_MAP`.
 - Operator key rotation guidance now explicitly requires `wrangler kv ... --remote`
   to avoid updating local Miniflare KV storage instead of the deployed Worker.
+- Worker Access auth now accepts the Access session `CF_Authorization` cookie as
+  a JWT source, fixing GUI share-management calls when `/api/share/*` is an
+  Access `Bypass` (HMAC CLI path).
 
 ## [v0.1.0] - 2026-02-07
 

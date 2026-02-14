@@ -64,6 +64,8 @@ Operations:
 - `/*` allow trusted identities
 - `/share/*` bypass for public token links
 - `/api/share/*` bypass so `r2 share worker ...` HMAC admin flows work without an Access browser session
+  (GUI share actions still work for logged-in users because the Worker accepts
+  the `CF_Authorization` cookie for Access identity on bypassed share routes)
 
 Optional upstream follow-ups:
 

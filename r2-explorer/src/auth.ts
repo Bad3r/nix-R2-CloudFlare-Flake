@@ -50,10 +50,33 @@ export function getAdminAuthWindowSeconds(env: Env): number {
   return parsePositiveInt(env.R2E_ADMIN_AUTH_WINDOW_SEC, 300);
 }
 
+function extractAccessJwtFromCookie(cookieHeader: string | null): string | null {
+  if (!cookieHeader) {
+    return null;
+  }
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+
+    const name = trimmed.slice(0, eq).trim();
+    const rawValue = trimmed.slice(eq + 1).trim();
+    if (!name || !rawValue) continue;
+
+    if (name === "CF_Authorization" || name.startsWith("CF_Authorization_")) {
+      const unquoted = rawValue.replace(/^"(.*)"$/, "$1");
+      return unquoted.trim() || null;
+    }
+  }
+  return null;
+}
+
 export function extractAccessIdentity(request: Request): AccessIdentity | null {
   const email = request.headers.get("cf-access-authenticated-user-email");
   const userId = request.headers.get("cf-access-authenticated-user-id");
-  const jwt = request.headers.get("cf-access-jwt-assertion");
+  const jwt =
+    request.headers.get("cf-access-jwt-assertion") ?? extractAccessJwtFromCookie(request.headers.get("cookie"));
 
   if (!email && !userId && !jwt) {
     return null;

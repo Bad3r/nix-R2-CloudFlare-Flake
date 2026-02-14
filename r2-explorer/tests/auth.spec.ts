@@ -3,6 +3,7 @@ import { createApp } from "../src/app";
 import {
   accessHeaders,
   accessHeadersWithoutJwt,
+  createAccessJwt,
   createTestEnv,
   signedHeaders,
   useAccessJwksFetchMock,
@@ -104,6 +105,21 @@ describe("auth middleware", () => {
     const response = await app.fetch(
       new Request("https://files.example.com/api/list?prefix=", {
         headers: accessHeaders("ops@example.com"),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("accepts valid Access JWT from CF_Authorization cookie on /api routes", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const jwt = createAccessJwt({ email: "ops@example.com" });
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/list?prefix=", {
+        headers: {
+          cookie: `CF_Authorization=${jwt}`,
+        },
       }),
       env,
     );

@@ -118,6 +118,12 @@ Note: `/api/share/*` is still protected by Worker auth. The Worker requires
 either a valid Cloudflare Access JWT or valid HMAC admin headers for these
 endpoints.
 
+Important: when `/api/share/*` is configured as an Access `Bypass`, Access will
+not inject `Cf-Access-Jwt-Assertion` headers on those requests. Browser sessions
+can still be authenticated by the Worker via the `CF_Authorization` cookie
+(validated against `R2E_ACCESS_TEAM_DOMAIN` + `R2E_ACCESS_AUD`). CLI-driven
+requests use HMAC admin headers.
+
 Important: Access policy split alone is not sufficient. The Worker must also
 verify Access JWT signature and claims on `/api/*`.
 

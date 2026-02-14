@@ -66,6 +66,13 @@ r2 share worker create files workspace/demo.txt 10m --max-downloads 1
 - Worker is configured with `R2E_ACCESS_TEAM_DOMAIN` and `R2E_ACCESS_AUD`, and
   `/api/*` rejects invalid or missing Access JWT assertions.
 
+Notes:
+
+- When `/api/share/*` is an Access `Bypass`, Access does not inject
+  `Cf-Access-Jwt-Assertion` on those requests. A logged-in browser session can
+  still be authenticated by the Worker via the `CF_Authorization` cookie. CLI
+  callers should use HMAC admin headers.
+
 ## Failure Signatures and Triage
 
 - `/share/*` redirects to Access login:

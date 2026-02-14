@@ -70,6 +70,7 @@ Configure in Cloudflare dashboard:
    - Path policy split:
      - `/*` → **Allow** trusted identities (org/users)
      - `/share/*` → **Bypass** for public token links
+     - `/api/share/*` → **Bypass** for HMAC admin share management (CLI)
 
 ### Sharing Modes and Constraints
 
@@ -96,6 +97,12 @@ KV-backed random token records with expiry/revocation/download-limit checks.
 `/api/*` routes require Cloudflare Access identity. CLI-driven Worker share
 operations (`r2 share worker ...`) authenticate with admin HMAC headers
 validated against `R2E_KEYS_KV`.
+
+Note: in production, `/api/share/*` is commonly configured as an Access
+`Bypass` so HMAC share operations work without an Access browser session. In
+that configuration, Access does not inject `Cf-Access-Jwt-Assertion` headers on
+share-management requests, so the Worker accepts Access identity via the
+`CF_Authorization` cookie for logged-in browser sessions.
 
 ## Files (Current State)
 
