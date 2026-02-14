@@ -5,13 +5,9 @@
     let
       inherit (metaOwner) username;
       group = lib.attrByPath [ "users" "users" username "group" ] "users" config;
-      runAsUserServiceConfig = {
-        User = username;
-        Group = group;
-      };
     in
     {
-      # Allow non-root rclone mounts to use --allow-other.
+      # Allow non-root mounts to use `--allow-other`.
       programs.fuse.userAllowOther = true;
 
       services.r2-sync = {
@@ -19,10 +15,16 @@
         credentialsFile = "/run/secrets/r2/credentials.env";
         accountIdFile = "/run/secrets/r2/account-id";
 
+        # Production: use the prod files bucket, but keep host data under a
+        # stable per-host prefix to avoid mixing with Worker/CI objects.
         mounts.workspace = {
           bucket = "nix-r2-cf-r2e-files-prod";
           remotePrefix = "workspace";
+
+          # FUSE mount of the remote prefix (read/write remote view).
           mountPoint = "/data/r2/mount/workspace";
+
+          # Local working directory synced via bisync.
           localPath = "/data/r2/workspace";
           syncInterval = "5m";
         };
@@ -42,23 +44,31 @@
         credentialsFile = "/run/secrets/r2/credentials.env";
       };
 
-      # Provide `r2` + managed rclone remote in user PATH.
+      # Provide `r2` in PATH for the real user.
       home-manager.users.${username}.programs.r2-cloud = {
         enable = true;
         accountIdFile = "/run/secrets/r2/account-id";
         credentialsFile = "/run/secrets/r2/credentials.env";
       };
 
-      # Run operational services as the real user so local workspace paths are
-      # owned/editable by `vx`, not root.
       systemd = {
+        # Run operational services as the real user so /data/r2/* stays user-owned.
         services = {
-          "r2-mount-workspace".serviceConfig = runAsUserServiceConfig;
-          "r2-bisync-workspace".serviceConfig = runAsUserServiceConfig;
-          "r2-restic-backup".serviceConfig = runAsUserServiceConfig;
+          "r2-mount-workspace".serviceConfig = {
+            User = username;
+            Group = group;
+          };
+          "r2-bisync-workspace".serviceConfig = {
+            User = username;
+            Group = group;
+          };
+          "r2-restic-backup".serviceConfig = {
+            User = username;
+            Group = group;
+          };
         };
 
-        # Ensure mount and local paths exist and are user-owned before services start.
+        # Ensure paths exist (and are user-owned) before services start.
         tmpfiles.rules = [
           "d /data/r2 0750 ${username} ${group} - -"
           "d /data/r2/mount 0750 ${username} ${group} - -"
