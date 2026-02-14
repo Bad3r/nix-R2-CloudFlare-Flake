@@ -166,7 +166,7 @@ run_docs_checks() {
       ;;
     grep)
       grep -R --line-number --extended-regexp --include "README.md" \
-        --include "*.md" --exclude "plan.md" --exclude "plan-*.md" "Phase[[:space:]]+[0-9]+" \
+        --include "*.md" --exclude "plan.md" --exclude "plan-*.md" --exclude-dir "plan" "Phase[[:space:]]+[0-9]+" \
         README.md docs >"${output_file}"
       ;;
     *)
@@ -202,7 +202,7 @@ run_docs_checks() {
 
   stale_output="$(mktemp "${TMPDIR:-/tmp}/r2-cloud-doc-stale.XXXXXX")"
   if scan_stale_phase_language "${stale_output}"; then
-    echo "Stale phase language detected outside docs/plan.md. Remove/update the following references:" >&2
+    echo "Stale phase language detected outside planning docs. Remove/update the following references:" >&2
     cat "${stale_output}" >&2
     rm -f "${stale_output}"
     exit 1

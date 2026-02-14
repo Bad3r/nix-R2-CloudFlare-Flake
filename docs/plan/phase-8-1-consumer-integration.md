@@ -3,9 +3,10 @@
 ## Status
 
 - Completed on **2026-02-14**.
-- Execution evidence is recorded in `docs/plan.md` under
+- Execution evidence is recorded in `docs/plan/phase-8-integration.md` under
   `8.1 Completion Evidence (2026-02-14)`.
-- Remaining Phase 8 runtime milestones are planned in `docs/plan-8-2.md`.
+- Remaining Phase 8 runtime milestones are planned in
+  `docs/plan/phase-8-2-runtime-enablement-validation.md`.
 
 ## Summary
 
@@ -30,7 +31,7 @@ This phase was intentionally limited to integration/evaluation correctness
 4. `nix flake check` passes in both repos.
 5. `sudo nixos-rebuild dry-activate --flake ~/trees/nixos/phase-8-1-consumer-integration#system76`
    passes.
-6. `docs/plan.md` updates 8.1 to complete with evidence.
+6. `docs/plan/phase-8-integration.md` updates 8.1 to complete with evidence.
 
 ## Branch And Worktree Setup
 
@@ -226,7 +227,7 @@ Update:
 2. `docs/reference/services-r2-restic.md`
 3. `docs/reference/programs-r2-cloud.md`
 4. `docs/reference/programs-r2-cloud-rclone-config.md`
-5. `docs/plan.md` (8.1 completion note only after validation success)
+5. `docs/plan/phase-8-integration.md` (8.1 completion note only after validation success)
 
 ---
 
@@ -345,7 +346,7 @@ Before final checks, verify system-level decryption compatibility:
 | **C** | Verify HM collision-free integration with consolidated `sharedModules` + legacy disabled.            |
 | **F** | Run consumer `nix flake check`.                                                                      |
 | **G** | Run `sudo nixos-rebuild dry-activate --flake ~/trees/nixos/phase-8-1-consumer-integration#system76`. |
-| **H** | Document evidence and mark 8.1 complete in `docs/plan.md`.                                           |
+| **H** | Document evidence and mark 8.1 complete in `docs/plan/phase-8-integration.md`.                       |
 
 ---
 

@@ -7,6 +7,8 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "!docs/plan.md"
+      - "!docs/plan/**"
       - ".github/workflows/wiki-sync.yml"
       - "scripts/ci/sync-wiki.sh"
   workflow_dispatch:

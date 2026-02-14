@@ -17,6 +17,9 @@ and this project follows Conventional Commits.
   and system credentials rendered to `/run/secrets/r2/credentials.env`.
 - NixOS and Home Manager modules now support `accountIdFile` and runtime
   endpoint resolution for endpoint-less rclone remotes.
+- Planning docs were reorganized: `docs/plan.md` is now a short index, with the
+  full phase content split under `docs/plan/` (including Phase 8 execution docs).
+- Wiki sync now ignores planning docs (`docs/plan.md`, `docs/plan/**`).
 
 ### Fixed
 

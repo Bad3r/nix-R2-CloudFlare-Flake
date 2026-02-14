@@ -6,7 +6,7 @@
 - This document is the execution plan for the remaining Phase 8 milestones:
   `8.2` through `8.6`.
 - Phase `8.2` through `8.5` were validated on `system76` on **2026-02-15** (see
-  Phase 8 milestone matrix in `docs/plan.md`).
+  Phase 8 milestone matrix in `docs/plan/phase-8-integration.md`).
 
 ## Cloudflare Real-Domain Snapshot (2026-02-15)
 
@@ -60,7 +60,7 @@ Because each milestone depends on the previous one, this plan groups `8.2` to
 
 ## Critical Review Of Current Matrix
 
-The matrix in `docs/plan.md` is correct but intentionally high-level. For
+The matrix in `docs/plan/phase-8-integration.md` is correct but intentionally high-level. For
 execution, these gaps need explicit handling:
 
 1. **No stage-level rollback criteria** are defined for `switch` failures or
@@ -575,7 +575,7 @@ Acceptance:
 
 Required updates after successful gates:
 
-1. Update `docs/plan.md`:
+1. Update `docs/plan/phase-8-integration.md`:
    - mark `8.2` to `8.6` complete with dated evidence notes.
 2. Update user/operator docs based on observed friction:
    - `docs/quickstart.md`
@@ -660,6 +660,6 @@ Use one markdown evidence file in `~/nixos` branch (example:
 Phase 8 can be marked complete only when:
 
 1. Gates `A` through `H` are complete and documented.
-2. `docs/plan.md` marks milestones `8.2` to `8.6` as `[x]` with dated evidence.
+2. `docs/plan/phase-8-integration.md` marks milestones `8.2` to `8.6` as `[x]` with dated evidence.
 3. Quickstart/runbook/troubleshooting updates are committed for any observed
    first-user friction.
