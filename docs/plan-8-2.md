@@ -169,6 +169,11 @@ Run from `~/nixos` worktree and keep one shell session for exported variables:
 ```bash
 set -euo pipefail
 
+# Pull the latest producer changes into the consumer lock file.
+# (If you intentionally pin `r2-flake`, skip this.)
+cd ~/nixos
+nix flake update r2-flake
+
 export CF_TOKEN_FILE="/home/vx/nixos/secrets/decrypted_cf_token.txt"
 export CF_ACCOUNT_ID_FILE="/home/vx/nixos/secrets/decrypted_cf_ACCOUNT_ID.txt"
 export CF_API_TOKEN="$(tr -d '\n' < "$CF_TOKEN_FILE")"
