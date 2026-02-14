@@ -24,9 +24,9 @@ r2 rclone ls r2:documents/
 r2 share documents test.txt
 
 # Worker share (custom domain)
-export R2_EXPLORER_BASE_URL="https://files.unsigned.sh"
-export R2_EXPLORER_ADMIN_KID="<active-kid>"
-export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
+# Recommended: wire Worker admin signing via `programs.r2-cloud.explorerEnvFile`
+# (for example `/run/secrets/r2/explorer.env`) so the wrapper can run Worker
+# share commands without manual exports.
 r2 share worker create files documents/test.txt 24h --max-downloads 1
 r2 share worker list files documents/test.txt
 ```
