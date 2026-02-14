@@ -18,6 +18,7 @@ let
   r2Package = pkgs.callPackage ../../packages/r2-cli.nix { wrangler = wranglerPkg; };
   defaultCredentialsFile = "${config.xdg.configHome}/cloudflare/r2/env";
   defaultRcloneConfigPath = "${config.xdg.configHome}/rclone/rclone.conf";
+  explorerEnvFileValue = if cfg.explorerEnvFile == null then "" else toString cfg.explorerEnvFile;
   resolveAccountIdShell = r2lib.mkResolveAccountIdShell {
     literalAccountId = cfg.accountId;
     inherit (cfg) accountIdFile;
@@ -35,6 +36,14 @@ let
         set -a
         # shellcheck source=/dev/null
         source "$R2_CREDENTIALS_FILE"
+        set +a
+      fi
+
+      explorer_env_file=${lib.escapeShellArg explorerEnvFileValue}
+      if [[ -n "$explorer_env_file" && -r "$explorer_env_file" ]]; then
+        set -a
+        # shellcheck source=/dev/null
+        source "$explorer_env_file"
         set +a
       fi
 
@@ -100,6 +109,20 @@ in
       type = lib.types.path;
       default = defaultRcloneConfigPath;
       description = "Path to the generated rclone config file";
+    };
+
+    explorerEnvFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Optional env file to source at runtime (after `credentialsFile`) for Worker
+        share commands.
+
+        Intended for `R2_EXPLORER_BASE_URL`, `R2_EXPLORER_ADMIN_KID`, and
+        `R2_EXPLORER_ADMIN_SECRET`. Use a runtime path (for example
+        `/run/secrets/r2/explorer.env`) to avoid embedding secrets in the Nix store.
+      '';
+      example = "/run/secrets/r2/explorer.env";
     };
 
     installTools = lib.mkOption {

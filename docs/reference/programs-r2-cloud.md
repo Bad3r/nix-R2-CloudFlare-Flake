@@ -12,6 +12,7 @@ Activation condition: `programs.r2-cloud.enable = true`.
 | `programs.r2-cloud.accountId`          | string         | `""`                                          | yes                                  | Exported to wrapper as `R2_DEFAULT_ACCOUNT_ID`.                                                |
 | `programs.r2-cloud.accountIdFile`      | path or `null` | `null`                                        | yes (if `accountId` empty)           | File-based account ID source; used when literal is unset.                                      |
 | `programs.r2-cloud.credentialsFile`    | path           | `${config.xdg.configHome}/cloudflare/r2/env`  | yes                                  | Exported as `R2_CREDENTIALS_FILE`.                                                             |
+| `programs.r2-cloud.explorerEnvFile`    | path or `null` | `null`                                        | no                                   | Optional extra env file sourced by wrapper for Worker share vars.                              |
 | `programs.r2-cloud.enableRcloneRemote` | boolean        | `true`                                        | no                                   | Drives managed rclone config behavior.                                                         |
 | `programs.r2-cloud.rcloneRemoteName`   | string         | `"r2"`                                        | yes when `enableRcloneRemote = true` | Used by rclone config generation + wrappers.                                                   |
 | `programs.r2-cloud.rcloneConfigPath`   | path           | `${config.xdg.configHome}/rclone/rclone.conf` | no                                   | Exported as `R2_RCLONE_CONFIG`.                                                                |
@@ -30,6 +31,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - wrapper command: `r2`
 - wrapper exports:
   - `R2_CREDENTIALS_FILE`
+  - variables from `programs.r2-cloud.explorerEnvFile` (if configured and readable)
   - `R2_RCLONE_CONFIG`
   - `R2_DEFAULT_ACCOUNT_ID`
   - `RCLONE_CONFIG_<REMOTE>_ENDPOINT` when endpoint-less mode is used
@@ -41,6 +43,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
   programs.r2-cloud = {
     enable = true;
     accountIdFile = "/run/secrets/r2/account-id";
+    explorerEnvFile = "/run/secrets/r2/explorer.env";
   };
 }
 ```
@@ -53,6 +56,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
     enable = true;
     accountIdFile = "/run/secrets/r2/account-id";
     credentialsFile = "/home/alice/.config/cloudflare/r2/env";
+    explorerEnvFile = "/run/secrets/r2/explorer.env";
     enableRcloneRemote = true;
     rcloneRemoteName = "r2";
     rcloneConfigPath = "/home/alice/.config/rclone/rclone.conf";
