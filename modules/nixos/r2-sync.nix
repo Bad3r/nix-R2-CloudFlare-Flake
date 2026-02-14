@@ -20,7 +20,13 @@ let
     let
       mountPoint = toString mount.mountPoint;
       mountPointArg = lib.escapeShellArg mountPoint;
-      remoteArg = lib.escapeShellArg ":s3:${mount.bucket}";
+      remotePrefix =
+        if mount.remotePrefix == "" then
+          ""
+        else
+          lib.removePrefix "/" (lib.removeSuffix "/" mount.remotePrefix);
+      remotePath = if remotePrefix == "" then mount.bucket else "${mount.bucket}/${remotePrefix}";
+      remoteArg = lib.escapeShellArg ":s3:${remotePath}";
       mountScript = pkgs.writeShellScript "r2-mount-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
@@ -77,8 +83,14 @@ let
       localPath = if mount.localPath != null then toString mount.localPath else toString mount.mountPoint;
       localPathArg = lib.escapeShellArg localPath;
       localTrashArg = lib.escapeShellArg "${localPath}/.trash";
-      remoteArg = lib.escapeShellArg ":s3:${mount.bucket}";
-      remoteTrashArg = lib.escapeShellArg ":s3:${mount.bucket}/.trash";
+      remotePrefix =
+        if mount.remotePrefix == "" then
+          ""
+        else
+          lib.removePrefix "/" (lib.removeSuffix "/" mount.remotePrefix);
+      remotePath = if remotePrefix == "" then mount.bucket else "${mount.bucket}/${remotePrefix}";
+      remoteArg = lib.escapeShellArg ":s3:${remotePath}";
+      remoteTrashArg = lib.escapeShellArg ":s3:${remotePath}/.trash";
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
@@ -167,6 +179,13 @@ in
               type = lib.types.str;
               description = "R2 bucket name";
               example = "documents";
+            };
+
+            remotePrefix = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "Optional path prefix inside the bucket to use as the mount/sync root";
+              example = "workspace";
             };
 
             mountPoint = lib.mkOption {

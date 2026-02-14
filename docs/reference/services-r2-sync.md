@@ -17,6 +17,7 @@ Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 | `services.r2-sync.accountIdFile`                  | `null` or path                          | `null`   | yes (if literal unset)                | File-based account ID source.                                 |
 | `services.r2-sync.mounts`                         | attrset of submodules                   | `{}`     | yes (must contain at least one mount) | One mount profile per attr key.                               |
 | `services.r2-sync.mounts.<name>.bucket`           | string                                  | none     | yes                                   | Remote bucket name; must be non-empty.                        |
+| `services.r2-sync.mounts.<name>.remotePrefix`     | string                                  | `""`     | no                                    | Optional remote subpath inside the bucket (mount/sync root).  |
 | `services.r2-sync.mounts.<name>.mountPoint`       | path                                    | none     | yes                                   | Local mount location for `rclone mount`.                      |
 | `services.r2-sync.mounts.<name>.localPath`        | `null` or path                          | `null`   | no                                    | Local bisync side; falls back to `mountPoint`.                |
 | `services.r2-sync.mounts.<name>.syncInterval`     | string                                  | `"5m"`   | no                                    | `OnUnitActiveSec` value for bisync timer.                     |
@@ -70,8 +71,9 @@ For each mount name (example: `documents`):
 
     mounts.workspace = {
       bucket = "files";
+      remotePrefix = "workspace";
       mountPoint = "/mnt/r2/workspace";
-      localPath = "/srv/r2/workspace";
+      localPath = "/data/r2/workspace";
       syncInterval = "10m";
       trashRetention = 30;
       vfsCache = {
