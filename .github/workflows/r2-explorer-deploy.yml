@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload smoke logs (preview)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-preview-logs
           path: smoke-preview.log
@@ -373,7 +373,7 @@ jobs:
 
       - name: Upload smoke logs (production)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-production-logs
           path: smoke-production.log
