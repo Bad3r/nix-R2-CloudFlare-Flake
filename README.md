@@ -2,6 +2,9 @@
 
 Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 
+> [!CAUTION]
+> This is not ready to be used by other users
+
 ## Capabilities
 
 - NixOS sync module: `services.r2-sync` (rclone mount + bisync services/timers)

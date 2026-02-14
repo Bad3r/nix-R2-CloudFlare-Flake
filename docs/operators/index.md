@@ -25,4 +25,4 @@ with `docs/troubleshooting.md`.
   - `R2E_KEYS_KV`
   - `R2E_READONLY`
 - `r2` CLI available for Worker share lifecycle checks.
-- Access to the deployment target for `https://files.example.com`.
+- Access to the deployment target for `https://files.unsigned.sh`.

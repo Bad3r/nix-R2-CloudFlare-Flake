@@ -51,7 +51,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
     accountIdFile = "/run/secrets/r2/account-id";
     passwordFile = "/run/secrets/r2/restic-password";
     bucket = "backups";
-    paths = [ "/srv/r2/workspace" ];
+    paths = [ "/data/r2/workspace" ];
   };
 }
 ```
@@ -67,7 +67,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
     passwordFile = "/run/secrets/r2/restic-password";
     bucket = "backups";
     paths = [
-      "/srv/r2/workspace"
+      "/data/r2/workspace"
       "/etc/nixos"
     ];
     exclude = [

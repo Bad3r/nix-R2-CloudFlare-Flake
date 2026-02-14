@@ -61,17 +61,19 @@ let
           ExecStart = mountScript;
           ExecStop = ''
             ${pkgs.util-linux}/bin/mountpoint -q ${mountPointArg} && \
-              (${pkgs.fuse}/bin/fusermount -u ${mountPointArg} || ${pkgs.util-linux}/bin/umount ${mountPointArg}) || true
+              (/run/wrappers/bin/fusermount3 -u ${mountPointArg} || /run/wrappers/bin/fusermount -u ${mountPointArg} || /run/wrappers/bin/umount ${mountPointArg}) || true
           '';
           Restart = "on-failure";
           RestartSec = "5s";
           StateDirectory = "r2-sync-${name}";
-          NoNewPrivileges = true;
+          # rclone mount relies on fusermount (setuid) for non-root mounts.
+          # Keep the service compatible with running as a real user (e.g. `vx`).
+          NoNewPrivileges = false;
           PrivateTmp = true;
           ProtectKernelTunables = true;
           ProtectKernelModules = true;
           ProtectControlGroups = true;
-          RestrictSUIDSGID = true;
+          RestrictSUIDSGID = false;
           LockPersonality = true;
         };
       };
@@ -82,7 +84,15 @@ let
     let
       localPath = if mount.localPath != null then toString mount.localPath else toString mount.mountPoint;
       localPathArg = lib.escapeShellArg localPath;
-      localTrashArg = lib.escapeShellArg "${localPath}/.trash";
+      localBaseDir = builtins.dirOf localPath;
+      localTrashPath = "${localBaseDir}/.trash/${name}";
+      localTrashArg = lib.escapeShellArg localTrashPath;
+      inherit (mount.bisync) checkFilename;
+      checkFilenameArg = lib.escapeShellArg checkFilename;
+      localCheckPath = "${localPath}/${checkFilename}";
+      localCheckArg = lib.escapeShellArg localCheckPath;
+      workdirPath = "/var/lib/r2-sync-${name}/bisync";
+      workdirArg = lib.escapeShellArg workdirPath;
       remotePrefix =
         if mount.remotePrefix == "" then
           ""
@@ -90,11 +100,29 @@ let
           lib.removePrefix "/" (lib.removeSuffix "/" mount.remotePrefix);
       remotePath = if remotePrefix == "" then mount.bucket else "${mount.bucket}/${remotePrefix}";
       remoteArg = lib.escapeShellArg ":s3:${remotePath}";
-      remoteTrashArg = lib.escapeShellArg ":s3:${remotePath}/.trash";
+      remoteTrashSuffix = remotePrefix;
+      remoteTrashPath = ":s3:${mount.bucket}/.trash/${remoteTrashSuffix}";
+      remoteTrashArg = lib.escapeShellArg remoteTrashPath;
+      remoteCheckPath = ":s3:${remotePath}/${checkFilename}";
+      remoteCheckArg = lib.escapeShellArg remoteCheckPath;
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
         endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+        # Ensure the bisync access-check file exists on the remote before running.
+        ${pkgs.rclone}/bin/rclone touch \
+          --config=/dev/null \
+          --s3-provider=Cloudflare \
+          --s3-endpoint="$endpoint" \
+          --s3-env-auth \
+          ${remoteCheckArg}
+
+        # First run requires an explicit resync to seed bisync state.
+        resync_flags=()
+        if ! ls -1 ${workdirArg}/*.lst >/dev/null 2>&1; then
+          resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
+        fi
+
         exec ${pkgs.rclone}/bin/rclone bisync \
           --config=/dev/null \
           --s3-provider=Cloudflare \
@@ -103,24 +131,31 @@ let
           ${localPathArg} ${remoteArg} \
           --backup-dir1=${localTrashArg} \
           --backup-dir2=${remoteTrashArg} \
-          --max-delete=50% \
-          --check-access
+          --max-delete=${toString mount.bisync.maxDelete} \
+          --workdir=${workdirArg} \
+          --check-access \
+          --check-filename=${checkFilenameArg} \
+          "''${resync_flags[@]}"
       '';
     in
     {
       name = "r2-bisync-${name}";
       value = {
         description = "R2 bisync for ${name}";
-        after = [ "r2-mount-${name}.service" ];
-        requires = [ "r2-mount-${name}.service" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
         preStart = ''
           ${pkgs.coreutils}/bin/mkdir -p ${localPathArg}
+          ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg localBaseDir}/.trash
           ${pkgs.coreutils}/bin/mkdir -p ${localTrashArg}
+          ${pkgs.coreutils}/bin/mkdir -p ${workdirArg}
+          ${pkgs.coreutils}/bin/test -e ${localCheckArg} || ${pkgs.coreutils}/bin/touch ${localCheckArg}
         '';
         serviceConfig = {
           Type = "oneshot";
           EnvironmentFile = cfg.credentialsFile;
           ExecStart = bisyncScript;
+          StateDirectory = "r2-sync-${name}";
           NoNewPrivileges = true;
           PrivateTmp = true;
           ProtectKernelTunables = true;
@@ -138,7 +173,9 @@ let
       description = "R2 bisync timer for ${name}";
       wantedBy = [ "timers.target" ];
       timerConfig = {
-        OnBootSec = "2m";
+        # Use OnActiveSec (not OnBootSec) so enabling the timer on an already-booted
+        # system doesn't trigger an immediate run during `nixos-rebuild switch`.
+        OnActiveSec = "2m";
         OnUnitActiveSec = mount.syncInterval;
         Unit = "r2-bisync-${name}.service";
         Persistent = true;
@@ -237,6 +274,33 @@ in
                 description = "rclone VFS cache max age";
               };
             };
+
+            bisync = {
+              maxDelete = lib.mkOption {
+                type = lib.types.int;
+                default = 100000;
+                description = "Maximum number of deletes permitted per bisync run (rclone --max-delete)";
+              };
+
+              checkFilename = lib.mkOption {
+                type = lib.types.str;
+                default = ".r2-check";
+                description = "Filename used for rclone bisync --check-access safety checks (created locally and ensured remotely).";
+              };
+
+              initialResyncMode = lib.mkOption {
+                type = lib.types.enum [
+                  "path1"
+                  "path2"
+                  "newer"
+                  "older"
+                  "larger"
+                  "smaller"
+                ];
+                default = "path1";
+                description = "Resync preference used automatically on first run (when bisync state is missing).";
+              };
+            };
           };
         }
       );
@@ -263,6 +327,10 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = mount.bucket != "";
       message = "services.r2-sync.mounts.${name}.bucket must be a non-empty string";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = mount.remotePrefix != "";
+      message = "services.r2-sync.mounts.${name}.remotePrefix must be non-empty (required for bisync trash backup-dir outside sync root)";
     }) cfg.mounts;
 
     environment.systemPackages = [

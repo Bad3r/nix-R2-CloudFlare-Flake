@@ -28,7 +28,7 @@ regression.
     `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
     `R2E_SHARES_KV_ID_PREVIEW`, `R2E_KEYS_KV_ID`,
     `R2E_KEYS_KV_ID_PREVIEW`)
-- Target domain for verification (`https://files.example.com`)
+- Target domain for verification (`https://files.unsigned.sh`)
 
 ## Procedure (CLI-first)
 
@@ -52,8 +52,8 @@ wrangler deploy --config wrangler.ci.toml
 ```bash
 r2 share worker create files documents/test.txt 1h --max-downloads 1
 r2 share worker list files documents/test.txt
-curl -I https://files.example.com/api/list
-curl -I https://files.example.com/share/<token-id>
+curl -I https://files.unsigned.sh/api/list
+curl -I https://files.unsigned.sh/share/<token-id>
 ```
 
 ## Verification

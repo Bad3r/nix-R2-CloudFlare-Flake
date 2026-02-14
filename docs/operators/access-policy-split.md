@@ -14,12 +14,12 @@ tokenized share downloads.
 ## Prerequisites
 
 - Access to Cloudflare Access policy management for target domain.
-- Worker deployed on `files.example.com` (or equivalent domain).
+- Worker deployed on `files.unsigned.sh` (or equivalent domain).
 - At least one valid share token for validation.
 
 ## Inputs / Environment Variables
 
-- Target domain, example: `files.example.com`
+- Target domain, example: `files.unsigned.sh`
 - Access policy include rules for org users/groups
 - Existing share token ID for public path verification
 
@@ -33,13 +33,13 @@ tokenized share downloads.
 3. Validate protected API route:
 
 ```bash
-curl -I https://files.example.com/api/list
+curl -I https://files.unsigned.sh/api/list
 ```
 
 4. Validate public token route:
 
 ```bash
-curl -I https://files.example.com/share/<token-id>
+curl -I https://files.unsigned.sh/share/<token-id>
 ```
 
 ## Verification

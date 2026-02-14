@@ -47,7 +47,7 @@ r2 share worker revoke <token-id>
 
 Required environment variables for Worker-mode CLI calls:
 
-- `R2_EXPLORER_BASE_URL` (for example `https://files.example.com`)
+- `R2_EXPLORER_BASE_URL` (for example `https://files.unsigned.sh`)
 - `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
 - `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
 
@@ -65,7 +65,7 @@ export R2E_BUCKET_MAP='{"files":"FILES_BUCKET","photos":"PHOTOS_BUCKET"}'
 
 Behavior and constraints:
 
-- Share URL format: `https://files.example.com/share/<token-id>`
+- Share URL format: `https://files.unsigned.sh/share/<token-id>`
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
 - Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
@@ -91,14 +91,14 @@ public token links work as intended:
 
 1. Access-protected app policy:
 
-- Domain: `files.example.com`
+- Domain: `files.unsigned.sh`
 - Path: `/*`
 - Action: `Allow`
 - Include: your org users/groups
 
 2. Share-link bypass policy:
 
-- Domain: `files.example.com`
+- Domain: `files.unsigned.sh`
 - Path: `/share/*`
 - Action: `Bypass`
 

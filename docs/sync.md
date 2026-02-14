@@ -16,8 +16,9 @@ Template defaults:
 
 - mount name: `documents`
 - bucket: `documents`
-- mount point: `/mnt/r2/documents`
-- local bisync path: `/var/lib/r2-sync/documents`
+- remote prefix: `documents`
+- mount point: `/data/r2/mount/documents`
+- local bisync path: `/data/r2/documents`
 
 Verify services:
 
@@ -37,6 +38,8 @@ Expected result:
 
 - bisync service exits successfully
 - `.trash/` paths are used for delete backup behavior on both sides
+  - local: `/data/r2/.trash/documents`
+  - remote: `:s3:documents/.trash/documents`
 
 Remote checkpoint:
 
@@ -45,10 +48,10 @@ set -a
 source /run/secrets/r2/credentials.env
 set +a
 
-rclone lsf :s3:documents \
+rclone lsf :s3:documents/documents \
   --config=/dev/null \
   --s3-provider=Cloudflare \
-  --s3-endpoint="https://<account-id>.r2.cloudflarestorage.com" \
+  --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 ```
 
@@ -59,16 +62,16 @@ Expected result:
 Delete/backup-dir checkpoint:
 
 ```bash
-echo "sync-check" | sudo tee /var/lib/r2-sync/documents/sync-check.txt >/dev/null
+printf '%s\n' "sync-check" > /data/r2/documents/sync-check.txt
 sudo systemctl start r2-bisync-documents
-sudo rm /var/lib/r2-sync/documents/sync-check.txt
+rm /data/r2/documents/sync-check.txt
 sudo systemctl start r2-bisync-documents
 
-sudo ls -la /var/lib/r2-sync/documents/.trash
-rclone lsf :s3:documents/.trash \
+ls -la /data/r2/.trash/documents
+rclone lsf :s3:documents/.trash/documents \
   --config=/dev/null \
   --s3-provider=Cloudflare \
-  --s3-endpoint="https://<account-id>.r2.cloudflarestorage.com" \
+  --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 ```
 
@@ -83,8 +86,9 @@ Template defaults:
 
 - mount name: `workspace`
 - bucket: `files`
-- mount point: `/mnt/r2/workspace`
-- local bisync path: `/srv/r2/workspace`
+- remote prefix: `workspace`
+- mount point: `/data/r2/mount/workspace`
+- local bisync path: `/data/r2/workspace`
 
 Verify services:
 
@@ -112,10 +116,10 @@ set -a
 source /run/secrets/r2/credentials.env
 set +a
 
-rclone lsf :s3:files \
+rclone lsf :s3:files/workspace \
   --config=/dev/null \
   --s3-provider=Cloudflare \
-  --s3-endpoint="https://<account-id>.r2.cloudflarestorage.com" \
+  --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 ```
 
@@ -126,16 +130,16 @@ Expected result:
 Delete/backup-dir checkpoint:
 
 ```bash
-echo "sync-check" | sudo tee /srv/r2/workspace/sync-check.txt >/dev/null
+printf '%s\n' "sync-check" > /data/r2/workspace/sync-check.txt
 sudo systemctl start r2-bisync-workspace
-sudo rm /srv/r2/workspace/sync-check.txt
+rm /data/r2/workspace/sync-check.txt
 sudo systemctl start r2-bisync-workspace
 
-sudo ls -la /srv/r2/workspace/.trash
-rclone lsf :s3:files/.trash \
+ls -la /data/r2/.trash/workspace
+rclone lsf :s3:files/.trash/workspace \
   --config=/dev/null \
   --s3-provider=Cloudflare \
-  --s3-endpoint="https://<account-id>.r2.cloudflarestorage.com" \
+  --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 ```
 

@@ -47,13 +47,13 @@ Recommended Cloudflare Access policy setup:
 
 1. Protect the app and API:
 
-- Host: `files.example.com`
+- Host: `files.unsigned.sh`
 - Path: `/*`
 - Policy action: `Allow` (authorized identities)
 
 2. Public share links:
 
-- Host: `files.example.com`
+- Host: `files.unsigned.sh`
 - Path: `/share/*`
 - Policy action: `Bypass`
 

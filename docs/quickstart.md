@@ -155,14 +155,14 @@ set -a
 source /run/secrets/r2/credentials.env
 set +a
 
-rclone lsf :s3:files \
+rclone lsf :s3:nix-r2-cf-r2e-files-prod \
   --config=/dev/null \
   --s3-provider=Cloudflare \
   --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 
 export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
-restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" snapshots
 ```
 
 Expected result:
@@ -176,13 +176,13 @@ Expected result:
 Prerequisite: R2-Explorer is deployed and Worker admin environment variables are available.
 
 ```bash
-r2 share files workspace/demo.txt 24h
+r2 share nix-r2-cf-r2e-files-prod workspace/demo.txt 24h
 share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 1)"
 echo "${share_json}"
 share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
 r2 share worker list files workspace/demo.txt
 curl -I "${share_url}"
-curl -I https://files.example.com/api/list
+curl -I https://files.unsigned.sh/api/list
 ```
 
 Expected result:

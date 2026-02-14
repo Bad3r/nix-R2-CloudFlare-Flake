@@ -158,17 +158,17 @@ Failure signature:
 Confirm:
 
 ```bash
-echo "trash-check" | sudo tee /srv/r2/workspace/trash-check.txt >/dev/null
+printf '%s\n' "trash-check" > /data/r2/workspace/trash-check.txt
 sudo systemctl start r2-bisync-workspace
-sudo rm /srv/r2/workspace/trash-check.txt
+rm /data/r2/workspace/trash-check.txt
 sudo systemctl start r2-bisync-workspace
 
-sudo ls -la /srv/r2/workspace/.trash
+ls -la /data/r2/.trash/workspace
 
 set -a
 source /run/secrets/r2/credentials.env
 set +a
-rclone lsf :s3:files/.trash \
+rclone lsf :s3:nix-r2-cf-r2e-files-prod/.trash/workspace \
   --config=/dev/null \
   --s3-provider=Cloudflare \
   --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
@@ -268,7 +268,7 @@ Repair:
 
 ```bash
 # Ensure path exists and is writable by the service context
-sudo mkdir -p /srv/r2/workspace
+sudo systemd-tmpfiles --create
 sudo systemctl restart r2-mount-workspace
 
 # Retry a single controlled run
@@ -311,7 +311,7 @@ source /run/secrets/r2/credentials.env
 set +a
 export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
 
-restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" snapshots
 ```
 
 Likely root causes:
@@ -327,7 +327,7 @@ Repair:
 sudo test -r /run/secrets/r2/restic-password
 
 # If repository is not initialized yet:
-restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" init
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" init
 
 # Retry scheduled unit
 sudo systemctl start r2-restic-backup
@@ -355,8 +355,8 @@ Confirm:
 
 ```bash
 # Validate API protection and worker reachability
-curl -I https://files.example.com/api/server/info
-curl -I https://files.example.com/api/upload/init
+curl -I https://files.unsigned.sh/api/server/info
+curl -I https://files.unsigned.sh/api/upload/init
 ```
 
 For authenticated test sessions, retry init/part/complete sequence and capture
@@ -396,8 +396,9 @@ Failure signature:
 Confirm:
 
 ```bash
-curl -I https://files.example.com/share/<token-id>
-curl -I https://files.example.com/api/list
+curl -I https://files.unsigned.sh/share/<token-id>
+curl -I https://files.unsigned.sh/share/<token-id>
+curl -I https://files.unsigned.sh/api/list
 r2 share worker list files workspace/demo.txt
 ```
 
@@ -418,7 +419,7 @@ r2 share worker create files workspace/demo.txt 1h --max-downloads 1
 If the bucket mapping is suspect, verify Worker settings:
 
 ```bash
-curl -s https://files.example.com/api/server/info | jq '.buckets'
+curl -s https://files.unsigned.sh/api/server/info | jq '.buckets'
 ```
 
 If fresh token still fails, re-validate Access split for:

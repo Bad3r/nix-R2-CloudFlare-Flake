@@ -46,7 +46,7 @@ r2 share worker create files documents/test.txt 1h --max-downloads 1
 
 ```bash
 r2 share worker list files documents/test.txt
-curl -I "https://files.example.com/share/<token-id>"
+curl -I "https://files.unsigned.sh/share/<token-id>"
 ```
 
 6. After maintenance, set `R2E_READONLY=false` and redeploy.

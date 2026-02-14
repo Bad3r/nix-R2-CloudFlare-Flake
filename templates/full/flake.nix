@@ -40,14 +40,16 @@
             };
             users.groups.${username} = { };
 
+            programs.fuse.userAllowOther = true;
             services.r2-sync = {
               enable = true;
               accountIdFile = "/run/secrets/r2/account-id";
               credentialsFile = "/run/secrets/r2/credentials.env";
               mounts.workspace = {
                 bucket = "files";
-                mountPoint = "/mnt/r2/workspace";
-                localPath = "/srv/r2/workspace";
+                remotePrefix = "workspace";
+                mountPoint = "/data/r2/mount/workspace";
+                localPath = "/data/r2/workspace";
                 syncInterval = "5m";
               };
             };
@@ -59,7 +61,7 @@
               passwordFile = "/run/secrets/r2/restic-password";
               bucket = "backups";
               paths = [
-                "/srv/r2/workspace"
+                "/data/r2/workspace"
               ];
               schedule = "daily";
             };

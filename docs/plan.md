@@ -795,6 +795,7 @@ in
             credentialsFile = "/run/secrets/r2/credentials.env";
             mounts.documents = {
               bucket = "my-documents";
+              remotePrefix = "documents";
               mountPoint = "/mnt/r2/documents";
               syncInterval = "10m";
             };
@@ -830,11 +831,13 @@ in
     mounts = {
       documents = {
         bucket = "documents";
+        remotePrefix = "documents";
         mountPoint = "/mnt/r2/documents";
         syncInterval = "5m";
       };
       photos = {
         bucket = "photos";
+        remotePrefix = "photos";
         mountPoint = "/mnt/r2/photos";
         syncInterval = "15m";
         vfsCache.maxSize = "20G";
@@ -1335,8 +1338,8 @@ CI automation does not remove break-glass/manual deployment workflows.
 
 | Milestone                                 | Scope / Tasks                                                                                                                                                | Deliverables                                                                             | Exit Criteria                                                                                            | Status |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
-| **8.1 Consumer integration in `~/nixos`** | Integrate this flake as an input in the main system config and wire `nixosModules.default` (+ Home Manager module where used) into target host/user configs. | Updated `~/nixos` flake wiring and host/user module imports.                             | `nixos-rebuild dry-activate --flake ~/nixos#<host>` passes with module assertions satisfied.             | [x]    |
-| **8.2 Staged service enablement**         | Enable core options in staged order (`r2-sync` first, then `r2-restic`, then `git-annex` and CLI wrappers) to isolate failures cleanly.                      | Host config with explicit staged enablement and secrets mapping.                         | `nixos-rebuild switch --flake ~/nixos#<host>` succeeds for each stage without hidden/manual patching.    | [ ]    |
+| **8.1 Consumer integration in `~/nixos`** | Integrate this flake as an input in the main system config and wire `nixosModules.default` (+ Home Manager module where used) into target host/user configs. | Updated `~/nixos` flake wiring and host/user module imports.                             | `nixos-rebuild dry-activate --flake ~/nixos#system76` passes with module assertions satisfied.           | [x]    |
+| **8.2 Staged service enablement**         | Enable core options in staged order (`r2-sync` first, then `r2-restic`, then `git-annex` and CLI wrappers) to isolate failures cleanly.                      | Host config with explicit staged enablement and secrets mapping.                         | `nixos-rebuild switch --flake ~/nixos#system76` succeeds for each stage without hidden/manual patching.  | [ ]    |
 | **8.3 Runtime service verification**      | Verify mount/bisync/restic/timers/CLI surfaces on the real host managed by `~/nixos`.                                                                        | Service/timer + command verification checklist with observed outputs.                    | Core units/timers are active/invokable and `r2`/`git-annex-r2-init` resolve in PATH.                     | [ ]    |
 | **8.4 Remote connectivity validation**    | Validate live R2 and restic connectivity using runtime secrets on the managed host.                                                                          | Successful `rclone`/`restic` checkpoints (or explicit failure signatures + fixes).       | Remote `files` listing and `restic snapshots` checks pass with expected auth semantics.                  | [ ]    |
 | **8.5 Sharing UX validation**             | Validate presigned and Worker-based share flows from the managed system, including Access split behavior.                                                    | End-to-end share test evidence (`r2 share`, `r2 share worker create/list`, curl probes). | Tokenized share works and `/api/*` remains Access-protected.                                             | [ ]    |
@@ -1359,8 +1362,8 @@ Detailed execution documents:
    - stage 3: `programs.git-annex-r2` and HM `programs.r2-cloud`
 4. Validate in `~/nixos` after each stage:
    - `nix flake check`
-   - `sudo nixos-rebuild dry-activate --flake ~/nixos#<host>`
-   - `sudo nixos-rebuild switch --flake ~/nixos#<host>`
+   - `sudo nixos-rebuild dry-activate --flake ~/nixos#system76`
+   - `sudo nixos-rebuild switch --flake ~/nixos#system76`
 5. Verify runtime units/timers and CLI on the host:
    - `r2-mount-*`, `r2-bisync-*`, `r2-restic-backup`, timers
    - `command -v r2`

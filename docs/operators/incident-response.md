@@ -39,8 +39,8 @@ Provide a repeatable response workflow for R2-Explorer sharing incidents.
 3. Validate containment:
 
 ```bash
-curl -I https://files.example.com/api/list
-curl -I https://files.example.com/share/<token-id>
+curl -I https://files.unsigned.sh/api/list
+curl -I https://files.unsigned.sh/share/<token-id>
 r2 share worker list files documents/test.txt
 ```
 

@@ -99,7 +99,7 @@ writeShellApplication {
         "  help" \
         "" \
         "Required environment variables:" \
-        "  R2_EXPLORER_BASE_URL     e.g. https://files.example.com" \
+        "  R2_EXPLORER_BASE_URL     e.g. https://files.unsigned.sh" \
         "  R2_EXPLORER_ADMIN_KID    key id from R2E_KEYS_KV keyset" \
         "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64:<value>)"
     }

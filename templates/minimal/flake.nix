@@ -31,14 +31,16 @@
             boot.loader.grub.devices = [ "nodev" ];
 
             # Required for services.r2-sync.
+            programs.fuse.userAllowOther = true;
             services.r2-sync = {
               enable = true;
               accountIdFile = "/run/secrets/r2/account-id";
               credentialsFile = "/run/secrets/r2/credentials.env";
               mounts.documents = {
                 bucket = "documents";
-                mountPoint = "/mnt/r2/documents";
-                localPath = "/var/lib/r2-sync/documents";
+                remotePrefix = "documents";
+                mountPoint = "/data/r2/mount/documents";
+                localPath = "/data/r2/documents";
                 syncInterval = "10m";
               };
             };

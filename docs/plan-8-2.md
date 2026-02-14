@@ -35,12 +35,13 @@ Implication:
 
 ## Production Blocker Register (2026-02-14)
 
-| ID     | Blocker                                                                                     | Status                              | Evidence                                                                                                                              | Action                                                                   |
-| ------ | ------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `B-01` | `files.unsigned.sh` unresolved                                                              | closed                              | `wrangler triggers deploy` attached custom domain; `dig` now returns A records                                                        | keep `routes.custom_domain` config under change control                  |
-| `B-02` | `/run/secrets/r2/credentials.env` rendered as literal `{{ ... }}` placeholders in `~/nixos` | fixed in source, activation pending | fixed in `~/nixos/modules/security/r2-cloud-secrets.nix` by switching to `config.sops.placeholder.*`                                  | run `sudo nixos-rebuild switch --flake ~/nixos#system76` before Gate `F` |
-| `B-03` | runtime options still disabled in `~/nixos`                                                 | open                                | `nix eval ...services.r2-sync.enable` / `...r2-restic.enable` / `...git-annex-r2.enable` / HM `...r2-cloud.enable` all return `false` | execute Gates `B`-`D` exactly as written                                 |
-| `B-04` | Worker admin signing env for `r2 share worker create` not yet proven on host                | open                                | no declarative `R2_EXPLORER_ADMIN_*` wiring found in `~/nixos` modules/secrets                                                        | add host secret/env wiring before Gate `G`                               |
+| ID     | Blocker                                                                                                    | Status                              | Evidence                                                                                                                              | Action                                                                          |
+| ------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `B-01` | `files.unsigned.sh` unresolved                                                                             | closed                              | `wrangler triggers deploy` attached custom domain; `dig` now returns A records                                                        | keep `routes.custom_domain` config under change control                         |
+| `B-02` | `/run/secrets/r2/credentials.env` rendered as literal `{{ ... }}` placeholders in `~/nixos`                | fixed in source, activation pending | fixed in `~/nixos/modules/security/r2-cloud-secrets.nix` by switching to `config.sops.placeholder.*`                                  | run `sudo nixos-rebuild switch --flake ~/nixos#system76` before Gate `F`        |
+| `B-03` | runtime options still disabled in `~/nixos`                                                                | open                                | `nix eval ...services.r2-sync.enable` / `...r2-restic.enable` / `...git-annex-r2.enable` / HM `...r2-cloud.enable` all return `false` | execute Gates `B`-`D` exactly as written                                        |
+| `B-04` | Worker admin signing env for `r2 share worker create` not yet proven on host                               | open                                | no declarative `R2_EXPLORER_ADMIN_*` wiring found in `~/nixos` modules/secrets                                                        | add host secret/env wiring before Gate `G`                                      |
+| `B-05` | `r2-sync` mount/bisync units fail in real-user mode (FUSE hardening + bisync flags/trash/workdir defaults) | fixed in producer                   | observed: `fusermount ... Operation not permitted`, `--max-delete=50%` parse error, bisync trash overlap constraints                  | update `r2-flake` lock to a rev containing the `r2-sync` fixes; re-run Gate `B` |
 
 ## Summary
 
@@ -114,9 +115,13 @@ Use these values directly for Gates `A` through `G`:
 | target HM user             | `vx`                                                 |
 | sync mount profile name    | `workspace`                                          |
 | sync/files bucket          | `nix-r2-cf-r2e-files-prod`                           |
+| sync remote prefix         | `workspace`                                          |
+| sync local path            | `/data/r2/workspace`                                 |
+| sync mount point           | `/data/r2/mount/workspace`                           |
 | preview files bucket       | `nix-r2-cf-r2e-files-preview`                        |
 | restic bucket              | `nix-r2-cf-backups-prod`                             |
-| test share key             | `workspace/demo.txt`                                 |
+| Worker bucket alias        | `files`                                              |
+| test share object key      | `workspace/demo.txt`                                 |
 | Worker base URL            | `https://files.unsigned.sh`                          |
 | Cloudflare token file      | `/home/vx/nixos/secrets/decrypted_cf_token.txt`      |
 | Cloudflare account-id file | `/home/vx/nixos/secrets/decrypted_cf_ACCOUNT_ID.txt` |
@@ -175,7 +180,8 @@ export R2_MOUNT_NAME="workspace"
 export R2_SYNC_BUCKET="nix-r2-cf-r2e-files-prod"
 export R2_PREVIEW_BUCKET="nix-r2-cf-r2e-files-preview"
 export R2_RESTIC_BUCKET="nix-r2-cf-backups-prod"
-export R2_SHARE_KEY="workspace/demo.txt"
+export R2_WORKER_BUCKET_ALIAS="files"
+export R2_SHARE_OBJECT_KEY="workspace/demo.txt"
 export R2_WORKER_BASE_URL="https://files.unsigned.sh"
 
 nix eval --raw ~/nixos#nixosConfigurations.system76.config.networking.hostName
@@ -187,9 +193,9 @@ nix eval --json ~/nixos#nixosConfigurations.system76.config.home-manager.users.v
 
 nix flake check
 sudo nixos-rebuild dry-activate --flake ~/nixos#system76
-sudo test -f /run/secrets/r2/account-id
-sudo test -f /run/secrets/r2/credentials.env
-sudo test -f /run/secrets/r2/restic-password
+test -f /run/secrets/r2/account-id
+test -f /run/secrets/r2/credentials.env
+test -f /run/secrets/r2/restic-password
 ```
 
 Capture baseline:
@@ -257,20 +263,54 @@ Cloudflare readiness checks remain unresolved.
 Create or update `~/nixos/modules/system76/r2-runtime.nix` with stage-1 config:
 
 ```nix
+{ metaOwner, ... }:
 {
-  configurations.nixos.system76.module = {
-    services.r2-sync = {
-      enable = true;
-      credentialsFile = "/run/secrets/r2/credentials.env";
-      accountIdFile = "/run/secrets/r2/account-id";
-      mounts.workspace = {
-        bucket = "nix-r2-cf-r2e-files-prod";
-        mountPoint = "/mnt/r2/workspace";
-        localPath = "/srv/r2/workspace";
-        syncInterval = "5m";
+  configurations.nixos.system76.module =
+    { config, lib, ... }:
+    let
+      inherit (metaOwner) username;
+      group = lib.attrByPath [ "users" "users" username "group" ] "users" config;
+    in
+    {
+      programs.fuse.userAllowOther = true;
+
+      services.r2-sync = {
+        enable = true;
+        credentialsFile = "/run/secrets/r2/credentials.env";
+        accountIdFile = "/run/secrets/r2/account-id";
+
+        mounts.workspace = {
+          bucket = "nix-r2-cf-r2e-files-prod";
+          remotePrefix = "workspace";
+          mountPoint = "/data/r2/mount/workspace";
+          localPath = "/data/r2/workspace";
+          syncInterval = "5m";
+        };
+      };
+
+      systemd = {
+        # Run operational services as the real user so /data/r2/* stays user-owned.
+        services = {
+          "r2-mount-workspace".serviceConfig = {
+            User = username;
+            Group = group;
+          };
+          "r2-bisync-workspace".serviceConfig = {
+            User = username;
+            Group = group;
+          };
+        };
+
+        # Ensure paths exist (and are user-owned) before services start.
+        tmpfiles.rules = [
+          "d /data/r2 0750 ${username} ${group} - -"
+          "d /data/r2/.trash 0750 ${username} ${group} - -"
+          "d /data/r2/mount 0750 ${username} ${group} - -"
+          "d /data/r2/mount/workspace 0750 ${username} ${group} - -"
+          "d /data/r2/workspace 0750 ${username} ${group} - -"
+        ];
       };
     };
-  };
 }
 ```
 
@@ -303,7 +343,17 @@ services.r2-restic = {
   accountIdFile = "/run/secrets/r2/account-id";
   passwordFile = "/run/secrets/r2/restic-password";
   bucket = "nix-r2-cf-backups-prod";
-  paths = [ "/srv/r2/workspace" ];
+  paths = [ "/data/r2/workspace" ];
+};
+```
+
+Also run the backup unit as the real user (to avoid root-owned files under
+`/data/r2/*`):
+
+```nix
+systemd.services."r2-restic-backup".serviceConfig = {
+  User = username;
+  Group = group;
 };
 ```
 
@@ -343,7 +393,7 @@ programs.git-annex-r2 = {
 home-manager.users.vx.programs.r2-cloud = {
   enable = true;
   accountIdFile = "/run/secrets/r2/account-id";
-  credentialsFile = "/home/vx/.config/cloudflare/r2/env";
+  credentialsFile = "/run/secrets/r2/credentials.env";
 };
 ```
 
@@ -352,8 +402,8 @@ Apply and verify:
 ```bash
 sudo nixos-rebuild switch --flake ~/nixos#system76
 command -v git-annex-r2-init
-sudo -iu vx command -v r2
-sudo -iu vx test -r /home/vx/.config/cloudflare/r2/env
+command -v r2
+test -r /run/secrets/r2/credentials.env
 ```
 
 Fail Gate `D` if either command is unavailable after switch.
@@ -383,7 +433,7 @@ Acceptance:
 Use runtime secrets only (system-scoped):
 
 ```bash
-sudo bash -lc '
+bash -lc '
 set -euo pipefail
 set -a
 source /run/secrets/r2/credentials.env
@@ -410,12 +460,12 @@ Acceptance:
 Presigned and Worker checks:
 
 ```bash
-r2 share files workspace/demo.txt 24h
+r2 share "$R2_SYNC_BUCKET" "$R2_SHARE_OBJECT_KEY" 24h
 
-share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 1)"
+share_json="$(r2 share worker create "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY" 24h --max-downloads 1)"
 printf '%s\n' "${share_json}"
 share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
-r2 share worker list files workspace/demo.txt
+r2 share worker list "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY"
 curl -I "${share_url}"
 curl -I https://files.unsigned.sh/api/list
 ```

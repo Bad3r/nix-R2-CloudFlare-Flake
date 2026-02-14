@@ -78,7 +78,7 @@ Rollback runbook:
 Template defaults:
 
 - bucket: `backups`
-- paths: `/srv/r2/workspace`
+- paths: `/data/r2/workspace`
 - timer unit: `r2-restic-backup.timer`
 - service unit: `r2-restic-backup.service`
 
@@ -108,12 +108,12 @@ source /run/secrets/r2/credentials.env
 set +a
 export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
 
-restic -r "s3:https://<account-id>.r2.cloudflarestorage.com/backups" snapshots
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
 ```
 
 Expected result:
 
-- at least one snapshot is listed for `/srv/r2/workspace`
+- at least one snapshot is listed for `/data/r2/workspace`
 - command exits without repository/authentication errors
 
 ## git-annex content workflow (`programs.git-annex-r2`)
