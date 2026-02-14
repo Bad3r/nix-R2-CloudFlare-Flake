@@ -1342,7 +1342,7 @@ CI automation does not remove break-glass/manual deployment workflows.
 
 | Milestone                                 | Scope / Tasks                                                                                                                                                | Deliverables                                                                             | Exit Criteria                                                                                            | Status |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
-| **8.1 Consumer integration in `~/nixos`** | Integrate this flake as an input in the main system config and wire `nixosModules.default` (+ Home Manager module where used) into target host/user configs. | Updated `~/nixos` flake wiring and host/user module imports.                             | `nixos-rebuild dry-activate --flake ~/nixos#<host>` passes with module assertions satisfied.             | [ ]    |
+| **8.1 Consumer integration in `~/nixos`** | Integrate this flake as an input in the main system config and wire `nixosModules.default` (+ Home Manager module where used) into target host/user configs. | Updated `~/nixos` flake wiring and host/user module imports.                             | `nixos-rebuild dry-activate --flake ~/nixos#<host>` passes with module assertions satisfied.             | [x]    |
 | **8.2 Staged service enablement**         | Enable core options in staged order (`r2-sync` first, then `r2-restic`, then `git-annex` and CLI wrappers) to isolate failures cleanly.                      | Host config with explicit staged enablement and secrets mapping.                         | `nixos-rebuild switch --flake ~/nixos#<host>` succeeds for each stage without hidden/manual patching.    | [ ]    |
 | **8.3 Runtime service verification**      | Verify mount/bisync/restic/timers/CLI surfaces on the real host managed by `~/nixos`.                                                                        | Service/timer + command verification checklist with observed outputs.                    | Core units/timers are active/invokable and `r2`/`git-annex-r2-init` resolve in PATH.                     | [ ]    |
 | **8.4 Remote connectivity validation**    | Validate live R2 and restic connectivity using runtime secrets on the managed host.                                                                          | Successful `rclone`/`restic` checkpoints (or explicit failure signatures + fixes).       | Remote `files` listing and `restic snapshots` checks pass with expected auth semantics.                  | [ ]    |
@@ -1378,3 +1378,34 @@ CI automation does not remove break-glass/manual deployment workflows.
    - `r2 share worker create/list ...`
    - `curl -I <share_url>`
    - `curl -I https://files.example.com/api/list`
+
+### 8.1 Completion Evidence (2026-02-14)
+
+- Consumer integration branch:
+  - `~/trees/nixos/phase-8-1-consumer-integration`
+  - producer input pinned as local path:
+    `path:/home/vx/trees/nix-R2-CloudFlare-Flake/phase-8-1-accountidfile-support`
+- Consumer evaluation/build validation:
+  - `nix build .#nixosConfigurations.system76.config.system.build.toplevel --offline` succeeded.
+  - `nix eval .#nixosConfigurations.system76.config.sops.secrets --apply builtins.attrNames --json --offline` includes:
+    - `r2/account-id`
+    - `r2/access-key-id`
+    - `r2/secret-access-key`
+    - `r2/restic-password`
+- Host activation evidence:
+  - configuration applied with `nh` on `system76` without integration assertion failures.
+  - activation diff added:
+    - `cloudflare-r2-env`
+    - `r2-credentials.env`
+  - activation diff removed legacy HM artifacts:
+    - `hm_cloudflarer2README`
+    - `hm_rclonerclone.conf`
+    - `r2`
+    - `r2c`
+    - `r2s5`
+- Runtime secret materialization evidence on host:
+  - `/run/secrets/r2/account-id`
+  - `/run/secrets/r2/access-key-id`
+  - `/run/secrets/r2/secret-access-key`
+  - `/run/secrets/r2/restic-password`
+  - `/run/secrets/r2/credentials.env` (rendered template symlink target)
