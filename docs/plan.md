@@ -334,13 +334,6 @@ in
       example = "/run/secrets/r2/account-id";
     };
 
-    accountIdFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to file containing Cloudflare account ID";
-      example = "/run/secrets/r2/account-id";
-    };
-
     mounts = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
@@ -1383,8 +1376,8 @@ CI automation does not remove break-glass/manual deployment workflows.
 
 - Consumer integration branch:
   - `~/trees/nixos/phase-8-1-consumer-integration`
-  - producer input pinned as local path:
-    `path:/home/vx/trees/nix-R2-CloudFlare-Flake/phase-8-1-accountidfile-support`
+  - producer input wired as a portable flake source:
+    `github:Bad3r/nix-R2-CloudFlare-Flake?ref=main` (consumer input name: `r2-flake`)
 - Consumer evaluation/build validation:
   - `nix build .#nixosConfigurations.system76.config.system.build.toplevel --offline` succeeded.
   - `nix eval .#nixosConfigurations.system76.config.sops.secrets --apply builtins.attrNames --json --offline` includes:
