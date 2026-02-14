@@ -110,16 +110,27 @@ let
         ${resolveAccountIdShell}
         endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
         # Ensure the bisync access-check file exists on the remote before running.
-        ${pkgs.rclone}/bin/rclone touch \
+        # Do NOT touch it unconditionally: changing the check file breaks bisync state and
+        # forces a manual --resync.
+        remote_check_json="$(${pkgs.rclone}/bin/rclone lsjson \
           --config=/dev/null \
           --s3-provider=Cloudflare \
           --s3-endpoint="$endpoint" \
           --s3-env-auth \
-          ${remoteCheckArg}
+          ${remoteCheckArg})"
+        if [ "$(printf '%s' "$remote_check_json" | ${pkgs.coreutils}/bin/tr -d '[:space:]')" = "[]" ]; then
+          ${pkgs.rclone}/bin/rclone copyto \
+            --config=/dev/null \
+            --s3-provider=Cloudflare \
+            --s3-endpoint="$endpoint" \
+            --s3-env-auth \
+            ${localCheckArg} \
+            ${remoteCheckArg}
+        fi
 
         # First run requires an explicit resync to seed bisync state.
         resync_flags=()
-        if ! ls -1 ${workdirArg}/*.lst >/dev/null 2>&1; then
+        if ! ${pkgs.coreutils}/bin/ls -1 ${workdirArg}/*.lst >/dev/null 2>&1; then
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
