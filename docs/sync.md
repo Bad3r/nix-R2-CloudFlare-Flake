@@ -10,6 +10,17 @@ repair paths.
 Credentials are expected at `/run/secrets/r2/credentials.env`, rendered from
 `secrets/r2.yaml` via sops templates.
 
+## Concepts: mirror vs mount
+
+`services.r2-sync` supports two related but distinct workflows:
+
+- **Bisync mirror** (`localPath`): a real local directory which is two-way
+  synchronized to R2 on a timer. This is the Dropbox-style “shared folder” you
+  should edit.
+- **FUSE mount** (`mountPoint`): a live view of the remote R2 prefix mounted via
+  `rclone mount`. It can cache/stage data locally (see `vfsCache.*`) and is best
+  treated as an inspection/occasional-access path, not the primary working copy.
+
 ## Minimal template (`documents` mount)
 
 Template defaults:
@@ -19,6 +30,8 @@ Template defaults:
 - remote prefix: `documents`
 - mount point: `/data/r2/mount/documents`
 - local bisync path: `/data/r2/documents`
+
+Recommended workflow: edit `/data/r2/documents` (bisync mirror).
 
 Verify services:
 
@@ -89,6 +102,8 @@ Template defaults:
 - remote prefix: `workspace`
 - mount point: `/data/r2/mount/workspace`
 - local bisync path: `/data/r2/workspace`
+
+Recommended workflow: edit `/data/r2/workspace` (bisync mirror).
 
 Verify services:
 

@@ -29,6 +29,26 @@ Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 | `services.r2-sync.mounts.<name>.vfsCache.maxSize`         | string                                                       | `"10G"`       | no                                    | Passed to `--vfs-cache-max-size`.                             |
 | `services.r2-sync.mounts.<name>.vfsCache.maxAge`          | string                                                       | `"24h"`       | no                                    | Passed to `--vfs-cache-max-age`.                              |
 
+## Mount vs Bisync (How to Use the Two Paths)
+
+Each `mounts.<name>` definition generates two distinct local paths with
+different semantics:
+
+- `mountPoint`: a live `rclone mount` view of the remote R2 path.
+  - This is not a “synced folder”. It is a remote filesystem view.
+  - It uses a VFS cache under `/var/lib/r2-sync-<name>/cache` and may write
+    cached/staged data to disk depending on `vfsCache.mode`.
+- `localPath`: the local directory used by `rclone bisync` for two-way sync.
+  - This is the “Dropbox folder” style local mirror you should edit.
+  - Changes are reconciled on the `r2-bisync-<name>` timer.
+
+Typical usage patterns:
+
+- Dropbox-style (recommended): edit `localPath` only; use `mountPoint` only for
+  occasional remote inspection/debugging.
+- Drive “streaming” style: rely on `mountPoint` (still uses caching) and accept
+  online-only behavior.
+
 ## Failure semantics
 
 When `enable = true`, evaluation fails if any assertion below is violated:
