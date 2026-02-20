@@ -17,7 +17,7 @@ importers:
         version: 4.20260214.0
       hono:
         specifier: ^4.11.8
-        version: 4.11.9
+        version: 4.12.0
       miniflare:
         specifier: ^4.20260205.0
         version: 4.20260212.0
@@ -622,8 +622,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  hono@4.11.9:
-    resolution: {integrity: sha512-Eaw2YTGM6WOxA6CXbckaEvslr2Ne4NFsKrvc0v97JD5awbmeBLO5w9Ho9L9kmKonrwF9RJlW6BxT1PVv/agBHQ==}
+  hono@4.12.0:
+    resolution: {integrity: sha512-NekXntS5M94pUfiVZ8oXXK/kkri+5WpX2/Ik+LVsl+uvw+soj4roXIsPqO+XsWrAw20mOzaXOZf3Q7PfB9A/IA==}
     engines: {node: '>=16.9.0'}
 
   kleur@4.1.5:
@@ -1255,7 +1255,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  hono@4.11.9: {}
+  hono@4.12.0: {}
 
   kleur@4.1.5: {}
 
