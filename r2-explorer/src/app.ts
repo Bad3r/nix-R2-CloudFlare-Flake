@@ -550,7 +550,14 @@ function parseOrigin(origin: string | null): string {
     throw new HttpError(403, "origin_required", "Origin header is required for upload mutation routes.");
   }
   try {
-    return new URL(origin).origin;
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("origin protocol must be http or https");
+    }
+    if (parsed.origin === "null") {
+      throw new Error("origin must be a concrete web origin");
+    }
+    return parsed.origin;
   } catch {
     throw new HttpError(403, "origin_invalid", "Origin header is not a valid URL origin.");
   }

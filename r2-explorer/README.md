@@ -124,7 +124,7 @@ exposes `ETag`. Example:
   {
     "AllowedOrigins": ["https://files.unsigned.sh"],
     "AllowedMethods": ["PUT", "HEAD", "GET"],
-    "AllowedHeaders": ["content-type"],
+    "AllowedHeaders": ["content-type", "content-length", "content-md5"],
     "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3600
   }

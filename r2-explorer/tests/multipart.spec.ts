@@ -489,6 +489,13 @@ describe("multipart upload flow", () => {
     expect(malformedOrigin.status).toBe(403);
     expect(((await malformedOrigin.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
 
+    const javascriptOrigin = await initUpload(app, env, {
+      origin: "javascript:void(0)",
+      declaredSize: 2048,
+    });
+    expect(javascriptOrigin.status).toBe(403);
+    expect(((await javascriptOrigin.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
+
     const missingCsrf = await initUpload(app, env, {
       csrf: null,
       declaredSize: 2048,

@@ -51,6 +51,11 @@ Required environment variables for Worker-mode CLI calls:
 - `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
 - `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
 
+Optional (only when `/api/share/*` is behind Access instead of bypass):
+
+- `R2_EXPLORER_ACCESS_CLIENT_ID`
+- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
+
 Multi-bucket aliases:
 
 - Optional `R2E_BUCKET_MAP` defines bucket aliases to Worker bindings.
@@ -70,8 +75,10 @@ Behavior and constraints:
 - `/share/<token-id>` validates expiry/revocation/download limits.
 - Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
 - `/api/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
-- `r2 share worker ...` can authenticate with HMAC headers (no browser Access
-  session required).
+- `r2 share worker ...` authenticates request integrity with admin HMAC headers.
+- When `/api/share/*` is Access-protected, CLI calls can additionally present
+  Access service-token headers via `R2_EXPLORER_ACCESS_CLIENT_ID` and
+  `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
 
 Required Worker vars for `/api/*` JWT verification:
 

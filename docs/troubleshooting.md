@@ -79,6 +79,8 @@ Escalate:
 Failure signature:
 
 - `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
+- `r2 share worker ...` can also fail with `HTTP 302` when Access intercepts
+  `/api/share/*` before the Worker.
 
 Confirm:
 
@@ -99,6 +101,8 @@ Likely root causes:
 - Caller/Worker clock skew causing signature validation failures.
 - KV was updated locally (missing `wrangler kv ... --remote`), so the deployed
   Worker keyset never actually changed.
+- `/api/share/*` is Access-protected and CLI calls do not include Access
+  service-token headers.
 
 Repair:
 
@@ -110,6 +114,9 @@ Repair:
 # For ad-hoc testing only:
 export R2_EXPLORER_ADMIN_KID="<active-kid>"
 export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
+# Optional when /api/share/* is behind Access:
+export R2_EXPLORER_ACCESS_CLIENT_ID="<access-service-token-id>"
+export R2_EXPLORER_ACCESS_CLIENT_SECRET="<access-service-token-secret>"
 ```
 
 If key mismatch persists, perform key rotation workflow.
