@@ -71,6 +71,8 @@ function normalizeOwnerKey(ownerId: string): string {
   if (trimmed.length === 0) {
     throw new HttpError(400, "owner_required", "Upload session owner is required.");
   }
+  // Access identities are email-like principals; enforce a canonical lowercase
+  // form so equivalent identifiers cannot bypass session ownership checks.
   return trimmed.toLowerCase();
 }
 
@@ -409,9 +411,7 @@ export class UploadSessionDurableObject {
     }
 
     if (updates.size > 0) {
-      for (const [key, value] of updates.entries()) {
-        await this.state.storage.put(key, value);
-      }
+      await this.state.storage.put(Object.fromEntries(updates));
     }
     if (deletes.length > 0) {
       await this.state.storage.delete(deletes);

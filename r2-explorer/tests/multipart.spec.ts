@@ -470,12 +470,33 @@ describe("multipart upload flow", () => {
     expect(disallowedOrigin.status).toBe(403);
     expect(((await disallowedOrigin.json()) as ErrorPayload).error?.code).toBe("origin_not_allowed");
 
+    const nullOriginLiteral = await initUpload(app, env, {
+      origin: "null",
+      declaredSize: 2048,
+    });
+    expect(nullOriginLiteral.status).toBe(403);
+    expect(((await nullOriginLiteral.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
+
+    const malformedOrigin = await initUpload(app, env, {
+      origin: "://malformed-origin",
+      declaredSize: 2048,
+    });
+    expect(malformedOrigin.status).toBe(403);
+    expect(((await malformedOrigin.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
+
     const missingCsrf = await initUpload(app, env, {
       csrf: null,
       declaredSize: 2048,
     });
     expect(missingCsrf.status).toBe(403);
     expect(((await missingCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
+
+    const nonCanonicalCsrf = await initUpload(app, env, {
+      csrf: "TRUE",
+      declaredSize: 2048,
+    });
+    expect(nonCanonicalCsrf.status).toBe(403);
+    expect(((await nonCanonicalCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
   });
 
   it("enforces configured upload caps and keeps zero defaults unlimited", async () => {
