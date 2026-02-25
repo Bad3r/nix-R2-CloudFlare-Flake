@@ -409,6 +409,16 @@ Repair:
 - Ensure each part request uses the same `sessionId` + `uploadId` and correct part numbering.
 - Confirm direct upload requests target `https://<account_id>.r2.cloudflarestorage.com/...`.
 - Confirm bucket CORS allows the app origin, `PUT`, and exposes `ETag`.
+- Reapply upload bucket CORS (same payload used by CI deploy jobs):
+
+```bash
+# Example: production
+./scripts/ci/sync-r2-upload-cors.sh \
+  nix-r2-cf-r2e-files-prod \
+  "${R2E_UPLOAD_ALLOWED_ORIGINS:-}" \
+  "https://files.unsigned.sh"
+```
+
 - If stuck upload state persists, call `upload/abort` and retry from init.
 - Redeploy Worker if mismatch started after code/config rollout.
 

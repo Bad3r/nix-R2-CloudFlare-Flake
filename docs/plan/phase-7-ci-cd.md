@@ -82,6 +82,11 @@ separation.
 - No `continue-on-error` behavior is allowed for deploy jobs.
 - Deploy/smoke credentials are scoped to deploy/smoke execution steps (not
   global job env), reducing exposure in dependency install/test steps.
+- Deploy jobs sync R2 bucket CORS for direct multipart upload traffic before
+  rollout, preventing drift where signed `PUT` requests fail with browser CORS
+  errors.
+- Production deploy job rejects base-URL drift and requires
+  `R2E_SMOKE_BASE_URL == https://files.unsigned.sh`.
 
 #### Manual deploy compatibility
 
