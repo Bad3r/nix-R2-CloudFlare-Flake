@@ -142,6 +142,9 @@
               text = ''
                 set -euo pipefail
 
+                repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                cd "$repo_root"
+
                 mapfile -t changed < <(
                   {
                     git diff --name-only HEAD --diff-filter=ACM 2>/dev/null || true
