@@ -3,6 +3,8 @@ if [ -n "${IN_NIX_SHELL:-}" ]; then
   return 0 2>/dev/null || true
 fi
 
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
 # Use git-path so this works in both regular repos and git worktrees.
 CACHE_DIR=$(git rev-parse --git-path lefthook-cache 2>/dev/null || echo ".git/lefthook-cache")
 CACHE_FILE="$CACHE_DIR/path.sh"
@@ -12,11 +14,11 @@ mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
 current_hash=""
 hash_inputs=""
-if [ -f "flake.nix" ]; then
-  hash_inputs="$hash_inputs flake.nix"
+if [ -f "$repo_root/flake.nix" ]; then
+  hash_inputs="$hash_inputs $repo_root/flake.nix"
 fi
-if [ -f "flake.lock" ]; then
-  hash_inputs="$hash_inputs flake.lock"
+if [ -f "$repo_root/flake.lock" ]; then
+  hash_inputs="$hash_inputs $repo_root/flake.lock"
 fi
 if [ -n "$hash_inputs" ]; then
   # Hash both flake manifest and lock to refresh cached PATH when tool inputs change.
@@ -32,12 +34,13 @@ if [ -f "$CACHE_FILE" ] && [ -f "$HASH_FILE" ]; then
 fi
 
 if [ "$needs_update" = "1" ]; then
-  nix_path=$(nix develop .#hooks --accept-flake-config -c sh -c 'echo "$PATH"' 2>/dev/null || true)
+  nix_path=$(
+    cd "$repo_root" &&
+      nix develop .#hooks --accept-flake-config -c sh -c 'echo "$PATH"' 2>/dev/null || true
+  )
   if [ -n "$nix_path" ]; then
     echo "export PATH=\"$nix_path\"" >"$CACHE_FILE"
     echo "$current_hash" >"$HASH_FILE"
-  else
-    return 0 2>/dev/null || true
   fi
 fi
 
