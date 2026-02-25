@@ -15,6 +15,7 @@ type SignUploadPartInput = {
   uploadId: string;
   partNumber: number;
   expiresInSec: number;
+  contentLength: number;
   contentType?: string;
   contentMd5?: string;
 };
@@ -65,6 +66,7 @@ export async function signMultipartUploadPart(
   if (typeof input.contentMd5 === "string" && input.contentMd5.trim().length > 0) {
     headers.set("content-md5", input.contentMd5.trim());
   }
+  headers.set("content-length", String(input.contentLength));
 
   const signer = new AwsClient({
     accessKeyId,
@@ -79,6 +81,7 @@ export async function signMultipartUploadPart(
     {
       aws: {
         signQuery: true,
+        allHeaders: true,
       },
     },
   );
@@ -91,6 +94,10 @@ export async function signMultipartUploadPart(
   const signedContentMd5 = headers.get("content-md5");
   if (signedContentMd5) {
     requiredHeaders["content-md5"] = signedContentMd5;
+  }
+  const signedContentLength = headers.get("content-length");
+  if (signedContentLength) {
+    requiredHeaders["content-length"] = signedContentLength;
   }
 
   return {

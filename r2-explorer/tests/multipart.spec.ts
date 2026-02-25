@@ -125,6 +125,11 @@ describe("multipart upload flow", () => {
     };
     expect(signPartOnePayload.url.includes("uploadId=")).toBe(true);
     expect(signPartOnePayload.headers["content-md5"]).toBe(partOneMd5);
+    expect(signPartOnePayload.headers["content-length"]).toBe(String(partSize));
+    const signedHeaderSet = new Set(
+      (new URL(signPartOnePayload.url).searchParams.get("X-Amz-SignedHeaders") ?? "").split(";"),
+    );
+    expect(signedHeaderSet.has("content-length")).toBe(true);
     const uploadedPartOne = await upload.uploadPart(1, partOneBytes);
 
     const partTwoBytes = new Uint8Array(partSize);

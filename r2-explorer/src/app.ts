@@ -935,6 +935,7 @@ export function createApp(): Hono<AppContext> {
       uploadId: session.uploadId,
       partNumber: body.partNumber,
       expiresInSec: policy.signPartTtlSec,
+      contentLength: body.contentLength,
       contentType: session.contentType,
       contentMd5: body.contentMd5,
     });
