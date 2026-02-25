@@ -84,6 +84,8 @@ describeLive("live worker integration", () => {
         R2_EXPLORER_BASE_URL: baseUrl,
         R2_EXPLORER_ADMIN_KID: adminKid,
         R2_EXPLORER_ADMIN_SECRET: adminSecret,
+        R2_EXPLORER_ACCESS_CLIENT_ID: accessClientId,
+        R2_EXPLORER_ACCESS_CLIENT_SECRET: accessClientSecret,
       } as NodeJS.ProcessEnv;
 
       let createdTokenId: string | null = null;
