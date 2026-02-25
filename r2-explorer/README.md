@@ -39,6 +39,10 @@ Upload policy vars (all optional):
 - `R2E_UPLOAD_PREFIX_ALLOWLIST` (comma-separated key prefix allowlist; empty allows all)
 - `R2E_UPLOAD_ALLOWED_ORIGINS` (comma-separated Origin allowlist for upload control-plane routes; empty enforces same-origin only)
 
+Numeric upload policy vars are parsed strictly as base-10 integers. If a
+non-empty value is invalid, the Worker fails fast with
+`500 upload_config_invalid` instead of silently falling back to defaults.
+
 By default, MIME and extension checks are allow-all. Restrictions apply only
 when you set `R2E_UPLOAD_ALLOWED_MIME`, `R2E_UPLOAD_BLOCKED_MIME`,
 `R2E_UPLOAD_ALLOWED_EXT`, or `R2E_UPLOAD_BLOCKED_EXT`.

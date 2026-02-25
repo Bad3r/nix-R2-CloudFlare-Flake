@@ -566,6 +566,34 @@ describe("multipart upload flow", () => {
     expect(((await second.json()) as ErrorPayload).error?.code).toBe("upload_concurrency_limit");
   });
 
+  it("fails fast on invalid numeric upload policy values", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    env.R2E_UPLOAD_MAX_FILE_BYTES = "-1";
+    const invalidNonNegative = await initUpload(app, env, {
+      declaredSize: 1024,
+    });
+    expect(invalidNonNegative.status).toBe(500);
+    const invalidNonNegativePayload = (await invalidNonNegative.json()) as {
+      error?: { code?: string; message?: string };
+    };
+    expect(invalidNonNegativePayload.error?.code).toBe("upload_config_invalid");
+    expect(invalidNonNegativePayload.error?.message).toContain("R2E_UPLOAD_MAX_FILE_BYTES");
+
+    env.R2E_UPLOAD_MAX_FILE_BYTES = "0";
+    env.R2E_UPLOAD_SESSION_TTL_SEC = "bad-value";
+    const invalidPositive = await initUpload(app, env, {
+      declaredSize: 1024,
+    });
+    expect(invalidPositive.status).toBe(500);
+    const invalidPositivePayload = (await invalidPositive.json()) as {
+      error?: { code?: string; message?: string };
+    };
+    expect(invalidPositivePayload.error?.code).toBe("upload_config_invalid");
+    expect(invalidPositivePayload.error?.message).toContain("R2E_UPLOAD_SESSION_TTL_SEC");
+  });
+
   it("generates randomized object keys independent from client filenames", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
@@ -632,6 +660,7 @@ describe("multipart upload flow", () => {
     const { env, bucket } = await createTestEnv();
     const app = createApp();
     const declaredSize = 1024;
+    env.R2E_UPLOAD_ALLOWED_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     const initResponse = await initUpload(app, env, {
       filename: "document.docx",
@@ -688,6 +717,88 @@ describe("multipart upload flow", () => {
     );
 
     expect(completeResponse.status).toBe(200);
+  });
+
+  it("blocks ZIP magic when detected MIME is blocked even if OOXML declared MIME is allowlisted", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+    env.R2E_UPLOAD_ALLOWED_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    env.R2E_UPLOAD_BLOCKED_MIME = "application/zip";
+
+    const initResponse = await initUpload(app, env, {
+      filename: "document.docx",
+      declaredSize,
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.fill(7);
+    partBytes[0] = 0x50;
+    partBytes[1] = 0x4b;
+    partBytes[2] = 0x03;
+    partBytes[3] = 0x04;
+    const partMd5 = md5Base64(partBytes);
+
+    const signResponse = await app.fetch(
+      new Request("https://files.example.com/api/upload/sign-part", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          partNumber: 1,
+          contentLength: declaredSize,
+          contentMd5: partMd5,
+        }),
+      }),
+      env,
+    );
+    expect(signResponse.status).toBe(200);
+
+    const upload = bucket.resumeMultipartUpload(initPayload.objectKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await app.fetch(
+      new Request("https://files.example.com/api/upload/complete", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          finalSize: declaredSize,
+          parts: [
+            {
+              partNumber: 1,
+              etag: uploadedPart.etag,
+            },
+          ],
+        }),
+      }),
+      env,
+    );
+
+    expect(completeResponse.status).toBe(400);
+    const payload = (await completeResponse.json()) as ErrorPayload;
+    expect(payload.error?.code).toBe("upload_magic_blocked");
+  });
+
+  it("does not allow declared application/zip when only OOXML MIME is allowlisted", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    env.R2E_UPLOAD_ALLOWED_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    const initResponse = await initUpload(app, env, {
+      filename: "archive.zip",
+      declaredSize: 1024,
+      contentType: "application/zip",
+    });
+
+    expect(initResponse.status).toBe(400);
+    const payload = (await initResponse.json()) as ErrorPayload;
+    expect(payload.error?.code).toBe("upload_content_type_not_allowed");
   });
 
   it("blocks blacklisted extensions even when allowlist is unset", async () => {

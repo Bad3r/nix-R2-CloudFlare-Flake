@@ -31,4 +31,24 @@ describe("server info endpoint", () => {
     expect(payload.share.mode).toBe("kv-random-token");
     expect(payload.limits.maxShareTtlSec).toBe(2592000);
   });
+
+  it("fails fast when numeric runtime config is invalid", async () => {
+    const { env } = await createTestEnv();
+    env.R2E_UI_MAX_LIST_LIMIT = "1000x";
+    const app = createApp();
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/server/info", {
+        headers: accessHeaders("ops@example.com"),
+      }),
+      env,
+    );
+    expect(response.status).toBe(500);
+
+    const payload = (await response.json()) as {
+      error?: { code?: string; message?: string };
+    };
+    expect(payload.error?.code).toBe("config_invalid");
+    expect(payload.error?.message).toContain("R2E_UI_MAX_LIST_LIMIT");
+  });
 });

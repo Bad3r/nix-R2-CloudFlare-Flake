@@ -109,26 +109,48 @@ const DEFAULT_UPLOAD_PART_SIZE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_UPLOAD_SESSION_TTL_SEC = 3600;
 const DEFAULT_UPLOAD_SIGN_TTL_SEC = 60;
 
-function envInt(value: string | undefined, fallback: number): number {
-  if (!value) {
+function parseEnvInt(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+  options: {
+    allowZero: boolean;
+    errorCode: string;
+  },
+): number {
+  if (!value || value.trim().length === 0) {
     return fallback;
   }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
+  const trimmed = value.trim();
+  if (!/^[0-9]+$/.test(trimmed)) {
+    const requirement = options.allowZero ? "a non-negative integer" : "a positive integer";
+    throw new HttpError(500, options.errorCode, `${name} must be ${requirement}.`);
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || (!options.allowZero && parsed <= 0)) {
+    const requirement = options.allowZero ? "a non-negative integer" : "a positive integer";
+    throw new HttpError(500, options.errorCode, `${name} must be ${requirement}.`);
   }
   return parsed;
 }
 
-function envNonNegativeInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return fallback;
-  }
-  return parsed;
+function envInt(name: string, value: string | undefined, fallback: number, errorCode = "config_invalid"): number {
+  return parseEnvInt(name, value, fallback, {
+    allowZero: false,
+    errorCode,
+  });
+}
+
+function envNonNegativeInt(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+  errorCode = "config_invalid",
+): number {
+  return parseEnvInt(name, value, fallback, {
+    allowZero: true,
+    errorCode,
+  });
 }
 
 function envBool(value: string | undefined, fallback = false): boolean {
@@ -242,10 +264,20 @@ function requireUploadBucketName(env: Env): string {
 }
 
 function parseUploadPolicy(env: Env): UploadPolicy {
-  const configuredMaxParts = envNonNegativeInt(env.R2E_UPLOAD_MAX_PARTS, 0);
+  const configuredMaxParts = envNonNegativeInt(
+    "R2E_UPLOAD_MAX_PARTS",
+    env.R2E_UPLOAD_MAX_PARTS,
+    0,
+    "upload_config_invalid",
+  );
   const maxParts = configuredMaxParts === 0 ? R2_MAX_UPLOAD_PARTS : Math.min(configuredMaxParts, R2_MAX_UPLOAD_PARTS);
 
-  const configuredPartSize = envInt(env.R2E_UPLOAD_PART_SIZE_BYTES, DEFAULT_UPLOAD_PART_SIZE_BYTES);
+  const configuredPartSize = envInt(
+    "R2E_UPLOAD_PART_SIZE_BYTES",
+    env.R2E_UPLOAD_PART_SIZE_BYTES,
+    DEFAULT_UPLOAD_PART_SIZE_BYTES,
+    "upload_config_invalid",
+  );
   if (configuredPartSize < R2_MIN_PART_SIZE_BYTES || configuredPartSize > R2_MAX_PART_SIZE_BYTES) {
     throw new HttpError(
       500,
@@ -280,11 +312,26 @@ function parseUploadPolicy(env: Env): UploadPolicy {
 
   return {
     bucketName: requireUploadBucketName(env),
-    maxFileBytes: envNonNegativeInt(env.R2E_UPLOAD_MAX_FILE_BYTES, 0),
+    maxFileBytes: envNonNegativeInt("R2E_UPLOAD_MAX_FILE_BYTES", env.R2E_UPLOAD_MAX_FILE_BYTES, 0, "upload_config_invalid"),
     maxParts,
-    maxConcurrentPerUser: envNonNegativeInt(env.R2E_UPLOAD_MAX_CONCURRENT_PER_USER, 0),
-    sessionTtlSec: envInt(env.R2E_UPLOAD_SESSION_TTL_SEC, DEFAULT_UPLOAD_SESSION_TTL_SEC),
-    signPartTtlSec: envInt(env.R2E_UPLOAD_SIGN_TTL_SEC, DEFAULT_UPLOAD_SIGN_TTL_SEC),
+    maxConcurrentPerUser: envNonNegativeInt(
+      "R2E_UPLOAD_MAX_CONCURRENT_PER_USER",
+      env.R2E_UPLOAD_MAX_CONCURRENT_PER_USER,
+      0,
+      "upload_config_invalid",
+    ),
+    sessionTtlSec: envInt(
+      "R2E_UPLOAD_SESSION_TTL_SEC",
+      env.R2E_UPLOAD_SESSION_TTL_SEC,
+      DEFAULT_UPLOAD_SESSION_TTL_SEC,
+      "upload_config_invalid",
+    ),
+    signPartTtlSec: envInt(
+      "R2E_UPLOAD_SIGN_TTL_SEC",
+      env.R2E_UPLOAD_SIGN_TTL_SEC,
+      DEFAULT_UPLOAD_SIGN_TTL_SEC,
+      "upload_config_invalid",
+    ),
     partSizeBytes: configuredPartSize,
     allowedMime,
     blockedMime,
@@ -737,7 +784,7 @@ export function createApp(): Hono<AppContext> {
 
   app.get("/api/list", async (c) => {
     const query = validateSchema(listQuerySchema, queryPayload(c.req.raw), "query");
-    const configuredLimit = envInt(c.env.R2E_UI_MAX_LIST_LIMIT, 1000);
+    const configuredLimit = envInt("R2E_UI_MAX_LIST_LIMIT", c.env.R2E_UI_MAX_LIST_LIMIT, 1000);
     const limit = Math.min(query.limit, configuredLimit);
     const result = await listObjects(c.env.FILES_BUCKET, query.prefix, query.cursor, limit);
     const payload = {
@@ -1108,7 +1155,12 @@ export function createApp(): Hono<AppContext> {
       });
     }
 
-    if (detectedMime && policy.allowedMime.length > 0 && !policy.allowedMime.includes(detectedMime)) {
+    if (
+      detectedMime &&
+      policy.allowedMime.length > 0 &&
+      !policy.allowedMime.includes(detectedMime) &&
+      !(policy.allowedMime.includes(normalizedContentType) && magicMimeMatchesDeclared(normalizedContentType, detectedMime))
+    ) {
       await c.env.FILES_BUCKET.delete(session.objectKey);
       await markUploadSessionAborted(c.env, actor, {
         sessionId: session.sessionId,
@@ -1194,8 +1246,8 @@ export function createApp(): Hono<AppContext> {
       throw new HttpError(404, "object_not_found", `Object not found: ${key}`);
     }
 
-    const maxTtl = envInt(c.env.R2E_MAX_SHARE_TTL_SEC, 2592000);
-    const defaultTtl = envInt(c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400);
+    const maxTtl = envInt("R2E_MAX_SHARE_TTL_SEC", c.env.R2E_MAX_SHARE_TTL_SEC, 2592000);
+    const defaultTtl = envInt("R2E_DEFAULT_SHARE_TTL_SEC", c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400);
     const ttl = parseDurationSeconds(body.ttl, defaultTtl, maxTtl);
     const maxDownloads = body.maxDownloads ?? 0;
     const contentDisposition = body.contentDisposition ?? "attachment";
@@ -1265,9 +1317,9 @@ export function createApp(): Hono<AppContext> {
       },
       limits: {
         adminAuthWindowSec: getAdminAuthWindowSeconds(c.env),
-        maxShareTtlSec: envInt(c.env.R2E_MAX_SHARE_TTL_SEC, 2592000),
-        defaultShareTtlSec: envInt(c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400),
-        uiMaxListLimit: envInt(c.env.R2E_UI_MAX_LIST_LIMIT, 1000),
+        maxShareTtlSec: envInt("R2E_MAX_SHARE_TTL_SEC", c.env.R2E_MAX_SHARE_TTL_SEC, 2592000),
+        defaultShareTtlSec: envInt("R2E_DEFAULT_SHARE_TTL_SEC", c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400),
+        uiMaxListLimit: envInt("R2E_UI_MAX_LIST_LIMIT", c.env.R2E_UI_MAX_LIST_LIMIT, 1000),
         upload: {
           maxFileBytes: uploadPolicy.maxFileBytes,
           maxParts: uploadPolicy.maxParts,
