@@ -1,4 +1,11 @@
-excludes = [".git/*", "result", "*.lock", "*.patch", "lefthook.yml"]
+excludes = [
+  ".git/*",
+  "result",
+  "*.lock",
+  "*.patch",
+  "lefthook.yml",
+  "r2-explorer/pnpm-lock.yaml",
+]
 
 [formatter.nixfmt]
 command = "nixfmt"
