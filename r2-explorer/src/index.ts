@@ -1,9 +1,10 @@
 import { createApp } from "./app";
+import { UploadSessionDurableObject } from "./upload-sessions";
 import type { Env } from "./types";
 
 const app = createApp();
 
-export { createApp };
+export { createApp, UploadSessionDurableObject };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

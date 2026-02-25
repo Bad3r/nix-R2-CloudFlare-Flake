@@ -163,6 +163,8 @@ export function renderAppHtml(): string {
     <script>
       (function () {
         const CHUNK_BYTES = 8 * 1024 * 1024;
+        const PART_UPLOAD_CONCURRENCY = 4;
+        const PART_UPLOAD_RETRIES = 3;
         const prefixInput = document.getElementById("prefix");
         const refreshBtn = document.getElementById("refresh");
         const upBtn = document.getElementById("up");
@@ -196,6 +198,16 @@ export function renderAppHtml(): string {
             }
           }
           if (!response.ok) {
+            const cfMitigated = response.headers.get("cf-mitigated");
+            const cfRay = response.headers.get("cf-ray");
+            if (cfMitigated === "challenge" || (response.status === 403 && text.includes("Just a moment"))) {
+              const rayDetail = cfRay ? " (ray " + cfRay + ")" : "";
+              throw new Error(
+                "Cloudflare challenge blocked the request" +
+                  rayDetail +
+                  ". Check WAF/Bot rules for upload control-plane routes and presigned direct upload traffic.",
+              );
+            }
             const message = payload && payload.error ? payload.error.message : response.statusText;
             throw new Error(message + " (status " + response.status + ")");
           }
@@ -412,46 +424,137 @@ export function renderAppHtml(): string {
           });
         }
 
-        async function multipartUpload(file, key) {
+        function uploadJsonHeaders() {
+          return {
+            "content-type": "application/json",
+            "x-r2e-csrf": "1",
+          };
+        }
+
+        async function uploadChunkToSignedUrl(signaturePayload, chunk) {
+          const uploadHeaders = new Headers(signaturePayload.headers || {});
+          const response = await fetch(signaturePayload.url, {
+            method: signaturePayload.method || "PUT",
+            headers: uploadHeaders,
+            body: chunk,
+          });
+          if (!response.ok) {
+            const detail = await response.text().catch(function () {
+              return "";
+            });
+            throw new Error(
+              "Signed part upload failed with status " +
+                response.status +
+                (detail ? ": " + detail.slice(0, 200) : ""),
+            );
+          }
+          const etag = response.headers.get("etag");
+          if (!etag) {
+            throw new Error(
+              "Signed upload response is missing ETag header. Check R2 bucket CORS expose headers.",
+            );
+          }
+          return etag.replace(/^\"|\"$/g, "");
+        }
+
+        async function uploadPartWithRetries(session, partNumber, chunk, declaredChunkSize) {
+          let lastError = null;
+          for (let attempt = 1; attempt <= PART_UPLOAD_RETRIES; attempt++) {
+            try {
+              const signaturePayload = await api("/api/upload/sign-part", {
+                method: "POST",
+                headers: uploadJsonHeaders(),
+                body: JSON.stringify({
+                  sessionId: session.sessionId,
+                  uploadId: session.uploadId,
+                  partNumber: partNumber,
+                  contentLength: declaredChunkSize,
+                }),
+              });
+              const etag = await uploadChunkToSignedUrl(signaturePayload, chunk);
+              return { partNumber: partNumber, etag: etag };
+            } catch (error) {
+              lastError = error;
+              if (attempt < PART_UPLOAD_RETRIES) {
+                log("Retrying part " + partNumber + " (attempt " + (attempt + 1) + ")");
+              }
+            }
+          }
+          throw lastError || new Error("Part upload failed without error detail.");
+        }
+
+        async function multipartUpload(file, prefix) {
           uploadStatus.textContent = "init";
           const initPayload = await api("/api/upload/init", {
             method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ key: key, contentType: file.type || "application/octet-stream" }),
+            headers: uploadJsonHeaders(),
+            body: JSON.stringify({
+              filename: file.name,
+              prefix: prefix || "",
+              declaredSize: file.size,
+              contentType: file.type || "application/octet-stream",
+            }),
           });
 
-          const uploadId = initPayload.uploadId;
-          const parts = [];
-          let partNumber = 1;
-          try {
-            for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
-              const chunk = file.slice(offset, offset + CHUNK_BYTES);
-              uploadStatus.textContent = "part " + partNumber;
-              const params = new URLSearchParams({
-                key: key,
-                uploadId: uploadId,
-                partNumber: String(partNumber),
-              });
-              const partPayload = await api("/api/upload/part?" + params.toString(), {
-                method: "POST",
-                body: chunk,
-              });
-              parts.push({ partNumber: partNumber, etag: partPayload.etag });
-              partNumber += 1;
+          const session = {
+            sessionId: initPayload.sessionId,
+            uploadId: initPayload.uploadId,
+            objectKey: initPayload.objectKey,
+          };
+          const partSizeBytes =
+            typeof initPayload.partSizeBytes === "number" && initPayload.partSizeBytes > 0
+              ? initPayload.partSizeBytes
+              : CHUNK_BYTES;
+          const chunks = [];
+          for (let offset = 0, partNumber = 1; offset < file.size; offset += partSizeBytes, partNumber += 1) {
+            const chunk = file.slice(offset, offset + partSizeBytes);
+            chunks.push({ partNumber: partNumber, chunk: chunk, size: chunk.size });
+          }
+          const parts = new Array(chunks.length);
+          let cursor = 0;
+
+          async function workerUploadLoop() {
+            while (true) {
+              const index = cursor;
+              cursor += 1;
+              if (index >= chunks.length) {
+                return;
+              }
+              const item = chunks[index];
+              uploadStatus.textContent = "part " + item.partNumber + "/" + chunks.length;
+              parts[index] = await uploadPartWithRetries(session, item.partNumber, item.chunk, item.size);
             }
+          }
+
+          try {
+            const workers = [];
+            const workerCount = Math.min(PART_UPLOAD_CONCURRENCY, chunks.length || 1);
+            for (let index = 0; index < workerCount; index++) {
+              workers.push(workerUploadLoop());
+            }
+            await Promise.all(workers);
 
             uploadStatus.textContent = "complete";
             await api("/api/upload/complete", {
               method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ key: key, uploadId: uploadId, parts: parts }),
+              headers: uploadJsonHeaders(),
+              body: JSON.stringify({
+                sessionId: session.sessionId,
+                uploadId: session.uploadId,
+                parts: parts,
+                finalSize: file.size,
+              }),
             });
+            return session.objectKey;
           } catch (error) {
             uploadStatus.textContent = "abort";
             await api("/api/upload/abort", {
               method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ key: key, uploadId: uploadId }),
+              headers: uploadJsonHeaders(),
+              body: JSON.stringify({
+                sessionId: session.sessionId,
+                uploadId: session.uploadId,
+              }),
             }).catch(function (abortError) {
               log("Abort failed: " + abortError.message);
             });
@@ -482,11 +585,10 @@ export function renderAppHtml(): string {
             log("Select a file to upload first.");
             return;
           }
-          const key = (prefixInput.value || "") + file.name;
           try {
-            await multipartUpload(file, key);
+            const uploadedKey = await multipartUpload(file, prefixInput.value || "");
             uploadStatus.textContent = "done";
-            log("Uploaded " + key);
+            log("Uploaded " + uploadedKey);
             await refresh(true);
           } catch (error) {
             uploadStatus.textContent = "failed";

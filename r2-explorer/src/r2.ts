@@ -54,10 +54,14 @@ export async function moveObject(bucket: R2Bucket, fromKey: string, toKey: strin
 export async function createMultipartUpload(
   bucket: R2Bucket,
   key: string,
-  contentType?: string,
+  options?: {
+    contentType?: string;
+    customMetadata?: Record<string, string>;
+  },
 ): Promise<R2MultipartUpload> {
   return bucket.createMultipartUpload(key, {
-    httpMetadata: contentType ? { contentType } : undefined,
+    httpMetadata: options?.contentType ? { contentType: options.contentType } : undefined,
+    customMetadata: options?.customMetadata,
   });
 }
 
