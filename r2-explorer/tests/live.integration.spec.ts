@@ -149,11 +149,13 @@ describeLive("live worker integration", () => {
 
         const authenticatedPayload = JSON.parse(authenticated.body) as {
           version?: string;
-          actor?: { mode?: string };
+          actor?: { mode?: string; actor?: string };
         };
         expect(typeof authenticatedPayload.version).toBe("string");
         expect(authenticatedPayload.version?.length).toBeGreaterThan(0);
         expect(authenticatedPayload.actor?.mode).toBe("access");
+        expect(authenticatedPayload.actor?.actor).toBeTruthy();
+        expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
 
         const uploadInit = await fetchWithRetry(
           `${baseUrl}/api/upload/init`,
@@ -176,7 +178,9 @@ describeLive("live worker integration", () => {
           },
           attempts,
         );
-        expect(uploadInit.status).toBe(200);
+        if (uploadInit.status !== 200) {
+          throw new Error(`upload init failed: status=${uploadInit.status} body=${uploadInit.body}`);
+        }
         const initPayload = JSON.parse(uploadInit.body) as {
           sessionId: string;
           uploadId: string;

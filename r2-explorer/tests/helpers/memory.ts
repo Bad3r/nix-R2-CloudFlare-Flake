@@ -635,8 +635,10 @@ function base64UrlEncode(value: string | Uint8Array): string {
 }
 
 type AccessJwtOptions = {
-  email?: string;
-  sub?: string;
+  email?: string | null;
+  sub?: string | null;
+  commonName?: string;
+  serviceTokenId?: string;
   aud?: string | string[];
   iss?: string;
   expiresInSec?: number;
@@ -653,15 +655,27 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
     typ: "JWT",
     kid: options.headerKid ?? ACCESS_TEST_KID,
   };
-  const payload = {
+  const payload: Record<string, unknown> = {
     iss: options.iss ?? `https://${ACCESS_TEST_TEAM_DOMAIN}`,
     aud: options.aud ?? ACCESS_TEST_AUD,
     exp: now + (options.expiresInSec ?? 300),
     iat: now,
     nbf: now + (options.nbfOffsetSec ?? -5),
-    email: options.email ?? "engineer@example.com",
-    sub: options.sub ?? "access-user-id",
   };
+  const email = options.email === undefined ? "engineer@example.com" : options.email;
+  const sub = options.sub === undefined ? "access-user-id" : options.sub;
+  if (email !== null) {
+    payload.email = email;
+  }
+  if (sub !== null) {
+    payload.sub = sub;
+  }
+  if (options.commonName) {
+    payload.common_name = options.commonName;
+  }
+  if (options.serviceTokenId) {
+    payload.service_token_id = options.serviceTokenId;
+  }
 
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
@@ -720,17 +734,23 @@ export function useAccessJwksFetchMock(): void {
 }
 
 export function accessHeaders(email = "engineer@example.com", options: AccessJwtOptions = {}): HeadersInit {
-  const userId = options.sub ?? "access-user-id";
+  const userId = options.sub === undefined ? "access-user-id" : options.sub;
+  const resolvedEmail = options.email === undefined ? email : options.email;
   const jwt = createAccessJwt({
     ...options,
-    email,
+    email: resolvedEmail,
     sub: userId,
   });
-  return {
-    "cf-access-authenticated-user-email": email,
-    "cf-access-authenticated-user-id": userId,
+  const headers: Record<string, string> = {
     "cf-access-jwt-assertion": jwt,
   };
+  if (resolvedEmail !== null) {
+    headers["cf-access-authenticated-user-email"] = resolvedEmail;
+  }
+  if (userId !== null) {
+    headers["cf-access-authenticated-user-id"] = userId;
+  }
+  return headers;
 }
 
 export function accessHeadersWithoutJwt(email = "engineer@example.com", userId = "access-user-id"): HeadersInit {

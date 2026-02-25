@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import { accessHeaders, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
+import { accessHeaders, createAccessJwt, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
 
 type InitPayload = {
   sessionId: string;
@@ -509,6 +509,44 @@ describe("multipart upload flow", () => {
     });
     expect(nonCanonicalCsrf.status).toBe(403);
     expect(((await nonCanonicalCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
+  });
+
+  it("accepts Access service-token principals on upload mutation routes", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const jwt = createAccessJwt({
+      email: null,
+      sub: null,
+      commonName: "ci-preview-service-token",
+    });
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/upload/init", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://files.example.com",
+          "x-r2e-csrf": "1",
+          "cf-access-jwt-assertion": jwt,
+        },
+        body: JSON.stringify({
+          filename: "service-token.bin",
+          prefix: "uploads/",
+          declaredSize: 1024,
+          contentType: "application/octet-stream",
+        }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      sessionId: string;
+      uploadId: string;
+      objectKey: string;
+    };
+    expect(payload.sessionId.length).toBeGreaterThan(0);
+    expect(payload.uploadId.length).toBeGreaterThan(0);
+    expect(payload.objectKey.startsWith("uploads/")).toBe(true);
   });
 
   it("enforces configured upload caps and keeps zero defaults unlimited", async () => {

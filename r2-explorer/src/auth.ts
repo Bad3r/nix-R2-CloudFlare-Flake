@@ -16,6 +16,8 @@ type AccessJwtPayload = {
   nbf?: unknown;
   sub?: unknown;
   email?: unknown;
+  common_name?: unknown;
+  service_token_id?: unknown;
 };
 
 type AccessJwk = JsonWebKey & {
@@ -543,7 +545,17 @@ export async function requireApiIdentity(request: Request, env: Env): Promise<Ac
   }
   const jwtPayload = await validateAccessJwt(identity.jwt, env);
   const jwtEmail = claimString(jwtPayload.email);
-  const jwtUserId = claimString(jwtPayload.sub);
+  const jwtUserId =
+    claimString(jwtPayload.sub) ??
+    claimString(jwtPayload.common_name) ??
+    claimString(jwtPayload.service_token_id);
+  if (!jwtEmail && !jwtUserId) {
+    throw new HttpError(
+      401,
+      "access_jwt_invalid",
+      "Access JWT is missing usable principal claims (email, sub, common_name, service_token_id).",
+    );
+  }
   return {
     email: jwtEmail,
     userId: jwtUserId,
