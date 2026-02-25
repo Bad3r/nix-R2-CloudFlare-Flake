@@ -1,4 +1,11 @@
-excludes = [".git/*", "result", "*.lock", "*.patch", "lefthook.yml"]
+excludes = [
+  ".git/*",
+  "result",
+  "*.lock",
+  "*.patch",
+  "lefthook.yml",
+  "r2-explorer/pnpm-lock.yaml",
+]
 
 [formatter.nixfmt]
 command = "nixfmt"
@@ -7,6 +14,7 @@ includes = ["*.nix"]
 [formatter.prettier]
 command = "prettier"
 includes = ["*.json", "*.md", "*.yaml", "*.yml"]
+excludes = ["r2-explorer/pnpm-lock.yaml"]
 options = ["--write"]
 
 [formatter.shfmt]
