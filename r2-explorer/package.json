@@ -20,6 +20,7 @@
     "wrangler": "^4.63.0"
   },
   "dependencies": {
+    "aws4fetch": "^1.0.20",
     "zod": "^4.3.6"
   }
 }

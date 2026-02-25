@@ -59,6 +59,47 @@ PY
     )"
   fi
 
+  local upload_max_file_bytes upload_max_file_bytes_preview
+  local upload_max_parts upload_max_parts_preview
+  local upload_max_concurrent upload_max_concurrent_preview
+  local upload_session_ttl upload_session_ttl_preview
+  local upload_sign_ttl upload_sign_ttl_preview
+  local upload_part_size upload_part_size_preview
+  local upload_allowed_mime upload_allowed_mime_preview
+  local upload_blocked_mime upload_blocked_mime_preview
+  local upload_allowed_ext upload_allowed_ext_preview
+  local upload_blocked_ext upload_blocked_ext_preview
+  local upload_prefix_allowlist upload_prefix_allowlist_preview
+  local upload_allowed_origins upload_allowed_origins_preview
+  local upload_s3_bucket upload_s3_bucket_preview
+
+  upload_max_file_bytes="${R2E_UPLOAD_MAX_FILE_BYTES:-0}"
+  upload_max_file_bytes_preview="${R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW:-${upload_max_file_bytes}}"
+  upload_max_parts="${R2E_UPLOAD_MAX_PARTS:-0}"
+  upload_max_parts_preview="${R2E_UPLOAD_MAX_PARTS_PREVIEW:-${upload_max_parts}}"
+  upload_max_concurrent="${R2E_UPLOAD_MAX_CONCURRENT_PER_USER:-0}"
+  upload_max_concurrent_preview="${R2E_UPLOAD_MAX_CONCURRENT_PER_USER_PREVIEW:-${upload_max_concurrent}}"
+  upload_session_ttl="${R2E_UPLOAD_SESSION_TTL_SEC:-3600}"
+  upload_session_ttl_preview="${R2E_UPLOAD_SESSION_TTL_SEC_PREVIEW:-${upload_session_ttl}}"
+  upload_sign_ttl="${R2E_UPLOAD_SIGN_TTL_SEC:-60}"
+  upload_sign_ttl_preview="${R2E_UPLOAD_SIGN_TTL_SEC_PREVIEW:-${upload_sign_ttl}}"
+  upload_part_size="${R2E_UPLOAD_PART_SIZE_BYTES:-8388608}"
+  upload_part_size_preview="${R2E_UPLOAD_PART_SIZE_BYTES_PREVIEW:-${upload_part_size}}"
+  upload_allowed_mime="${R2E_UPLOAD_ALLOWED_MIME:-}"
+  upload_allowed_mime_preview="${R2E_UPLOAD_ALLOWED_MIME_PREVIEW:-${upload_allowed_mime}}"
+  upload_blocked_mime="${R2E_UPLOAD_BLOCKED_MIME:-}"
+  upload_blocked_mime_preview="${R2E_UPLOAD_BLOCKED_MIME_PREVIEW:-${upload_blocked_mime}}"
+  upload_allowed_ext="${R2E_UPLOAD_ALLOWED_EXT:-}"
+  upload_allowed_ext_preview="${R2E_UPLOAD_ALLOWED_EXT_PREVIEW:-${upload_allowed_ext}}"
+  upload_blocked_ext="${R2E_UPLOAD_BLOCKED_EXT:-}"
+  upload_blocked_ext_preview="${R2E_UPLOAD_BLOCKED_EXT_PREVIEW:-${upload_blocked_ext}}"
+  upload_prefix_allowlist="${R2E_UPLOAD_PREFIX_ALLOWLIST:-}"
+  upload_prefix_allowlist_preview="${R2E_UPLOAD_PREFIX_ALLOWLIST_PREVIEW:-${upload_prefix_allowlist}}"
+  upload_allowed_origins="${R2E_UPLOAD_ALLOWED_ORIGINS:-}"
+  upload_allowed_origins_preview="${R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW:-${upload_allowed_origins}}"
+  upload_s3_bucket="${R2E_UPLOAD_S3_BUCKET:-${R2E_FILES_BUCKET}}"
+  upload_s3_bucket_preview="${R2E_UPLOAD_S3_BUCKET_PREVIEW:-${R2E_FILES_BUCKET_PREVIEW}}"
+
   escaped_bucket_map="$(escape_sed_replacement "${bucket_map}")"
 
   sed \
@@ -72,6 +113,58 @@ PY
     -e "s|replace-with-access-team-domain|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN}")|g" \
     -e "s|replace-with-access-aud-preview|$(escape_sed_replacement "${R2E_ACCESS_AUD_PREVIEW}")|g" \
     -e "s|replace-with-access-aud|$(escape_sed_replacement "${R2E_ACCESS_AUD}")|g" \
+    -e "s|replace-with-upload-max-file-bytes-preview|$(escape_sed_replacement "${upload_max_file_bytes_preview}")|g" \
+    -e "s|replace-with-upload-max-file-bytes|$(escape_sed_replacement "${upload_max_file_bytes}")|g" \
+    -e "s|replace-with-upload-max-parts-preview|$(escape_sed_replacement "${upload_max_parts_preview}")|g" \
+    -e "s|replace-with-upload-max-parts|$(escape_sed_replacement "${upload_max_parts}")|g" \
+    -e "s|replace-with-upload-max-concurrent-per-user-preview|$(escape_sed_replacement "${upload_max_concurrent_preview}")|g" \
+    -e "s|replace-with-upload-max-concurrent-per-user|$(escape_sed_replacement "${upload_max_concurrent}")|g" \
+    -e "s|replace-with-upload-session-ttl-sec-preview|$(escape_sed_replacement "${upload_session_ttl_preview}")|g" \
+    -e "s|replace-with-upload-session-ttl-sec|$(escape_sed_replacement "${upload_session_ttl}")|g" \
+    -e "s|replace-with-upload-sign-ttl-sec-preview|$(escape_sed_replacement "${upload_sign_ttl_preview}")|g" \
+    -e "s|replace-with-upload-sign-ttl-sec|$(escape_sed_replacement "${upload_sign_ttl}")|g" \
+    -e "s|replace-with-upload-part-size-bytes-preview|$(escape_sed_replacement "${upload_part_size_preview}")|g" \
+    -e "s|replace-with-upload-part-size-bytes|$(escape_sed_replacement "${upload_part_size}")|g" \
+    -e "s|replace-with-upload-allowed-mime-preview|$(escape_sed_replacement "${upload_allowed_mime_preview}")|g" \
+    -e "s|replace-with-upload-allowed-mime|$(escape_sed_replacement "${upload_allowed_mime}")|g" \
+    -e "s|replace-with-upload-blocked-mime-preview|$(escape_sed_replacement "${upload_blocked_mime_preview}")|g" \
+    -e "s|replace-with-upload-blocked-mime|$(escape_sed_replacement "${upload_blocked_mime}")|g" \
+    -e "s|replace-with-upload-allowed-ext-preview|$(escape_sed_replacement "${upload_allowed_ext_preview}")|g" \
+    -e "s|replace-with-upload-allowed-ext|$(escape_sed_replacement "${upload_allowed_ext}")|g" \
+    -e "s|replace-with-upload-blocked-ext-preview|$(escape_sed_replacement "${upload_blocked_ext_preview}")|g" \
+    -e "s|replace-with-upload-blocked-ext|$(escape_sed_replacement "${upload_blocked_ext}")|g" \
+    -e "s|replace-with-upload-prefix-allowlist-preview|$(escape_sed_replacement "${upload_prefix_allowlist_preview}")|g" \
+    -e "s|replace-with-upload-prefix-allowlist|$(escape_sed_replacement "${upload_prefix_allowlist}")|g" \
+    -e "s|replace-with-upload-allowed-origins-preview|$(escape_sed_replacement "${upload_allowed_origins_preview}")|g" \
+    -e "s|replace-with-upload-allowed-origins|$(escape_sed_replacement "${upload_allowed_origins}")|g" \
+    -e "s|replace-with-upload-s3-bucket-preview|$(escape_sed_replacement "${upload_s3_bucket_preview}")|g" \
+    -e "s|replace-with-upload-s3-bucket|$(escape_sed_replacement "${upload_s3_bucket}")|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_FILE_BYTES = \".*\"$|R2E_UPLOAD_MAX_FILE_BYTES = \"$(escape_sed_replacement "${upload_max_file_bytes}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_PARTS = \".*\"$|R2E_UPLOAD_MAX_PARTS = \"$(escape_sed_replacement "${upload_max_parts}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_CONCURRENT_PER_USER = \".*\"$|R2E_UPLOAD_MAX_CONCURRENT_PER_USER = \"$(escape_sed_replacement "${upload_max_concurrent}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_SESSION_TTL_SEC = \".*\"$|R2E_UPLOAD_SESSION_TTL_SEC = \"$(escape_sed_replacement "${upload_session_ttl}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_SIGN_TTL_SEC = \".*\"$|R2E_UPLOAD_SIGN_TTL_SEC = \"$(escape_sed_replacement "${upload_sign_ttl}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_PART_SIZE_BYTES = \".*\"$|R2E_UPLOAD_PART_SIZE_BYTES = \"$(escape_sed_replacement "${upload_part_size}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_MIME = \".*\"$|R2E_UPLOAD_ALLOWED_MIME = \"$(escape_sed_replacement "${upload_allowed_mime}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_BLOCKED_MIME = \".*\"$|R2E_UPLOAD_BLOCKED_MIME = \"$(escape_sed_replacement "${upload_blocked_mime}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_EXT = \".*\"$|R2E_UPLOAD_ALLOWED_EXT = \"$(escape_sed_replacement "${upload_allowed_ext}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_BLOCKED_EXT = \".*\"$|R2E_UPLOAD_BLOCKED_EXT = \"$(escape_sed_replacement "${upload_blocked_ext}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_PREFIX_ALLOWLIST = \".*\"$|R2E_UPLOAD_PREFIX_ALLOWLIST = \"$(escape_sed_replacement "${upload_prefix_allowlist}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_ORIGINS = \".*\"$|R2E_UPLOAD_ALLOWED_ORIGINS = \"$(escape_sed_replacement "${upload_allowed_origins}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_S3_BUCKET = \".*\"$|R2E_UPLOAD_S3_BUCKET = \"$(escape_sed_replacement "${upload_s3_bucket}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_FILE_BYTES = \".*\"$|R2E_UPLOAD_MAX_FILE_BYTES = \"$(escape_sed_replacement "${upload_max_file_bytes_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_PARTS = \".*\"$|R2E_UPLOAD_MAX_PARTS = \"$(escape_sed_replacement "${upload_max_parts_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_CONCURRENT_PER_USER = \".*\"$|R2E_UPLOAD_MAX_CONCURRENT_PER_USER = \"$(escape_sed_replacement "${upload_max_concurrent_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_SESSION_TTL_SEC = \".*\"$|R2E_UPLOAD_SESSION_TTL_SEC = \"$(escape_sed_replacement "${upload_session_ttl_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_SIGN_TTL_SEC = \".*\"$|R2E_UPLOAD_SIGN_TTL_SEC = \"$(escape_sed_replacement "${upload_sign_ttl_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_PART_SIZE_BYTES = \".*\"$|R2E_UPLOAD_PART_SIZE_BYTES = \"$(escape_sed_replacement "${upload_part_size_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_MIME = \".*\"$|R2E_UPLOAD_ALLOWED_MIME = \"$(escape_sed_replacement "${upload_allowed_mime_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_BLOCKED_MIME = \".*\"$|R2E_UPLOAD_BLOCKED_MIME = \"$(escape_sed_replacement "${upload_blocked_mime_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_EXT = \".*\"$|R2E_UPLOAD_ALLOWED_EXT = \"$(escape_sed_replacement "${upload_allowed_ext_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_BLOCKED_EXT = \".*\"$|R2E_UPLOAD_BLOCKED_EXT = \"$(escape_sed_replacement "${upload_blocked_ext_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_PREFIX_ALLOWLIST = \".*\"$|R2E_UPLOAD_PREFIX_ALLOWLIST = \"$(escape_sed_replacement "${upload_prefix_allowlist_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_ORIGINS = \".*\"$|R2E_UPLOAD_ALLOWED_ORIGINS = \"$(escape_sed_replacement "${upload_allowed_origins_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_S3_BUCKET = \".*\"$|R2E_UPLOAD_S3_BUCKET = \"$(escape_sed_replacement "${upload_s3_bucket_preview}")\"|g" \
     -e "s|R2E_BUCKET_MAP = \"\"|R2E_BUCKET_MAP = \"${escaped_bucket_map}\"|g" \
     "${template_path}" >"${output_path}"
 

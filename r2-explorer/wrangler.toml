@@ -16,6 +16,20 @@ R2E_BUCKET_MAP = ""
 R2E_ACCESS_TEAM_DOMAIN = "replace-with-access-team-domain"
 # Required for strict Access JWT verification on /api/* routes.
 R2E_ACCESS_AUD = "replace-with-access-aud"
+# Upload policy defaults. Set to "0" for unlimited where applicable.
+R2E_UPLOAD_MAX_FILE_BYTES = "0"
+R2E_UPLOAD_MAX_PARTS = "0"
+R2E_UPLOAD_MAX_CONCURRENT_PER_USER = "0"
+R2E_UPLOAD_SESSION_TTL_SEC = "3600"
+R2E_UPLOAD_SIGN_TTL_SEC = "60"
+R2E_UPLOAD_PART_SIZE_BYTES = "8388608"
+R2E_UPLOAD_ALLOWED_MIME = ""
+R2E_UPLOAD_BLOCKED_MIME = ""
+R2E_UPLOAD_ALLOWED_EXT = ""
+R2E_UPLOAD_BLOCKED_EXT = ""
+R2E_UPLOAD_PREFIX_ALLOWLIST = ""
+R2E_UPLOAD_ALLOWED_ORIGINS = ""
+R2E_UPLOAD_S3_BUCKET = "replace-with-upload-s3-bucket"
 
 [[r2_buckets]]
 binding = "FILES_BUCKET"
@@ -31,6 +45,14 @@ preview_id = "replace-with-shares-kv-namespace-id-preview"
 binding = "R2E_KEYS_KV"
 id = "replace-with-keys-kv-namespace-id"
 preview_id = "replace-with-keys-kv-namespace-id-preview"
+
+[[durable_objects.bindings]]
+name = "R2E_UPLOAD_SESSIONS"
+class_name = "UploadSessionDurableObject"
+
+[[migrations]]
+tag = "r2e-upload-sessions-v1"
+new_sqlite_classes = ["UploadSessionDurableObject"]
 
 [env.preview]
 workers_dev = true
@@ -49,6 +71,19 @@ R2E_BUCKET_MAP = ""
 R2E_ACCESS_TEAM_DOMAIN = "replace-with-access-team-domain-preview"
 # Required for strict Access JWT verification on /api/* routes.
 R2E_ACCESS_AUD = "replace-with-access-aud-preview"
+R2E_UPLOAD_MAX_FILE_BYTES = "0"
+R2E_UPLOAD_MAX_PARTS = "0"
+R2E_UPLOAD_MAX_CONCURRENT_PER_USER = "0"
+R2E_UPLOAD_SESSION_TTL_SEC = "3600"
+R2E_UPLOAD_SIGN_TTL_SEC = "60"
+R2E_UPLOAD_PART_SIZE_BYTES = "8388608"
+R2E_UPLOAD_ALLOWED_MIME = ""
+R2E_UPLOAD_BLOCKED_MIME = ""
+R2E_UPLOAD_ALLOWED_EXT = ""
+R2E_UPLOAD_BLOCKED_EXT = ""
+R2E_UPLOAD_PREFIX_ALLOWLIST = ""
+R2E_UPLOAD_ALLOWED_ORIGINS = ""
+R2E_UPLOAD_S3_BUCKET = "replace-with-upload-s3-bucket-preview"
 
 [[env.preview.r2_buckets]]
 binding = "FILES_BUCKET"
@@ -61,3 +96,7 @@ id = "replace-with-shares-kv-namespace-id-preview"
 [[env.preview.kv_namespaces]]
 binding = "R2E_KEYS_KV"
 id = "replace-with-keys-kv-namespace-id-preview"
+
+[[env.preview.durable_objects.bindings]]
+name = "R2E_UPLOAD_SESSIONS"
+class_name = "UploadSessionDurableObject"

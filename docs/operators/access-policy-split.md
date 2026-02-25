@@ -79,6 +79,9 @@ Notes:
   - bypass policy missing, disabled, or lower precedence than broad rule.
 - `r2 share worker create` fails with `HTTP 302`:
   - `/api/share/*` bypass is missing, so Access is intercepting HMAC traffic.
+  - If bypass is intentionally disabled, set
+    `R2_EXPLORER_ACCESS_CLIENT_ID`/`R2_EXPLORER_ACCESS_CLIENT_SECRET` for
+    CLI calls so Access service-token auth is presented at the edge.
 - `/api/*` is publicly reachable:
   - broad access policy too permissive or bypass too broad.
 - Mixed behavior across clients:

@@ -18,7 +18,6 @@ import {
   listObjects,
   moveObject,
   softDeleteObject,
-  uploadMultipartPart,
 } from "./r2";
 import {
   listQuerySchema,
@@ -43,9 +42,18 @@ import {
   uploadCompleteResponseSchema,
   uploadInitBodySchema,
   uploadInitResponseSchema,
-  uploadPartQuerySchema,
-  uploadPartResponseSchema,
+  uploadSignPartBodySchema,
+  uploadSignPartResponseSchema,
 } from "./schemas";
+import { signMultipartUploadPart } from "./upload-signing";
+import {
+  createUploadSession,
+  markUploadSessionAborted,
+  markUploadSessionCompleted,
+  recordUploadSessionSignedPart,
+  requireUploadSession,
+  type UploadSessionRecord,
+} from "./upload-sessions";
 import type { AccessIdentity, Env, RequestActor, ShareRecord } from "./types";
 import { renderAppHtml } from "./ui";
 import { WORKER_VERSION } from "./version";
@@ -62,9 +70,25 @@ type AppContext = {
   Variables: AppVariables;
 };
 
+type UploadPolicy = {
+  bucketName: string;
+  maxFileBytes: number;
+  maxParts: number;
+  maxConcurrentPerUser: number;
+  sessionTtlSec: number;
+  signPartTtlSec: number;
+  partSizeBytes: number;
+  allowedMime: string[];
+  blockedMime: string[];
+  allowedExtensions: string[];
+  blockedExtensions: string[];
+  prefixAllowlist: string[];
+};
+
 const BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const JSON_BODY_PATHS = new Set([
   "/api/upload/init",
+  "/api/upload/sign-part",
   "/api/upload/complete",
   "/api/upload/abort",
   "/api/object/delete",
@@ -72,16 +96,61 @@ const JSON_BODY_PATHS = new Set([
   "/api/share/create",
   "/api/share/revoke",
 ]);
+const UPLOAD_MUTATION_PATHS = new Set([
+  "/api/upload/init",
+  "/api/upload/sign-part",
+  "/api/upload/complete",
+  "/api/upload/abort",
+]);
+const R2_MAX_UPLOAD_PARTS = 10_000;
+const R2_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
+const R2_MAX_PART_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
+const DEFAULT_UPLOAD_PART_SIZE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_UPLOAD_SESSION_TTL_SEC = 3600;
+const DEFAULT_UPLOAD_SIGN_TTL_SEC = 60;
 
-function envInt(value: string | undefined, fallback: number): number {
-  if (!value) {
+function parseEnvInt(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+  options: {
+    allowZero: boolean;
+    errorCode: string;
+  },
+): number {
+  if (!value || value.trim().length === 0) {
     return fallback;
   }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
+  const trimmed = value.trim();
+  if (!/^[0-9]+$/.test(trimmed)) {
+    const requirement = options.allowZero ? "a non-negative integer" : "a positive integer";
+    throw new HttpError(500, options.errorCode, `${name} must be ${requirement}.`);
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || (!options.allowZero && parsed <= 0)) {
+    const requirement = options.allowZero ? "a non-negative integer" : "a positive integer";
+    throw new HttpError(500, options.errorCode, `${name} must be ${requirement}.`);
   }
   return parsed;
+}
+
+function envInt(name: string, value: string | undefined, fallback: number, errorCode = "config_invalid"): number {
+  return parseEnvInt(name, value, fallback, {
+    allowZero: false,
+    errorCode,
+  });
+}
+
+function envNonNegativeInt(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+  errorCode = "config_invalid",
+): number {
+  return parseEnvInt(name, value, fallback, {
+    allowZero: true,
+    errorCode,
+  });
 }
 
 function envBool(value: string | undefined, fallback = false): boolean {
@@ -98,8 +167,195 @@ function envBool(value: string | undefined, fallback = false): boolean {
   return fallback;
 }
 
+function parseList(value: string | undefined): string[] {
+  if (!value || value.trim().length === 0) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 function normalizeObjectKey(key: string): string {
   return key.replace(/^\/+/, "");
+}
+
+function normalizeMimeType(contentType: string): string {
+  return contentType.split(";")[0].trim().toLowerCase();
+}
+
+const ZIP_CONTAINER_MIME_TYPES = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/java-archive",
+  "application/vnd.android.package-archive",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.presentation",
+]);
+
+function isZipContainerMime(contentType: string): boolean {
+  return ZIP_CONTAINER_MIME_TYPES.has(contentType) || contentType.endsWith("+zip");
+}
+
+function magicMimeMatchesDeclared(declaredContentType: string, detectedMime: string): boolean {
+  if (declaredContentType === detectedMime) {
+    return true;
+  }
+  if (detectedMime === "application/zip" && isZipContainerMime(declaredContentType)) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeUploadPrefix(prefix: string | undefined): string {
+  if (!prefix || prefix.trim().length === 0) {
+    return "";
+  }
+
+  const normalized = prefix.trim().replace(/^\/+/, "");
+  if (normalized.includes("..")) {
+    throw new HttpError(400, "invalid_upload_prefix", "Upload prefix cannot contain '..'.");
+  }
+  if (normalized.includes("\\")) {
+    throw new HttpError(400, "invalid_upload_prefix", "Upload prefix cannot contain backslashes.");
+  }
+  return normalized.endsWith("/") ? normalized : `${normalized}/`;
+}
+
+function extractExtension(filename: string): string {
+  const index = filename.lastIndexOf(".");
+  if (index <= 0 || index >= filename.length - 1) {
+    return "";
+  }
+  const extension = filename.slice(index).toLowerCase();
+  if (!/^\.[a-z0-9]+$/.test(extension)) {
+    return "";
+  }
+  return extension;
+}
+
+function normalizeAllowedExtension(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+  if (!lower) {
+    return "";
+  }
+  const withDot = lower.startsWith(".") ? lower : `.${lower}`;
+  if (!/^\.[a-z0-9]+$/.test(withDot)) {
+    throw new HttpError(500, "upload_config_invalid", `Invalid extension in R2E_UPLOAD_ALLOWED_EXT: ${raw}`);
+  }
+  return withDot;
+}
+
+function requireUploadBucketName(env: Env): string {
+  const bucketName = env.R2E_UPLOAD_S3_BUCKET?.trim();
+  if (!bucketName) {
+    throw new HttpError(
+      500,
+      "upload_config_invalid",
+      "Missing required Worker variable R2E_UPLOAD_S3_BUCKET for upload signing.",
+    );
+  }
+  return bucketName;
+}
+
+function parseUploadPolicy(env: Env): UploadPolicy {
+  const configuredMaxParts = envNonNegativeInt(
+    "R2E_UPLOAD_MAX_PARTS",
+    env.R2E_UPLOAD_MAX_PARTS,
+    0,
+    "upload_config_invalid",
+  );
+  const maxParts = configuredMaxParts === 0 ? R2_MAX_UPLOAD_PARTS : Math.min(configuredMaxParts, R2_MAX_UPLOAD_PARTS);
+
+  const configuredPartSize = envInt(
+    "R2E_UPLOAD_PART_SIZE_BYTES",
+    env.R2E_UPLOAD_PART_SIZE_BYTES,
+    DEFAULT_UPLOAD_PART_SIZE_BYTES,
+    "upload_config_invalid",
+  );
+  if (configuredPartSize < R2_MIN_PART_SIZE_BYTES || configuredPartSize > R2_MAX_PART_SIZE_BYTES) {
+    throw new HttpError(
+      500,
+      "upload_config_invalid",
+      `R2E_UPLOAD_PART_SIZE_BYTES must be between ${R2_MIN_PART_SIZE_BYTES} and ${R2_MAX_PART_SIZE_BYTES}.`,
+    );
+  }
+
+  const allowedMime = Array.from(new Set(parseList(env.R2E_UPLOAD_ALLOWED_MIME).map(normalizeMimeType)));
+  const blockedMime = Array.from(new Set(parseList(env.R2E_UPLOAD_BLOCKED_MIME).map(normalizeMimeType)));
+  const allowedExtensions = Array.from(
+    new Set(
+      parseList(env.R2E_UPLOAD_ALLOWED_EXT)
+        .map(normalizeAllowedExtension)
+        .filter((extension) => extension.length > 0),
+    ),
+  );
+  const blockedExtensions = Array.from(
+    new Set(
+      parseList(env.R2E_UPLOAD_BLOCKED_EXT)
+        .map(normalizeAllowedExtension)
+        .filter((extension) => extension.length > 0),
+    ),
+  );
+  const prefixAllowlist = Array.from(
+    new Set(
+      parseList(env.R2E_UPLOAD_PREFIX_ALLOWLIST)
+        .map((prefix) => normalizeUploadPrefix(prefix))
+        .filter((prefix) => prefix.length > 0),
+    ),
+  );
+
+  return {
+    bucketName: requireUploadBucketName(env),
+    maxFileBytes: envNonNegativeInt("R2E_UPLOAD_MAX_FILE_BYTES", env.R2E_UPLOAD_MAX_FILE_BYTES, 0, "upload_config_invalid"),
+    maxParts,
+    maxConcurrentPerUser: envNonNegativeInt(
+      "R2E_UPLOAD_MAX_CONCURRENT_PER_USER",
+      env.R2E_UPLOAD_MAX_CONCURRENT_PER_USER,
+      0,
+      "upload_config_invalid",
+    ),
+    sessionTtlSec: envInt(
+      "R2E_UPLOAD_SESSION_TTL_SEC",
+      env.R2E_UPLOAD_SESSION_TTL_SEC,
+      DEFAULT_UPLOAD_SESSION_TTL_SEC,
+      "upload_config_invalid",
+    ),
+    signPartTtlSec: envInt(
+      "R2E_UPLOAD_SIGN_TTL_SEC",
+      env.R2E_UPLOAD_SIGN_TTL_SEC,
+      DEFAULT_UPLOAD_SIGN_TTL_SEC,
+      "upload_config_invalid",
+    ),
+    partSizeBytes: configuredPartSize,
+    allowedMime,
+    blockedMime,
+    allowedExtensions,
+    blockedExtensions,
+    prefixAllowlist,
+  };
+}
+
+function parseAllowedOrigins(env: Env, requestOrigin: string): Set<string> {
+  const configured = parseList(env.R2E_UPLOAD_ALLOWED_ORIGINS);
+  if (configured.length === 0) {
+    return new Set([requestOrigin]);
+  }
+
+  const origins = new Set<string>();
+  for (const entry of configured) {
+    try {
+      origins.add(new URL(entry).origin);
+    } catch {
+      throw new HttpError(500, "upload_config_invalid", `Invalid origin in R2E_UPLOAD_ALLOWED_ORIGINS: ${entry}`);
+    }
+  }
+  return origins;
 }
 
 function parseDurationSeconds(raw: unknown, fallbackSeconds: number, maxSeconds: number): number {
@@ -272,6 +528,153 @@ function jsonValidated<T extends ZodTypeAny>(schema: T, payload: unknown, init?:
   return json(validateSchema(schema, payload, "response payload"), init);
 }
 
+function requireUploadActor(c: { get: (key: "actor") => string }): string {
+  const actor = c.get("actor");
+  if (!actor || actor.trim().length === 0) {
+    throw new HttpError(401, "access_required", "Authenticated upload actor is required.");
+  }
+  return actor;
+}
+
+function requireUploadFilename(filename: string): string {
+  const trimmed = filename.trim();
+  if (!trimmed || trimmed === "." || trimmed === "..") {
+    throw new HttpError(400, "invalid_upload_filename", "Upload filename must be non-empty.");
+  }
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    throw new HttpError(400, "invalid_upload_filename", "Upload filename cannot contain path separators.");
+  }
+  if (trimmed.length > 255) {
+    throw new HttpError(400, "invalid_upload_filename", "Upload filename exceeds 255 characters.");
+  }
+  return trimmed;
+}
+
+function buildRandomObjectKey(prefix: string, filename: string): string {
+  const extension = extractExtension(filename);
+  return `${prefix}${randomTokenId(34)}${extension}`;
+}
+
+function prefixAllowed(prefix: string, allowlist: string[]): boolean {
+  if (allowlist.length === 0) {
+    return true;
+  }
+  return allowlist.some((allowedPrefix) => prefix.startsWith(allowedPrefix));
+}
+
+function expectedPartCount(declaredSize: number, partSizeBytes: number): number {
+  return Math.max(1, Math.ceil(declaredSize / partSizeBytes));
+}
+
+function validateCompleteParts(
+  parts: Array<{ partNumber: number; etag: string }>,
+  maxParts: number,
+): void {
+  let previousPartNumber = 0;
+  const seen = new Set<number>();
+  for (const part of parts) {
+    if (part.partNumber > maxParts) {
+      throw new HttpError(400, "invalid_part_number", "Part number exceeds allowed max parts.", {
+        partNumber: part.partNumber,
+        maxParts,
+      });
+    }
+    if (seen.has(part.partNumber)) {
+      throw new HttpError(400, "duplicate_part_number", "Duplicate part number in complete request.", {
+        partNumber: part.partNumber,
+      });
+    }
+    if (part.partNumber <= previousPartNumber) {
+      throw new HttpError(400, "invalid_part_order", "Parts must be strictly ordered by partNumber.");
+    }
+    seen.add(part.partNumber);
+    previousPartNumber = part.partNumber;
+  }
+}
+
+function parseOrigin(origin: string | null): string {
+  if (!origin || origin.trim().length === 0) {
+    throw new HttpError(403, "origin_required", "Origin header is required for upload mutation routes.");
+  }
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("origin protocol must be http or https");
+    }
+    if (parsed.origin === "null") {
+      throw new Error("origin must be a concrete web origin");
+    }
+    return parsed.origin;
+  } catch {
+    throw new HttpError(403, "origin_invalid", "Origin header is not a valid URL origin.");
+  }
+}
+
+function assertUploadMutationGuards(request: Request, env: Env): void {
+  const requestOrigin = new URL(request.url).origin;
+  const origin = parseOrigin(request.headers.get("origin"));
+  const allowedOrigins = parseAllowedOrigins(env, requestOrigin);
+  if (!allowedOrigins.has(origin)) {
+    throw new HttpError(403, "origin_not_allowed", "Origin is not allowed for upload mutation route.", {
+      origin,
+      allowedOrigins: [...allowedOrigins],
+    });
+  }
+
+  const csrf = request.headers.get("x-r2e-csrf");
+  if (!csrf || csrf.trim() !== "1") {
+    throw new HttpError(403, "csrf_required", "Missing required x-r2e-csrf header for upload mutation route.");
+  }
+}
+
+function bytesEqual(input: Uint8Array, expected: number[], offset = 0): boolean {
+  if (offset + expected.length > input.length) {
+    return false;
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    if (input[offset + index] !== expected[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function detectMagicMime(bytes: Uint8Array): string | null {
+  if (bytesEqual(bytes, [0x25, 0x50, 0x44, 0x46])) {
+    return "application/pdf";
+  }
+  if (bytesEqual(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return "image/png";
+  }
+  if (bytesEqual(bytes, [0xff, 0xd8, 0xff])) {
+    return "image/jpeg";
+  }
+  if (bytesEqual(bytes, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]) || bytesEqual(bytes, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61])) {
+    return "image/gif";
+  }
+  if (bytesEqual(bytes, [0x52, 0x49, 0x46, 0x46]) && bytesEqual(bytes, [0x57, 0x45, 0x42, 0x50], 8)) {
+    return "image/webp";
+  }
+  if (bytesEqual(bytes, [0x50, 0x4b, 0x03, 0x04])) {
+    return "application/zip";
+  }
+  return null;
+}
+
+async function uploadedMagicMime(bucket: R2Bucket, key: string): Promise<string | null> {
+  const object = await bucket.get(key, {
+    range: {
+      offset: 0,
+      length: 16,
+    },
+  });
+  if (!object || object.body === null) {
+    throw new HttpError(404, "object_not_found", `Uploaded object not found for magic-byte validation: ${key}`);
+  }
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  return detectMagicMime(bytes);
+}
+
 async function responseFromObject(
   object: R2ObjectBody,
   key: string,
@@ -293,21 +696,16 @@ async function responseFromObject(
 const accessMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
   const identity = await requireApiIdentity(c.req.raw, c.env);
   c.set("accessIdentity", identity);
-  c.set("actor", identity.email ?? identity.userId ?? "access-user");
+  c.set("actor", identity.email ?? identity.userId ?? "");
   c.set("authMode", "access");
   await next();
 };
 
-// Accepts either Access JWT or HMAC admin signature.  The `/api/*`
-// catch-all middleware runs first and sets `accessIdentity` via the
-// lightweight `extractAccessIdentity` (header sniff only).  When
-// headers are present we promote to full JWT verification; otherwise
-// we fall through to HMAC signature validation.
 const accessOrHmacMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
   if (c.get("accessIdentity")) {
     const identity = await requireApiIdentity(c.req.raw, c.env);
     c.set("accessIdentity", identity);
-    c.set("actor", identity.email ?? identity.userId ?? "access-user");
+    c.set("actor", identity.email ?? identity.userId ?? "");
     c.set("authMode", "access");
     await next();
     return;
@@ -340,6 +738,14 @@ export function createApp(): Hono<AppContext> {
   });
 
   app.use("/api/*", async (c, next) => {
+    const method = c.req.method.toUpperCase();
+    if (method === "POST" && UPLOAD_MUTATION_PATHS.has(c.req.path)) {
+      assertUploadMutationGuards(c.req.raw, c.env);
+    }
+    await next();
+  });
+
+  app.use("/api/*", async (c, next) => {
     if (c.req.method.toUpperCase() === "POST" && JSON_BODY_PATHS.has(c.req.path)) {
       c.set("rawBody", await c.req.text());
     }
@@ -352,7 +758,7 @@ export function createApp(): Hono<AppContext> {
     "/api/download",
     "/api/preview",
     "/api/upload/init",
-    "/api/upload/part",
+    "/api/upload/sign-part",
     "/api/upload/complete",
     "/api/upload/abort",
     "/api/object/delete",
@@ -378,7 +784,7 @@ export function createApp(): Hono<AppContext> {
 
   app.get("/api/list", async (c) => {
     const query = validateSchema(listQuerySchema, queryPayload(c.req.raw), "query");
-    const configuredLimit = envInt(c.env.R2E_UI_MAX_LIST_LIMIT, 1000);
+    const configuredLimit = envInt("R2E_UI_MAX_LIST_LIMIT", c.env.R2E_UI_MAX_LIST_LIMIT, 1000);
     const limit = Math.min(query.limit, configuredLimit);
     const result = await listObjects(c.env.FILES_BUCKET, query.prefix, query.cursor, limit);
     const payload = {
@@ -435,49 +841,377 @@ export function createApp(): Hono<AppContext> {
 
   app.post("/api/upload/init", async (c) => {
     const body = readJsonBody(c, uploadInitBodySchema);
-    const key = normalizeObjectKey(body.key);
-    const upload = await createMultipartUpload(c.env.FILES_BUCKET, key, body.contentType);
-    return jsonValidated(uploadInitResponseSchema, {
-      key: upload.key,
+    const policy = parseUploadPolicy(c.env);
+    const actor = requireUploadActor(c);
+    const filename = requireUploadFilename(body.filename);
+    const prefix = normalizeUploadPrefix(body.prefix);
+    if (!prefixAllowed(prefix, policy.prefixAllowlist)) {
+      throw new HttpError(403, "upload_prefix_forbidden", "Upload prefix is not allowed for this deployment.", {
+        prefix,
+        allowedPrefixes: policy.prefixAllowlist,
+      });
+    }
+
+    const extension = extractExtension(filename);
+    if (extension && policy.blockedExtensions.includes(extension)) {
+      throw new HttpError(400, "upload_extension_blocked", "File extension is blocked by server policy.", {
+        extension,
+        blockedExtensions: policy.blockedExtensions,
+      });
+    }
+    if (policy.allowedExtensions.length > 0 && !policy.allowedExtensions.includes(extension)) {
+      throw new HttpError(400, "upload_extension_not_allowed", "File extension is not allowed.", {
+        extension,
+        allowedExtensions: policy.allowedExtensions,
+      });
+    }
+
+    const contentType = body.contentType?.trim().length
+      ? body.contentType.trim()
+      : guessContentType(filename).replace(/;.*$/, "");
+    const normalizedContentType = normalizeMimeType(contentType);
+    if (policy.blockedMime.includes(normalizedContentType)) {
+      throw new HttpError(400, "upload_content_type_blocked", "Content-Type is blocked by server policy.", {
+        contentType: normalizedContentType,
+        blockedMime: policy.blockedMime,
+      });
+    }
+    if (policy.allowedMime.length > 0 && !policy.allowedMime.includes(normalizedContentType)) {
+      throw new HttpError(400, "upload_content_type_not_allowed", "Content-Type is not allowed.", {
+        contentType: normalizedContentType,
+        allowedMime: policy.allowedMime,
+      });
+    }
+
+    const declaredSize = body.declaredSize;
+    if (policy.maxFileBytes > 0 && declaredSize > policy.maxFileBytes) {
+      throw new HttpError(413, "upload_size_limit", "Declared file size exceeds configured maximum.", {
+        declaredSize,
+        maxFileBytes: policy.maxFileBytes,
+      });
+    }
+    const partsNeeded = expectedPartCount(declaredSize, policy.partSizeBytes);
+    if (partsNeeded > policy.maxParts) {
+      throw new HttpError(413, "upload_part_limit", "Declared file size exceeds maximum supported multipart parts.", {
+        partsNeeded,
+        maxParts: policy.maxParts,
+      });
+    }
+
+    const key = normalizeObjectKey(buildRandomObjectKey(prefix, filename));
+    const sessionId = randomTokenId(28);
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + policy.sessionTtlSec * 1000).toISOString();
+
+    const upload = await createMultipartUpload(c.env.FILES_BUCKET, key, {
+      contentType,
+      customMetadata: {
+        originalFilename: filename,
+        ...(body.sha256 ? { declaredSha256: body.sha256 } : {}),
+      },
+    });
+
+    const sessionRecord: UploadSessionRecord = {
+      sessionId,
+      ownerId: actor,
+      bucket: policy.bucketName,
       uploadId: upload.uploadId,
+      objectKey: upload.key,
+      filename,
+      contentType,
+      declaredSize,
+      sha256: body.sha256 ?? null,
+      prefix,
+      maxParts: policy.maxParts,
+      maxFileBytes: policy.maxFileBytes,
+      partSizeBytes: policy.partSizeBytes,
+      createdAt,
+      expiresAt,
+      status: "init",
+      completedAt: null,
+      abortedAt: null,
+      signedParts: {},
+    };
+
+    try {
+      await createUploadSession(c.env, actor, {
+        session: sessionRecord,
+        maxConcurrentUploads: policy.maxConcurrentPerUser,
+      });
+    } catch (error) {
+      await abortMultipartUpload(c.env.FILES_BUCKET, upload.key, upload.uploadId).catch(() => undefined);
+      throw error;
+    }
+
+    return jsonValidated(uploadInitResponseSchema, {
+      sessionId,
+      objectKey: upload.key,
+      uploadId: upload.uploadId,
+      expiresAt,
+      partSizeBytes: policy.partSizeBytes,
+      maxParts: policy.maxParts,
+      signPartTtlSec: policy.signPartTtlSec,
+      allowedMime: policy.allowedMime,
+      allowedExt: policy.allowedExtensions,
     });
   });
 
-  app.post("/api/upload/part", async (c) => {
-    const query = validateSchema(uploadPartQuerySchema, queryPayload(c.req.raw), "query");
-    const payload = await c.req.arrayBuffer();
-    const part = await uploadMultipartPart(
-      c.env.FILES_BUCKET,
-      normalizeObjectKey(query.key),
-      query.uploadId,
-      query.partNumber,
-      payload,
-    );
-    return jsonValidated(uploadPartResponseSchema, {
-      partNumber: part.partNumber,
-      etag: part.etag,
+  app.post("/api/upload/sign-part", async (c) => {
+    const body = readJsonBody(c, uploadSignPartBodySchema);
+    const actor = requireUploadActor(c);
+    const session = await requireUploadSession(c.env, actor, {
+      sessionId: body.sessionId,
+      requireActive: true,
+    });
+
+    if (session.uploadId !== body.uploadId) {
+      throw new HttpError(409, "upload_session_mismatch", "uploadId does not match upload session.");
+    }
+
+    if (body.partNumber > session.maxParts) {
+      throw new HttpError(400, "invalid_part_number", "partNumber exceeds allowed max parts.", {
+        partNumber: body.partNumber,
+        maxParts: session.maxParts,
+      });
+    }
+
+    if (body.contentLength > R2_MAX_PART_SIZE_BYTES) {
+      throw new HttpError(400, "invalid_part_size", "Part size exceeds R2 maximum part size.", {
+        contentLength: body.contentLength,
+        maxPartSizeBytes: R2_MAX_PART_SIZE_BYTES,
+      });
+    }
+
+    const expectedParts = expectedPartCount(session.declaredSize, session.partSizeBytes);
+    if (body.partNumber > expectedParts) {
+      throw new HttpError(400, "invalid_part_number", "partNumber exceeds expected part count for declaredSize.", {
+        partNumber: body.partNumber,
+        expectedParts,
+      });
+    }
+
+    if (body.partNumber < expectedParts && body.contentLength !== session.partSizeBytes) {
+      throw new HttpError(400, "invalid_part_size", "Non-final part size must equal configured partSizeBytes.", {
+        partNumber: body.partNumber,
+        expectedPartSizeBytes: session.partSizeBytes,
+        contentLength: body.contentLength,
+      });
+    }
+
+    if (body.partNumber === expectedParts) {
+      const remaining = session.declaredSize - session.partSizeBytes * (expectedParts - 1);
+      const expectedFinalSize = remaining > 0 ? remaining : session.partSizeBytes;
+      if (body.contentLength !== expectedFinalSize) {
+        throw new HttpError(400, "invalid_part_size", "Final part size does not match declaredSize.", {
+          expectedFinalSize,
+          contentLength: body.contentLength,
+        });
+      }
+    }
+
+    const policy = parseUploadPolicy(c.env);
+    const signed = await signMultipartUploadPart(c.env, {
+      bucketName: session.bucket,
+      key: session.objectKey,
+      uploadId: session.uploadId,
+      partNumber: body.partNumber,
+      expiresInSec: policy.signPartTtlSec,
+      contentLength: body.contentLength,
+      contentType: session.contentType,
+      contentMd5: body.contentMd5,
+    });
+    await recordUploadSessionSignedPart(c.env, actor, {
+      sessionId: session.sessionId,
+      uploadId: session.uploadId,
+      partNumber: body.partNumber,
+      contentLength: body.contentLength,
+      contentMd5: body.contentMd5,
+    });
+
+    return jsonValidated(uploadSignPartResponseSchema, {
+      sessionId: session.sessionId,
+      uploadId: session.uploadId,
+      partNumber: body.partNumber,
+      url: signed.url,
+      method: signed.method,
+      headers: signed.headers,
+      expiresAt: signed.expiresAt,
     });
   });
 
   app.post("/api/upload/complete", async (c) => {
     const body = readJsonBody(c, uploadCompleteBodySchema);
+    const actor = requireUploadActor(c);
+    const session = await requireUploadSession(c.env, actor, {
+      sessionId: body.sessionId,
+      requireActive: true,
+    });
+
+    if (session.uploadId !== body.uploadId) {
+      throw new HttpError(409, "upload_session_mismatch", "uploadId does not match upload session.");
+    }
+
+    validateCompleteParts(body.parts, session.maxParts);
+
+    const expectedParts = expectedPartCount(session.declaredSize, session.partSizeBytes);
+    if (body.parts.length !== expectedParts) {
+      throw new HttpError(400, "invalid_part_count", "Part count does not match declaredSize.", {
+        expectedParts,
+        receivedParts: body.parts.length,
+      });
+    }
+
     const object = await completeMultipartUpload(
       c.env.FILES_BUCKET,
-      normalizeObjectKey(body.key),
-      body.uploadId,
+      session.objectKey,
+      session.uploadId,
       body.parts.map((part) => ({ partNumber: part.partNumber, etag: part.etag })),
     );
+
+    if (session.maxFileBytes > 0 && object.size > session.maxFileBytes) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(413, "upload_size_limit", "Completed upload exceeds configured maximum file size.", {
+        size: object.size,
+        maxFileBytes: session.maxFileBytes,
+      });
+    }
+
+    if (object.size !== session.declaredSize) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_size_mismatch", "Completed upload size does not match declaredSize.", {
+        size: object.size,
+        declaredSize: session.declaredSize,
+      });
+    }
+
+    if (typeof body.finalSize === "number" && object.size !== body.finalSize) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_final_size_mismatch", "Completed upload size does not match finalSize.", {
+        size: object.size,
+        finalSize: body.finalSize,
+      });
+    }
+
+    const policy = parseUploadPolicy(c.env);
+    const detectedMime = await uploadedMagicMime(c.env.FILES_BUCKET, session.objectKey);
+    const normalizedContentType = normalizeMimeType(session.contentType);
+    if (detectedMime && !magicMimeMatchesDeclared(normalizedContentType, detectedMime)) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_magic_mismatch", "Magic-byte type does not match declared Content-Type.", {
+        declaredContentType: normalizedContentType,
+        detectedMime,
+      });
+    }
+
+    if (policy.blockedMime.includes(normalizedContentType)) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_content_type_blocked", "Declared Content-Type is blocked by server policy.", {
+        contentType: normalizedContentType,
+        blockedMime: policy.blockedMime,
+      });
+    }
+
+    if (detectedMime && policy.blockedMime.includes(detectedMime)) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_magic_blocked", "Detected file type is blocked by server policy.", {
+        detectedMime,
+        blockedMime: policy.blockedMime,
+      });
+    }
+
+    if (policy.allowedMime.length > 0 && !policy.allowedMime.includes(normalizedContentType)) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_content_type_not_allowed", "Declared Content-Type is not allowed.", {
+        contentType: normalizedContentType,
+        allowedMime: policy.allowedMime,
+      });
+    }
+
+    if (
+      detectedMime &&
+      policy.allowedMime.length > 0 &&
+      !policy.allowedMime.includes(detectedMime) &&
+      !(policy.allowedMime.includes(normalizedContentType) && magicMimeMatchesDeclared(normalizedContentType, detectedMime))
+    ) {
+      await c.env.FILES_BUCKET.delete(session.objectKey);
+      await markUploadSessionAborted(c.env, actor, {
+        sessionId: session.sessionId,
+        uploadId: session.uploadId,
+      }).catch(() => undefined);
+      throw new HttpError(400, "upload_magic_not_allowed", "Detected file type is not allowed.", {
+        detectedMime,
+        allowedMime: policy.allowedMime,
+      });
+    }
+
+    await markUploadSessionCompleted(c.env, actor, {
+      sessionId: session.sessionId,
+      uploadId: session.uploadId,
+    });
+
     return jsonValidated(uploadCompleteResponseSchema, {
       key: object.key,
       etag: object.etag,
       uploaded: object.uploaded ? object.uploaded.toISOString() : null,
       size: object.size,
+      contentType: session.contentType,
+      originalFilename: session.filename,
     });
   });
 
   app.post("/api/upload/abort", async (c) => {
     const body = readJsonBody(c, uploadAbortBodySchema);
-    await abortMultipartUpload(c.env.FILES_BUCKET, normalizeObjectKey(body.key), body.uploadId);
+    const actor = requireUploadActor(c);
+    const session = await requireUploadSession(c.env, actor, {
+      sessionId: body.sessionId,
+      requireActive: false,
+    });
+
+    if (session.uploadId !== body.uploadId) {
+      throw new HttpError(409, "upload_session_mismatch", "uploadId does not match upload session.");
+    }
+
+    if (session.status === "completed") {
+      throw new HttpError(409, "upload_session_already_completed", "Completed upload sessions cannot be aborted.");
+    }
+
+    if (session.status === "aborted") {
+      return jsonValidated(simpleOkResponseSchema, { ok: true });
+    }
+
+    await abortMultipartUpload(c.env.FILES_BUCKET, session.objectKey, session.uploadId);
+    await markUploadSessionAborted(c.env, actor, {
+      sessionId: session.sessionId,
+      uploadId: session.uploadId,
+    });
     return jsonValidated(simpleOkResponseSchema, { ok: true });
   });
 
@@ -512,8 +1246,8 @@ export function createApp(): Hono<AppContext> {
       throw new HttpError(404, "object_not_found", `Object not found: ${key}`);
     }
 
-    const maxTtl = envInt(c.env.R2E_MAX_SHARE_TTL_SEC, 2592000);
-    const defaultTtl = envInt(c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400);
+    const maxTtl = envInt("R2E_MAX_SHARE_TTL_SEC", c.env.R2E_MAX_SHARE_TTL_SEC, 2592000);
+    const defaultTtl = envInt("R2E_DEFAULT_SHARE_TTL_SEC", c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400);
     const ttl = parseDurationSeconds(body.ttl, defaultTtl, maxTtl);
     const maxDownloads = body.maxDownloads ?? 0;
     const contentDisposition = body.contentDisposition ?? "attachment";
@@ -574,6 +1308,7 @@ export function createApp(): Hono<AppContext> {
   });
 
   app.get("/api/server/info", async (c) => {
+    const uploadPolicy = parseUploadPolicy(c.env);
     const payload = {
       version: WORKER_VERSION,
       auth: {
@@ -582,9 +1317,22 @@ export function createApp(): Hono<AppContext> {
       },
       limits: {
         adminAuthWindowSec: getAdminAuthWindowSeconds(c.env),
-        maxShareTtlSec: envInt(c.env.R2E_MAX_SHARE_TTL_SEC, 2592000),
-        defaultShareTtlSec: envInt(c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400),
-        uiMaxListLimit: envInt(c.env.R2E_UI_MAX_LIST_LIMIT, 1000),
+        maxShareTtlSec: envInt("R2E_MAX_SHARE_TTL_SEC", c.env.R2E_MAX_SHARE_TTL_SEC, 2592000),
+        defaultShareTtlSec: envInt("R2E_DEFAULT_SHARE_TTL_SEC", c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400),
+        uiMaxListLimit: envInt("R2E_UI_MAX_LIST_LIMIT", c.env.R2E_UI_MAX_LIST_LIMIT, 1000),
+        upload: {
+          maxFileBytes: uploadPolicy.maxFileBytes,
+          maxParts: uploadPolicy.maxParts,
+          maxConcurrentPerUser: uploadPolicy.maxConcurrentPerUser,
+          sessionTtlSec: uploadPolicy.sessionTtlSec,
+          signPartTtlSec: uploadPolicy.signPartTtlSec,
+          partSizeBytes: uploadPolicy.partSizeBytes,
+          allowedMime: uploadPolicy.allowedMime,
+          blockedMime: uploadPolicy.blockedMime,
+          allowedExtensions: uploadPolicy.allowedExtensions,
+          blockedExtensions: uploadPolicy.blockedExtensions,
+          prefixAllowlist: uploadPolicy.prefixAllowlist,
+        },
       },
       readonly: envBool(c.env.R2E_READONLY, false),
       bucket: {

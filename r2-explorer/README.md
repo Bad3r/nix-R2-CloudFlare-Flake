@@ -17,10 +17,41 @@ Set these in `wrangler.toml`:
 - `FILES_BUCKET` (R2 bucket binding)
 - `R2E_SHARES_KV` (share token state)
 - `R2E_KEYS_KV` (admin keyset + nonce replay keys)
+- `R2E_UPLOAD_SESSIONS` (Durable Object session state for multipart uploads)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/*`)
 - `R2E_BUCKET_MAP` (optional JSON map of bucket alias -> binding name; must include `{"files":"FILES_BUCKET"}`)
 - `R2E_ACCESS_TEAM_DOMAIN` (required for Access JWT verification on `/api/*`)
 - `R2E_ACCESS_AUD` (required Access app audience claim for `/api/*`)
+- `R2E_UPLOAD_S3_BUCKET` (bucket name used when signing direct multipart part uploads)
+
+Upload policy vars (all optional):
+
+- `R2E_UPLOAD_MAX_FILE_BYTES` (`0` = unlimited, default `0`)
+- `R2E_UPLOAD_MAX_PARTS` (`0` = up to R2 platform limit `10000`, default `0`)
+- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` (`0` = unlimited, default `0`)
+- `R2E_UPLOAD_SESSION_TTL_SEC` (default `3600`)
+- `R2E_UPLOAD_SIGN_TTL_SEC` (default `60`)
+- `R2E_UPLOAD_PART_SIZE_BYTES` (default `8388608`, must be `5 MiB` to `5 GiB`)
+- `R2E_UPLOAD_ALLOWED_MIME` (comma-separated MIME allowlist; empty disables allowlist)
+- `R2E_UPLOAD_BLOCKED_MIME` (comma-separated MIME blacklist; always enforced if set)
+- `R2E_UPLOAD_ALLOWED_EXT` (comma-separated extension allowlist; empty disables allowlist)
+- `R2E_UPLOAD_BLOCKED_EXT` (comma-separated extension blacklist; always enforced if set)
+- `R2E_UPLOAD_PREFIX_ALLOWLIST` (comma-separated key prefix allowlist; empty allows all)
+- `R2E_UPLOAD_ALLOWED_ORIGINS` (comma-separated Origin allowlist for upload control-plane routes; empty enforces same-origin only)
+
+Numeric upload policy vars are parsed strictly as base-10 integers. If a
+non-empty value is invalid, the Worker fails fast with
+`500 upload_config_invalid` instead of silently falling back to defaults.
+
+By default, MIME and extension checks are allow-all. Restrictions apply only
+when you set `R2E_UPLOAD_ALLOWED_MIME`, `R2E_UPLOAD_BLOCKED_MIME`,
+`R2E_UPLOAD_ALLOWED_EXT`, or `R2E_UPLOAD_BLOCKED_EXT`.
+
+Required Worker secrets for direct multipart signing:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `S3_ACCESS_KEY_ID`
+- `S3_SECRET_ACCESS_KEY`
 
 ## Initialize admin keyset
 
@@ -70,6 +101,40 @@ Failure responses for `/api/*` auth:
 - invalid JWT signature/claims: `401 access_jwt_invalid`
 - missing verifier vars (`R2E_ACCESS_TEAM_DOMAIN` / `R2E_ACCESS_AUD`): `500 access_config_invalid`
 
+## Multipart upload architecture
+
+The Worker now uses control-plane/data-plane separation:
+
+1. `POST /api/upload/init` creates a server-side upload session.
+2. `POST /api/upload/sign-part` returns a short-lived signed URL for one part.
+3. Browser uploads each part directly to R2 S3 endpoint.
+4. `POST /api/upload/complete` finalizes the multipart upload.
+5. `POST /api/upload/abort` aborts a failed or cancelled upload.
+
+Contract notes:
+
+- `declaredSize` is required in `POST /api/upload/init`.
+- `POST /api/upload/init` returns `objectKey` (not `key`) and `allowedExt`.
+- `POST /api/upload/sign-part` accepts optional `contentMd5`.
+- `POST /api/upload/complete` accepts optional `finalSize`.
+
+`POST /api/upload/part` is intentionally removed.
+
+Browser direct uploads require bucket CORS that allows your app origin and
+exposes `ETag`. Example:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://files.unsigned.sh"],
+    "AllowedMethods": ["PUT", "HEAD", "GET"],
+    "AllowedHeaders": ["content-type", "content-length", "content-md5"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
 ## Runtime introspection endpoint
 
 `GET /api/server/info` reports:
@@ -108,6 +173,8 @@ Required environment secrets in both environments:
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+- `S3_ACCESS_KEY_ID`
+- `S3_SECRET_ACCESS_KEY`
 - `R2E_SMOKE_BASE_URL`
 - `R2E_SMOKE_ADMIN_KID`
 - `R2E_SMOKE_ADMIN_SECRET`
@@ -115,6 +182,14 @@ Required environment secrets in both environments:
 - `R2E_SMOKE_KEY`
 - `R2E_SMOKE_ACCESS_CLIENT_ID` (Cloudflare Access service-token client ID for `/api/*`)
 - `R2E_SMOKE_ACCESS_CLIENT_SECRET` (Cloudflare Access service-token client secret for `/api/*`)
+
+Deploy workflow behavior:
+
+- Before each preview/production deploy, CI syncs runtime Worker secret bindings
+  with `wrangler secret put` for:
+  - `CLOUDFLARE_ACCOUNT_ID`
+  - `S3_ACCESS_KEY_ID`
+  - `S3_SECRET_ACCESS_KEY`
 
 Required environment variables in both environments (non-secret binding IDs/names):
 
@@ -129,6 +204,32 @@ Required environment variables in both environments (non-secret binding IDs/name
 - `R2E_ACCESS_TEAM_DOMAIN_PREVIEW`
 - `R2E_ACCESS_AUD`
 - `R2E_ACCESS_AUD_PREVIEW`
+- `R2E_UPLOAD_MAX_FILE_BYTES`
+- `R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_MAX_PARTS`
+- `R2E_UPLOAD_MAX_PARTS_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER`
+- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_SESSION_TTL_SEC`
+- `R2E_UPLOAD_SESSION_TTL_SEC_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_SIGN_TTL_SEC`
+- `R2E_UPLOAD_SIGN_TTL_SEC_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_PART_SIZE_BYTES`
+- `R2E_UPLOAD_PART_SIZE_BYTES_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_ALLOWED_MIME`
+- `R2E_UPLOAD_ALLOWED_MIME_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_BLOCKED_MIME`
+- `R2E_UPLOAD_BLOCKED_MIME_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_ALLOWED_EXT`
+- `R2E_UPLOAD_ALLOWED_EXT_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_BLOCKED_EXT`
+- `R2E_UPLOAD_BLOCKED_EXT_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_PREFIX_ALLOWLIST`
+- `R2E_UPLOAD_PREFIX_ALLOWLIST_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_ALLOWED_ORIGINS`
+- `R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW` (optional; falls back to non-preview value)
+- `R2E_UPLOAD_S3_BUCKET` (optional; defaults to `R2E_FILES_BUCKET`)
+- `R2E_UPLOAD_S3_BUCKET_PREVIEW` (optional; defaults to `R2E_FILES_BUCKET_PREVIEW`)
 
 Do not commit concrete binding IDs or bucket names into `wrangler.toml`; keep
 them in GitHub Environment variables and render `wrangler.ci.toml` during CI.

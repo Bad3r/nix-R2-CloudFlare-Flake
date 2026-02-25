@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 const keyString = z.string().min(1, "key is required");
+const sha256String = z
+  .string()
+  .trim()
+  .regex(/^(?:[A-Fa-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/u, "sha256 must be a hex-64 or base64-encoded SHA-256 digest.");
+const md5String = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9+/]{22}==$/u, "contentMd5 must be base64-encoded MD5.");
 
 export const requestActorSchema = z
   .object({
@@ -57,37 +65,56 @@ export const metaResponseSchema = z
 
 export const uploadInitBodySchema = z
   .object({
-    key: keyString,
+    filename: z.string().min(1).max(255),
+    prefix: z.string().optional(),
+    declaredSize: z.number().int().positive(),
     contentType: z.string().optional(),
+    sha256: sha256String.optional(),
+    clientUploadId: z.string().max(128).optional(),
   })
   .strict();
 
 export const uploadInitResponseSchema = z
   .object({
-    key: z.string(),
+    sessionId: z.string().min(1),
+    objectKey: z.string(),
     uploadId: z.string(),
+    expiresAt: z.string(),
+    partSizeBytes: z.number().int().positive(),
+    maxParts: z.number().int().positive(),
+    signPartTtlSec: z.number().int().positive(),
+    allowedMime: z.array(z.string()),
+    allowedExt: z.array(z.string()),
   })
   .strict();
 
-export const uploadPartQuerySchema = z
+export const uploadSignPartBodySchema = z
   .object({
-    key: keyString,
+    sessionId: z.string().min(1),
     uploadId: z.string().min(1),
     partNumber: z.coerce.number().int().positive(),
+    contentLength: z.coerce.number().int().positive(),
+    contentMd5: md5String.optional(),
   })
   .strict();
 
-export const uploadPartResponseSchema = z
+export const uploadSignPartResponseSchema = z
   .object({
+    sessionId: z.string().min(1),
+    uploadId: z.string().min(1),
     partNumber: z.number().int().positive(),
-    etag: z.string(),
+    url: z.string().url(),
+    method: z.literal("PUT"),
+    headers: z.record(z.string(), z.string()),
+    expiresAt: z.string(),
   })
   .strict();
 
 export const uploadCompleteBodySchema = z
   .object({
-    key: keyString,
+    sessionId: z.string().min(1),
     uploadId: z.string().min(1),
+    finalSize: z.number().int().positive().optional(),
     parts: z
       .array(
         z
@@ -107,12 +134,14 @@ export const uploadCompleteResponseSchema = z
     etag: z.string(),
     uploaded: z.string().nullable(),
     size: z.number().int().nonnegative(),
+    contentType: z.string().nullable(),
+    originalFilename: z.string(),
   })
   .strict();
 
 export const uploadAbortBodySchema = z
   .object({
-    key: keyString,
+    sessionId: z.string().min(1),
     uploadId: z.string().min(1),
   })
   .strict();
@@ -231,6 +260,21 @@ export const serverInfoResponseSchema = z
         maxShareTtlSec: z.number().int().positive(),
         defaultShareTtlSec: z.number().int().positive(),
         uiMaxListLimit: z.number().int().positive(),
+        upload: z
+          .object({
+            maxFileBytes: z.number().int().nonnegative(),
+            maxParts: z.number().int().positive(),
+            maxConcurrentPerUser: z.number().int().nonnegative(),
+            sessionTtlSec: z.number().int().positive(),
+            signPartTtlSec: z.number().int().positive(),
+            partSizeBytes: z.number().int().positive(),
+            allowedMime: z.array(z.string()),
+            blockedMime: z.array(z.string()),
+            allowedExtensions: z.array(z.string()),
+            blockedExtensions: z.array(z.string()),
+            prefixAllowlist: z.array(z.string()),
+          })
+          .strict(),
       })
       .strict(),
     readonly: z.boolean(),

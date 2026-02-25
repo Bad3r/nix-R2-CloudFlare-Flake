@@ -64,9 +64,10 @@ async function fetchWithRetry(
 
 describeLive("live worker integration", () => {
   it(
-    "validates real share flow plus unauthenticated and authenticated API behavior",
+    "validates real share flow plus authenticated multipart upload behavior",
     async () => {
       const baseUrl = requiredEnv("R2E_SMOKE_BASE_URL").replace(/\/+$/, "");
+      const baseOrigin = new URL(baseUrl).origin;
       const bucket = requiredEnv("R2E_SMOKE_BUCKET");
       const key = requiredEnv("R2E_SMOKE_KEY");
       const adminKid = requiredEnv("R2E_SMOKE_ADMIN_KID");
@@ -83,6 +84,8 @@ describeLive("live worker integration", () => {
         R2_EXPLORER_BASE_URL: baseUrl,
         R2_EXPLORER_ADMIN_KID: adminKid,
         R2_EXPLORER_ADMIN_SECRET: adminSecret,
+        R2_EXPLORER_ACCESS_CLIENT_ID: accessClientId,
+        R2_EXPLORER_ACCESS_CLIENT_SECRET: accessClientSecret,
       } as NodeJS.ProcessEnv;
 
       let createdTokenId: string | null = null;
@@ -146,11 +149,117 @@ describeLive("live worker integration", () => {
 
         const authenticatedPayload = JSON.parse(authenticated.body) as {
           version?: string;
-          actor?: { mode?: string };
+          actor?: { mode?: string; actor?: string };
         };
         expect(typeof authenticatedPayload.version).toBe("string");
         expect(authenticatedPayload.version?.length).toBeGreaterThan(0);
         expect(authenticatedPayload.actor?.mode).toBe("access");
+        expect(authenticatedPayload.actor?.actor).toBeTruthy();
+        expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
+
+        const uploadInit = await fetchWithRetry(
+          `${baseUrl}/api/upload/init`,
+          {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              "content-type": "application/json",
+              origin: baseOrigin,
+              "x-r2e-csrf": "1",
+              "CF-Access-Client-Id": accessClientId,
+              "CF-Access-Client-Secret": accessClientSecret,
+            },
+            body: JSON.stringify({
+              filename: "live-multipart.bin",
+              prefix: "live/",
+              declaredSize: 4096,
+              contentType: "application/octet-stream",
+            }),
+          },
+          attempts,
+        );
+        if (uploadInit.status !== 200) {
+          throw new Error(`upload init failed: status=${uploadInit.status} body=${uploadInit.body}`);
+        }
+        const initPayload = JSON.parse(uploadInit.body) as {
+          sessionId: string;
+          uploadId: string;
+          objectKey: string;
+        };
+        expect(initPayload.sessionId.length).toBeGreaterThan(0);
+        expect(initPayload.uploadId.length).toBeGreaterThan(0);
+        expect(initPayload.objectKey.startsWith("live/")).toBe(true);
+
+        const signPart = await fetchWithRetry(
+          `${baseUrl}/api/upload/sign-part`,
+          {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              "content-type": "application/json",
+              origin: baseOrigin,
+              "x-r2e-csrf": "1",
+              "CF-Access-Client-Id": accessClientId,
+              "CF-Access-Client-Secret": accessClientSecret,
+            },
+            body: JSON.stringify({
+              sessionId: initPayload.sessionId,
+              uploadId: initPayload.uploadId,
+              partNumber: 1,
+              contentLength: 4096,
+            }),
+          },
+          attempts,
+        );
+        expect(signPart.status).toBe(200);
+        const signPayload = JSON.parse(signPart.body) as {
+          url: string;
+          method: string;
+          headers: Record<string, string>;
+        };
+        const multipartBody = new Uint8Array(4096).fill(90);
+        const uploadResponse = await fetch(signPayload.url, {
+          method: signPayload.method,
+          headers: signPayload.headers,
+          body: multipartBody,
+        });
+        expect(uploadResponse.status).toBe(200);
+        const etag = uploadResponse.headers.get("etag");
+        expect(etag).toBeTruthy();
+
+        const completeMultipart = await fetchWithRetry(
+          `${baseUrl}/api/upload/complete`,
+          {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              "content-type": "application/json",
+              origin: baseOrigin,
+              "x-r2e-csrf": "1",
+              "CF-Access-Client-Id": accessClientId,
+              "CF-Access-Client-Secret": accessClientSecret,
+            },
+            body: JSON.stringify({
+              sessionId: initPayload.sessionId,
+              uploadId: initPayload.uploadId,
+              finalSize: 4096,
+              parts: [
+                {
+                  partNumber: 1,
+                  etag: String(etag).replace(/^\"|\"$/g, ""),
+                },
+              ],
+            }),
+          },
+          attempts,
+        );
+        expect(completeMultipart.status).toBe(200);
+        const completePayload = JSON.parse(completeMultipart.body) as {
+          key: string;
+          size: number;
+        };
+        expect(completePayload.key).toBe(initPayload.objectKey);
+        expect(completePayload.size).toBe(4096);
       } finally {
         if (createdTokenId) {
           const { stdout: revokeStdout } = await execFileAsync(

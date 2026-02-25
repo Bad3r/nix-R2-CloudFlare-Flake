@@ -101,7 +101,11 @@ writeShellApplication {
         "Required environment variables:" \
         "  R2_EXPLORER_BASE_URL     e.g. https://files.unsigned.sh" \
         "  R2_EXPLORER_ADMIN_KID    key id from R2E_KEYS_KV keyset" \
-        "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64:<value>)"
+        "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64:<value>)" \
+        "" \
+        "Optional Access service-token headers (for Access-protected /api/share/*):" \
+        "  R2_EXPLORER_ACCESS_CLIENT_ID" \
+        "  R2_EXPLORER_ACCESS_CLIENT_SECRET"
     }
 
     usage_rclone() {
@@ -169,6 +173,11 @@ writeShellApplication {
       if [[ -z "$worker_admin_secret_hex" ]]; then
         if ! worker_admin_secret_hex="$(normalize_secret_hex "$R2_EXPLORER_ADMIN_SECRET")"; then
           fail "R2_EXPLORER_ADMIN_SECRET has invalid key material. Use plain text or base64:<value>."
+        fi
+      fi
+      if [[ -n "''${R2_EXPLORER_ACCESS_CLIENT_ID:-}" || -n "''${R2_EXPLORER_ACCESS_CLIENT_SECRET:-}" ]]; then
+        if [[ -z "''${R2_EXPLORER_ACCESS_CLIENT_ID:-}" || -z "''${R2_EXPLORER_ACCESS_CLIENT_SECRET:-}" ]]; then
+          fail "R2_EXPLORER_ACCESS_CLIENT_ID and R2_EXPLORER_ACCESS_CLIENT_SECRET must both be set when using Access service tokens."
         fi
       fi
     }
@@ -248,6 +257,7 @@ writeShellApplication {
       local query="''${3:-}"
       local body="''${4:-}"
       local signed ts nonce signature url response status payload
+      local -a access_headers
 
       ensure_worker_share_env
 
@@ -262,6 +272,12 @@ writeShellApplication {
         url="$url?$query"
       fi
 
+      access_headers=()
+      if [[ -n "''${R2_EXPLORER_ACCESS_CLIENT_ID:-}" ]]; then
+        access_headers+=(-H "CF-Access-Client-Id: $R2_EXPLORER_ACCESS_CLIENT_ID")
+        access_headers+=(-H "CF-Access-Client-Secret: $R2_EXPLORER_ACCESS_CLIENT_SECRET")
+      fi
+
       if [[ -n "$body" ]]; then
         response="$(
           curl -sS \
@@ -271,6 +287,7 @@ writeShellApplication {
             -H "x-r2e-ts: $ts" \
             -H "x-r2e-nonce: $nonce" \
             -H "x-r2e-signature: $signature" \
+            "''${access_headers[@]}" \
             --data "$body" \
             --max-time 60 \
             --connect-timeout 10 \
@@ -285,6 +302,7 @@ writeShellApplication {
             -H "x-r2e-ts: $ts" \
             -H "x-r2e-nonce: $nonce" \
             -H "x-r2e-signature: $signature" \
+            "''${access_headers[@]}" \
             --max-time 60 \
             --connect-timeout 10 \
             "$url" \
