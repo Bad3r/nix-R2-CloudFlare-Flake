@@ -17,7 +17,8 @@ Phase 5 implementation includes:
   - structured error responses
 - Object operations:
   - list/meta/download/preview
-  - multipart upload init/part/complete/abort
+  - multipart upload init/sign-part/complete/abort (control-plane only)
+  - direct part upload to R2 S3 endpoint using short-lived signed URLs
   - object move and soft-delete to `.trash/`
 - Share lifecycle:
   - create/list/revoke on `/api/share/*`
@@ -27,27 +28,55 @@ Phase 5 implementation includes:
 - Admin HMAC keyset + nonce replay tracking (`R2E_KEYS_KV`).
 - Runtime capability endpoint: `GET /api/server/info`.
 - Worker test suite (`vitest`) covering auth, share lifecycle, replay
-  protection, readonly mode, multipart flow, and server info.
+  protection, readonly mode, multipart control-plane flow, and server info.
 
 Current API surface:
 
-| Route                       | Purpose                                          |
-| --------------------------- | ------------------------------------------------ |
-| `GET /api/list`             | List objects/prefixes                            |
-| `GET /api/meta`             | Object metadata                                  |
-| `GET /api/download`         | Download with attachment disposition             |
-| `GET /api/preview`          | Inline/attachment preview by content type        |
-| `POST /api/upload/init`     | Start multipart upload                           |
-| `POST /api/upload/part`     | Upload multipart part                            |
-| `POST /api/upload/complete` | Complete multipart upload                        |
-| `POST /api/upload/abort`    | Abort multipart upload                           |
-| `POST /api/object/delete`   | Soft-delete object to `.trash/`                  |
-| `POST /api/object/move`     | Move/rename object                               |
-| `POST /api/share/create`    | Create share token (Access or HMAC admin auth)   |
-| `POST /api/share/revoke`    | Revoke share token (Access or HMAC admin auth)   |
-| `GET /api/share/list`       | List share records for key (Access or HMAC auth) |
-| `GET /api/server/info`      | Runtime capabilities and effective limits        |
-| `GET /share/<token>`        | Public tokenized object access                   |
+| Route                        | Purpose                                          |
+| ---------------------------- | ------------------------------------------------ |
+| `GET /api/list`              | List objects/prefixes                            |
+| `GET /api/meta`              | Object metadata                                  |
+| `GET /api/download`          | Download with attachment disposition             |
+| `GET /api/preview`           | Inline/attachment preview by content type        |
+| `POST /api/upload/init`      | Start multipart upload session                   |
+| `POST /api/upload/sign-part` | Sign a single multipart part upload URL          |
+| `POST /api/upload/complete`  | Complete multipart upload                        |
+| `POST /api/upload/abort`     | Abort multipart upload                           |
+| `POST /api/object/delete`    | Soft-delete object to `.trash/`                  |
+| `POST /api/object/move`      | Move/rename object                               |
+| `POST /api/share/create`     | Create share token (Access or HMAC admin auth)   |
+| `POST /api/share/revoke`     | Revoke share token (Access or HMAC admin auth)   |
+| `GET /api/share/list`        | List share records for key (Access or HMAC auth) |
+| `GET /api/server/info`       | Runtime capabilities and effective limits        |
+| `GET /share/<token>`         | Public tokenized object access                   |
+
+### Secure Multipart Contract
+
+Control-plane (`/api/upload/*`) and data-plane (direct R2 signed `PUT`) are
+strictly separated.
+
+Control-plane contract:
+
+- `POST /api/upload/init` request includes `filename`, `declaredSize`,
+  optional `prefix`, optional `contentType`, optional `sha256`.
+- `POST /api/upload/init` response includes `sessionId`, `uploadId`,
+  `objectKey`, `expiresAt`, `partSizeBytes`, `maxParts`, `signPartTtlSec`,
+  `allowedMime`, `allowedExt`.
+- `POST /api/upload/sign-part` request includes `sessionId`, `uploadId`,
+  `partNumber`, `contentLength`, optional `contentMd5`.
+- `POST /api/upload/complete` request includes `sessionId`, `uploadId`,
+  `parts`, optional `finalSize`.
+- `POST /api/upload/abort` request includes `sessionId`, `uploadId`.
+
+Worker-side security controls:
+
+- Origin + CSRF enforcement on all mutating upload control-plane routes.
+- Server-randomized object keys with original filename stored as metadata.
+- MIME/extension allowlist + blacklist policy with allow-all defaults unless
+  allowlists are configured.
+- Post-complete magic-byte validation and policy re-check before final accept.
+- Durable Object session state with ownership binding and deterministic state
+  transitions (`init|active|completed|aborted|expired`).
 
 ### CI/CD Deployment
 
@@ -106,22 +135,24 @@ share-management requests, so the Worker accepts Access identity via the
 
 ## Files (Current State)
 
-| File                                  | Purpose                                                  |
-| ------------------------------------- | -------------------------------------------------------- |
-| `packages/r2-cli.nix`                 | Primary `r2` CLI with presigned + Worker share commands  |
-| `r2-explorer/flake.nix`               | Worker subflake tooling/dev shell/deploy helper          |
-| `r2-explorer/wrangler.toml`           | Worker bindings + runtime vars (`R2E_*`)                 |
-| `r2-explorer/src/index.ts`            | Worker entrypoint                                        |
-| `r2-explorer/src/app.ts`              | Hono router, middleware chain, handlers                  |
-| `r2-explorer/src/schemas.ts`          | Zod contracts for query/body/response payloads           |
-| `r2-explorer/src/auth.ts`             | Access and admin HMAC verification logic                 |
-| `r2-explorer/src/kv.ts`               | Share record persistence and listing in KV               |
-| `r2-explorer/src/r2.ts`               | R2 object helpers (list/get/move/soft-delete/multipart)  |
-| `r2-explorer/src/ui.ts`               | Embedded dashboard interface                             |
-| `r2-explorer/src/version.ts`          | Worker version constant exposed by `/api/server/info`    |
-| `r2-explorer/tests/*.spec.ts`         | Worker tests (auth/share/readonly/multipart/server info) |
-| `r2-explorer/tests/helpers/memory.ts` | In-memory R2+KV test harness                             |
-| `docs/sharing.md`                     | Sharing modes + Access bypass policy guidance            |
+| File                                  | Purpose                                                   |
+| ------------------------------------- | --------------------------------------------------------- |
+| `packages/r2-cli.nix`                 | Primary `r2` CLI with presigned + Worker share commands   |
+| `r2-explorer/flake.nix`               | Worker subflake tooling/dev shell/deploy helper           |
+| `r2-explorer/wrangler.toml`           | Worker bindings + runtime vars (`R2E_*`)                  |
+| `r2-explorer/src/index.ts`            | Worker entrypoint                                         |
+| `r2-explorer/src/app.ts`              | Hono router, middleware chain, handlers                   |
+| `r2-explorer/src/schemas.ts`          | Zod contracts for query/body/response payloads            |
+| `r2-explorer/src/auth.ts`             | Access and admin HMAC verification logic                  |
+| `r2-explorer/src/kv.ts`               | Share record persistence and listing in KV                |
+| `r2-explorer/src/r2.ts`               | R2 object helpers (list/get/move/soft-delete/multipart)   |
+| `r2-explorer/src/upload-signing.ts`   | SigV4 presigning for direct multipart `UploadPart` URLs   |
+| `r2-explorer/src/upload-sessions.ts`  | Durable Object upload session store and state transitions |
+| `r2-explorer/src/ui.ts`               | Embedded dashboard interface                              |
+| `r2-explorer/src/version.ts`          | Worker version constant exposed by `/api/server/info`     |
+| `r2-explorer/tests/*.spec.ts`         | Worker tests (auth/share/readonly/multipart/server info)  |
+| `r2-explorer/tests/helpers/memory.ts` | In-memory R2+KV test harness                              |
+| `docs/sharing.md`                     | Sharing modes + Access bypass policy guidance             |
 
 ## Verification
 
@@ -148,4 +179,23 @@ curl -I https://files.unsigned.sh/api/list
 
 # Verify runtime capability endpoint (with Access session)
 curl -s https://files.unsigned.sh/api/server/info | jq .
+```
+
+### Multipart verification
+
+```bash
+# Access-authenticated control-plane init
+curl -sS -X POST https://files.unsigned.sh/api/upload/init \
+  -H 'content-type: application/json' \
+  -H 'origin: https://files.unsigned.sh' \
+  -H 'x-r2e-csrf: 1' \
+  -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}" \
+  -d '{"filename":"smoke.bin","prefix":"smoke/","declaredSize":4096,"contentType":"application/octet-stream"}' | jq .
+
+# Negative guard checks
+curl -sS -X POST https://files.unsigned.sh/api/upload/init \
+  -H 'content-type: application/json' \
+  -d '{"filename":"bad.bin","prefix":"smoke/","declaredSize":4096,"contentType":"application/octet-stream"}' | jq .
+# Expect error code origin_required / csrf_required depending headers.
 ```

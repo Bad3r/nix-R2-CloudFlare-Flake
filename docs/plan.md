@@ -18,6 +18,11 @@ high-level architecture diagram and key design decisions.
 7. [x] **Phase 7**: [CI/CD setup](./plan/phase-7-ci-cd.md)
 8. [x] **Phase 8**: [Real-user adoption via `~/nixos` integration (consumer input wiring + runtime validation + docs feedback loop)](./plan/phase-8-integration.md) (complete 2026-02-15)
 
+Phase 5 now includes the secure multipart migration: control-plane/data-plane
+split (`/api/upload/init` + `/api/upload/sign-part` + `/api/upload/complete` +
+`/api/upload/abort`), direct browser-to-R2 part uploads, and removal of the
+legacy Worker-proxied `/api/upload/part` route.
+
 ## Phase 8 detailed execution docs
 
 - `docs/plan/phase-8-1-consumer-integration.md`: completed 8.1 integration execution record.

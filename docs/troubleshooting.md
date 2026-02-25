@@ -370,11 +370,11 @@ Escalate:
 
 ## 5) Multipart upload (Worker API)
 
-### A. `upload/init|part|complete` fails or returns invalid upload state
+### A. `upload/init|sign-part|complete` fails or returns invalid upload state
 
 Failure signature:
 
-- Worker upload endpoints return 4xx/5xx, or `complete` fails after parts upload.
+- Worker upload control-plane endpoints return 4xx/5xx, or `complete` fails after direct part uploads.
 
 Confirm:
 
@@ -384,19 +384,24 @@ curl -I https://files.unsigned.sh/api/server/info
 curl -I https://files.unsigned.sh/api/upload/init
 ```
 
-For authenticated test sessions, retry init/part/complete sequence and capture
-response body/status for each step.
+For authenticated test sessions, retry init/sign-part/complete sequence and
+capture response body/status for each step. For direct uploads, also capture
+the R2 `PUT` status and response headers (especially `ETag`).
 
 Likely root causes:
 
 - Missing Access session or admin auth where required.
-- Mismatched upload ID/part list between `part` and `complete`.
+- Mismatched upload session or part list between `sign-part` and `complete`.
+- Missing/incorrect bucket CORS configuration for browser direct uploads.
+- Presigned part URL expired before client `PUT` request.
 - Deployment drift causing schema/contract mismatch.
 
 Repair:
 
 - Restart the upload sequence from a fresh `upload/init`.
-- Ensure each part upload uses the same upload ID and correct part numbering.
+- Ensure each part request uses the same `sessionId` + `uploadId` and correct part numbering.
+- Confirm direct upload requests target `https://<account_id>.r2.cloudflarestorage.com/...`.
+- Confirm bucket CORS allows the app origin, `PUT`, and exposes `ETag`.
 - If stuck upload state persists, call `upload/abort` and retry from init.
 - Redeploy Worker if mismatch started after code/config rollout.
 
