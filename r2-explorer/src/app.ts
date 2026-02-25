@@ -163,6 +163,33 @@ function normalizeMimeType(contentType: string): string {
   return contentType.split(";")[0].trim().toLowerCase();
 }
 
+const ZIP_CONTAINER_MIME_TYPES = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/java-archive",
+  "application/vnd.android.package-archive",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.presentation",
+]);
+
+function isZipContainerMime(contentType: string): boolean {
+  return ZIP_CONTAINER_MIME_TYPES.has(contentType) || contentType.endsWith("+zip");
+}
+
+function magicMimeMatchesDeclared(declaredContentType: string, detectedMime: string): boolean {
+  if (declaredContentType === detectedMime) {
+    return true;
+  }
+  if (detectedMime === "application/zip" && isZipContainerMime(declaredContentType)) {
+    return true;
+  }
+  return false;
+}
+
 function normalizeUploadPrefix(prefix: string | undefined): string {
   if (!prefix || prefix.trim().length === 0) {
     return "";
@@ -1026,7 +1053,7 @@ export function createApp(): Hono<AppContext> {
     const policy = parseUploadPolicy(c.env);
     const detectedMime = await uploadedMagicMime(c.env.FILES_BUCKET, session.objectKey);
     const normalizedContentType = normalizeMimeType(session.contentType);
-    if (detectedMime && normalizedContentType !== detectedMime) {
+    if (detectedMime && !magicMimeMatchesDeclared(normalizedContentType, detectedMime)) {
       await c.env.FILES_BUCKET.delete(session.objectKey);
       await markUploadSessionAborted(c.env, actor, {
         sessionId: session.sessionId,

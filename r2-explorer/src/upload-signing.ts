@@ -23,7 +23,6 @@ type SignUploadPartInput = {
 function encodeObjectKey(key: string): string {
   return key
     .split("/")
-    .filter((segment) => segment.length > 0)
     .map((segment) => encodeURIComponent(segment))
     .join("/");
 }

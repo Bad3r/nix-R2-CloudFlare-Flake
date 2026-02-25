@@ -586,6 +586,103 @@ describe("multipart upload flow", () => {
     expect(secondPayload.objectKey.includes("archive")).toBe(false);
   });
 
+  it("preserves empty key segments when signing multipart part URLs", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    const initResponse = await initUpload(app, env, {
+      filename: "sample.bin",
+      prefix: "uploads//nested//",
+      declaredSize: 1024,
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    expect(initPayload.objectKey.includes("//")).toBe(true);
+
+    const signResponse = await app.fetch(
+      new Request("https://files.example.com/api/upload/sign-part", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          partNumber: 1,
+          contentLength: 1024,
+        }),
+      }),
+      env,
+    );
+    expect(signResponse.status).toBe(200);
+
+    const signPayload = (await signResponse.json()) as {
+      url: string;
+    };
+    const signedPath = decodeURIComponent(new URL(signPayload.url).pathname);
+    expect(signedPath.endsWith(`/${initPayload.objectKey}`)).toBe(true);
+  });
+
+  it("accepts ZIP-container MIME aliases when magic bytes detect ZIP", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "document.docx",
+      declaredSize,
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.fill(7);
+    partBytes[0] = 0x50;
+    partBytes[1] = 0x4b;
+    partBytes[2] = 0x03;
+    partBytes[3] = 0x04;
+    const partMd5 = md5Base64(partBytes);
+
+    const signResponse = await app.fetch(
+      new Request("https://files.example.com/api/upload/sign-part", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          partNumber: 1,
+          contentLength: declaredSize,
+          contentMd5: partMd5,
+        }),
+      }),
+      env,
+    );
+    expect(signResponse.status).toBe(200);
+
+    const upload = bucket.resumeMultipartUpload(initPayload.objectKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await app.fetch(
+      new Request("https://files.example.com/api/upload/complete", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          finalSize: declaredSize,
+          parts: [
+            {
+              partNumber: 1,
+              etag: uploadedPart.etag,
+            },
+          ],
+        }),
+      }),
+      env,
+    );
+
+    expect(completeResponse.status).toBe(200);
+  });
+
   it("blocks blacklisted extensions even when allowlist is unset", async () => {
     const { env } = await createTestEnv();
     env.R2E_UPLOAD_BLOCKED_EXT = ".exe,.dll";
