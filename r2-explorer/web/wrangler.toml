@@ -1,0 +1,20 @@
+name = "r2-explorer-web"
+compatibility_date = "2026-02-26"
+main = "./dist/_worker.js"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[observability]
+enabled = true
+
+[dev]
+port = 4321
+local_protocol = "http"
+
+# Route this Worker to all non-API paths on the shared host.
+# Keep /api/v2/* and /share/* attached to the API Worker.
+# routes = [
+#   { pattern = "files.unsigned.sh/*", custom_domain = true }
+# ]
