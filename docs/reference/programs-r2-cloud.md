@@ -29,6 +29,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 ## Generated runtime artifacts
 
 - wrapper command: `r2`
+- delegated CLI derivation: versioned as `r2-0.1.0+git.<rev>` (fallback `r2-0.1.0+src.<hash>`) so `nh`/`nvd` can detect source/revision changes while executable stays `r2`
 - wrapper exports:
   - `R2_CREDENTIALS_FILE`
   - variables from `programs.r2-cloud.explorerEnvFile` (if configured and readable)

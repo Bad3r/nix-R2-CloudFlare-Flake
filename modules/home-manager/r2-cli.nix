@@ -7,6 +7,8 @@
 let
   cfg = config.programs.r2-cloud;
   r2lib = import ../../lib/r2.nix { inherit lib; };
+  versionlib = import ../../lib/version.nix { inherit lib; };
+  inherit (versionlib) releaseBase;
   optionalPkg = name: if builtins.hasAttr name pkgs then [ pkgs.${name} ] else [ ];
   wranglerPkg =
     if builtins.hasAttr "nodePackages" pkgs && builtins.hasAttr "wrangler" pkgs.nodePackages then
@@ -15,7 +17,15 @@ let
       pkgs.wrangler
     else
       null;
-  r2Package = pkgs.callPackage ../../packages/r2-cli.nix { wrangler = wranglerPkg; };
+  r2DerivationVersion = versionlib.mkDerivationVersion {
+    inherit releaseBase;
+    src = ../../.;
+  };
+  r2Package = pkgs.callPackage ../../packages/r2-cli.nix {
+    wrangler = wranglerPkg;
+    derivationVersion = r2DerivationVersion;
+    inherit releaseBase;
+  };
   defaultCredentialsFile = "${config.xdg.configHome}/cloudflare/r2/env";
   defaultRcloneConfigPath = "${config.xdg.configHome}/rclone/rclone.conf";
   explorerEnvFileValue = if cfg.explorerEnvFile == null then "" else toString cfg.explorerEnvFile;
@@ -27,6 +37,8 @@ let
   };
   r2Wrapper = pkgs.writeShellApplication {
     name = "r2";
+    derivationArgs.name = "r2-wrapper-${r2DerivationVersion}";
+    passthru.version = r2DerivationVersion;
     text = ''
       set -euo pipefail
       export R2_CREDENTIALS_FILE=${lib.escapeShellArg (toString cfg.credentialsFile)}

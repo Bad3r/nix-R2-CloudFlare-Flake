@@ -8,9 +8,24 @@
   openssl,
   rclone,
   wrangler ? null,
+  derivationVersion ? null,
+  releaseBase ? "0.1.0",
 }:
+let
+  versionLib = import ../lib/version.nix { inherit lib; };
+  packageVersion =
+    if derivationVersion != null then
+      derivationVersion
+    else
+      versionLib.mkDerivationVersion {
+        inherit releaseBase;
+        src = ../.;
+      };
+in
 writeShellApplication {
   name = "r2";
+  derivationArgs.name = "r2-${packageVersion}";
+  passthru.version = packageVersion;
   runtimeInputs = [
     coreutils
     curl

@@ -447,7 +447,11 @@ let
     ];
   };
   packageNames = builtins.map (pkg: pkg.name) hmEval.config.home.packages;
-  hasR2 = builtins.any (name: name == "r2") packageNames;
+  hasR2 =
+    builtins.any (
+      name:
+      name == "r2" || (builtins.match "^r2-wrapper-[0-9].*$" name != null)
+    ) packageNames;
 in
 if hasR2 then "ok" else builtins.throw "Missing expected r2 CLI wrapper in home.packages"
 NIX
