@@ -7,6 +7,7 @@ on:
       - "r2-explorer/**"
       - ".github/workflows/r2-explorer-deploy.yml"
       - "scripts/ci/render-r2-explorer-wrangler-config.sh"
+      - "scripts/ci/sync-r2-upload-cors.sh"
       - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
     inputs:

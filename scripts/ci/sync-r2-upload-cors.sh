@@ -31,6 +31,9 @@ fi
 bucket_name="$1"
 allowed_origins_csv="$2"
 base_url="$3"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "${script_dir}/../.." && pwd -P)"
+worker_dir="${repo_root}/r2-explorer"
 
 if [[ -z ${bucket_name} ]]; then
   fail "bucket name must not be empty"
@@ -38,6 +41,10 @@ fi
 
 if [[ -z ${base_url} ]]; then
   fail "base URL must not be empty"
+fi
+
+if [[ ! -f "${worker_dir}/package.json" ]]; then
+  fail "r2-explorer workspace not found at ${worker_dir}"
 fi
 
 for required in node jq pnpm; do
@@ -112,5 +119,5 @@ jq -n --argjson origins "${origins_json}" '
 ' >"${cors_file}"
 
 echo "Syncing upload CORS for bucket '${bucket_name}' with origins: ${origins_json}"
-pnpm exec wrangler r2 bucket cors set "${bucket_name}" --file "${cors_file}" --force
+pnpm --dir "${worker_dir}" exec wrangler r2 bucket cors set "${bucket_name}" --file "${cors_file}" --force
 echo "Upload CORS sync complete for bucket '${bucket_name}'."
