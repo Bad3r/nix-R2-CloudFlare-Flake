@@ -115,6 +115,8 @@ Contract notes:
 
 - `declaredSize` is required in `POST /api/upload/init`.
 - `POST /api/upload/init` returns `objectKey` (not `key`) and `allowedExt`.
+- `POST /api/upload/init` fails fast with `409` when another active session
+  already targets the same key.
 - `POST /api/upload/sign-part` accepts optional `contentMd5`.
 - `POST /api/upload/complete` accepts optional `finalSize`.
 

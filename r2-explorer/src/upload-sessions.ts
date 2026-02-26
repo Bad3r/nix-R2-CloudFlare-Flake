@@ -429,6 +429,16 @@ export class UploadSessionDurableObject {
     return count;
   }
 
+  private async activeSessionForObjectKey(nowMs: number, objectKey: string): Promise<SessionStorageRecord | null> {
+    const listing = await this.state.storage.list<SessionStorageRecord>({ prefix: SESSION_PREFIX });
+    for (const value of listing.values()) {
+      if (value.status === "active" && !isExpired(value, nowMs) && value.objectKey === objectKey) {
+        return value;
+      }
+    }
+    return null;
+  }
+
   private async loadSession(sessionId: string): Promise<SessionStorageRecord> {
     const key = storageKey(sessionId);
     const session = await this.state.storage.get<SessionStorageRecord>(key);
@@ -496,6 +506,14 @@ export class UploadSessionDurableObject {
         if (existing) {
           throw new HttpError(409, "upload_session_exists", "Upload session already exists.", {
             sessionId: body.session.sessionId,
+          });
+        }
+
+        const keyConflict = await this.activeSessionForObjectKey(nowMs, body.session.objectKey);
+        if (keyConflict) {
+          throw new HttpError(409, "upload_object_key_in_use", "An active upload session already targets this key.", {
+            objectKey: body.session.objectKey,
+            sessionId: keyConflict.sessionId,
           });
         }
 
