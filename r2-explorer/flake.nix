@@ -98,6 +98,7 @@
               cd ${./.}
               ${pnpmCmd} install
               ${pnpmCmd} -C web run build
+              cp web/.assetsignore web/dist/.assetsignore
               ${wranglerCmd} deploy --config web/wrangler.toml "$@"
             '';
           };

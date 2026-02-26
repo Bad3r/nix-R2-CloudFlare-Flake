@@ -151,7 +151,10 @@ jobs:
         working-directory: r2-explorer
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: pnpm exec wrangler deploy --config web/wrangler.toml --env preview
+        run: |
+          set -euo pipefail
+          cp web/.assetsignore web/dist/.assetsignore
+          pnpm exec wrangler deploy --config web/wrangler.toml --env preview
 
   smoke-preview:
     name: Smoke preview
@@ -438,7 +441,10 @@ jobs:
         working-directory: r2-explorer
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: pnpm exec wrangler deploy --config web/wrangler.toml
+        run: |
+          set -euo pipefail
+          cp web/.assetsignore web/dist/.assetsignore
+          pnpm exec wrangler deploy --config web/wrangler.toml
 
   smoke-production:
     name: Smoke production
