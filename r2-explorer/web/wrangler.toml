@@ -17,8 +17,19 @@ local_protocol = "http"
 name = "r2-explorer-web-preview"
 workers_dev = true
 
-# Route this Worker to all non-API paths on the shared host.
-# Keep /api/v2/* and /share/* attached to the API Worker.
+# Example same-domain path split (production):
+# 1) Web Worker (this file) handles the host catch-all.
+# routes = [{ pattern = "files.unsigned.sh/*", custom_domain = true }]
+#
+# 2) API Worker (r2-explorer/wrangler.toml) claims the more-specific paths:
 # routes = [
-#   { pattern = "files.unsigned.sh/*", custom_domain = true }
+#   { pattern = "files.unsigned.sh/api/v2/*", custom_domain = true },
+#   { pattern = "files.unsigned.sh/share/*", custom_domain = true }
 # ]
+#
+# Cloudflare route precedence is specificity-first, so API/share traffic stays
+# on the API Worker while all other host paths resolve to this web Worker.
+#
+# Example preview split on a dedicated preview host:
+# [env.preview]
+# routes = [{ pattern = "files-preview.unsigned.sh/*", custom_domain = true }]
