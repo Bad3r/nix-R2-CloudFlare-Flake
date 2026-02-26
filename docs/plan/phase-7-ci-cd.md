@@ -175,12 +175,14 @@ CI automation does not remove break-glass/manual deployment workflows.
 - Smoke checks are implemented in `scripts/ci/worker-share-smoke.sh` and verify:
   - Worker share creation via `r2 share worker create`
   - first `/share/<token>` access returns success
-  - second `/share/<token>` access returns expected token exhaustion (`410`)
+  - second `/share/<token>` access converges to expected token exhaustion
+    (`410`) with bounded retries for KV propagation delays
   - unauthenticated `/api/server/info` remains blocked (`302` Access redirect or Worker `401`)
   - authenticated `/api/server/info` succeeds (`200`) via Access service-token headers
   - configurable timeout/retry controls:
     - `R2E_SMOKE_TIMEOUT`, `R2E_SMOKE_CONNECT_TIMEOUT`
     - `R2E_SMOKE_RETRIES`, `R2E_SMOKE_RETRY_DELAY_SEC`
+    - `R2E_SMOKE_SHARE_EXHAUSTION_RETRIES`
   - production smoke checks set retry defaults to reduce transient false
     positives
 - Added rollback guidance jobs triggered only when smoke jobs fail:

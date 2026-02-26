@@ -254,6 +254,8 @@ Optional smoke tuning environment variables:
 - `R2E_SMOKE_CONNECT_TIMEOUT` (seconds, default `10`)
 - `R2E_SMOKE_RETRIES` (non-negative integer, default `0`)
 - `R2E_SMOKE_RETRY_DELAY_SEC` (seconds, default `2`)
+- `R2E_SMOKE_SHARE_EXHAUSTION_RETRIES` (non-negative integer, default `5`;
+  retries second share download when KV propagation delays `410`)
 
 Smoke behavior validated in CI:
 
