@@ -395,6 +395,7 @@ describe("multipart upload flow", () => {
 
     env.R2E_UPLOAD_MAX_PARTS = "1";
     const outOfRangeInit = await initUpload(app, env, {
+      filename: "sample-out-of-range.bin",
       declaredSize: partSize,
     });
     expect(outOfRangeInit.status).toBe(200);
@@ -632,7 +633,7 @@ describe("multipart upload flow", () => {
     expect(invalidPositivePayload.error?.message).toContain("R2E_UPLOAD_SESSION_TTL_SEC");
   });
 
-  it("generates randomized object keys independent from client filenames", async () => {
+  it("fails fast when an active session already targets the same object key", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
 
@@ -647,16 +648,27 @@ describe("multipart upload flow", () => {
       declaredSize: 2048,
     });
     expect(firstInit.status).toBe(200);
-    expect(secondInit.status).toBe(200);
 
     const firstPayload = await parseInitPayload(firstInit);
-    const secondPayload = await parseInitPayload(secondInit);
+    expect(firstPayload.objectKey).toBe("uploads/archive.bin");
+    expect(secondInit.status).toBe(409);
+    expect(((await secondInit.json()) as ErrorPayload).error?.code).toBe("upload_object_key_in_use");
+  });
 
-    expect(firstPayload.objectKey).toMatch(/^uploads\/[0-9A-Za-z]{34}\.bin$/);
-    expect(secondPayload.objectKey).toMatch(/^uploads\/[0-9A-Za-z]{34}\.bin$/);
-    expect(firstPayload.objectKey).not.toBe(secondPayload.objectKey);
-    expect(firstPayload.objectKey.includes("archive")).toBe(false);
-    expect(secondPayload.objectKey.includes("archive")).toBe(false);
+  it("allows init when target object key already exists to support overwrite flows", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+
+    await bucket.put("uploads/archive.bin", new Uint8Array([1, 2, 3]));
+    const response = await initUpload(app, env, {
+      filename: "archive.bin",
+      prefix: "uploads/",
+      declaredSize: 2048,
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await parseInitPayload(response);
+    expect(payload.objectKey).toBe("uploads/archive.bin");
   });
 
   it("preserves empty key segments when signing multipart part URLs", async () => {

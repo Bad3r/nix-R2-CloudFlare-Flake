@@ -453,6 +453,15 @@ export class MemoryUploadSessionNamespace {
           if (ownerSessions.has(sessionRaw.sessionId)) {
             return doError(409, "upload_session_exists", "Upload session already exists.");
           }
+          for (const value of ownerSessions.values()) {
+            if (
+              value.status === "active" &&
+              Date.parse(value.expiresAt) > nowMs &&
+              value.objectKey === sessionRaw.objectKey
+            ) {
+              return doError(409, "upload_object_key_in_use", "An active upload session already targets this key.");
+            }
+          }
           if (sessionRaw.status !== "init" && sessionRaw.status !== "active") {
             return doError(409, "upload_session_invalid_state", "Upload session must start in init or active state.");
           }

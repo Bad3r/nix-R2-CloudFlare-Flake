@@ -115,6 +115,8 @@ Contract notes:
 
 - `declaredSize` is required in `POST /api/upload/init`.
 - `POST /api/upload/init` returns `objectKey` (not `key`) and `allowedExt`.
+- `POST /api/upload/init` fails fast with `409` when another active session
+  already targets the same key.
 - `POST /api/upload/sign-part` accepts optional `contentMd5`.
 - `POST /api/upload/complete` accepts optional `finalSize`.
 
@@ -252,6 +254,8 @@ Optional smoke tuning environment variables:
 - `R2E_SMOKE_CONNECT_TIMEOUT` (seconds, default `10`)
 - `R2E_SMOKE_RETRIES` (non-negative integer, default `0`)
 - `R2E_SMOKE_RETRY_DELAY_SEC` (seconds, default `2`)
+- `R2E_SMOKE_SHARE_EXHAUSTION_RETRIES` (non-negative integer, default `5`;
+  retries second share download when KV propagation delays `410`)
 
 Smoke behavior validated in CI:
 

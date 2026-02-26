@@ -153,6 +153,54 @@ assert_http_status() {
   done
 }
 
+assert_share_exhaustion() {
+  local label="second download"
+  local url="$1"
+  local body_file="$2"
+  local max_attempts attempt status curl_exit
+  local -a curl_args
+
+  max_attempts=$((SMOKE_SHARE_EXHAUSTION_RETRIES + 1))
+  curl_args=(
+    -sS
+    --max-time
+    "${SMOKE_TIMEOUT_SEC}"
+    --connect-timeout
+    "${SMOKE_CONNECT_TIMEOUT_SEC}"
+    -L
+    -o
+    "${body_file}"
+    -w
+    "%{http_code}"
+  )
+
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    set +e
+    status="$(curl "${curl_args[@]}" "${url}")"
+    curl_exit=$?
+    set -e
+
+    if [[ ${curl_exit} -eq 0 && ${status} == "410" ]]; then
+      LAST_HTTP_STATUS="${status}"
+      return 0
+    fi
+
+    if ((attempt < max_attempts)); then
+      if [[ ${curl_exit} -ne 0 ]] || should_retry_status "${status}" || [[ ${status} == "200" ]]; then
+        echo "${label}: waiting for token exhaustion propagation (attempt ${attempt}/${max_attempts})..." >&2
+        sleep "${SMOKE_RETRY_DELAY_SEC}"
+        continue
+      fi
+    fi
+
+    dump_response_context "${status}" "${body_file}" "${label}"
+    if [[ ${curl_exit} -ne 0 ]]; then
+      fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
+    fi
+    fail "${label} expected HTTP 410, got ${status}"
+  done
+}
+
 require_env "R2E_SMOKE_BASE_URL"
 require_env "R2E_SMOKE_ADMIN_KID"
 require_env "R2E_SMOKE_ADMIN_SECRET"
@@ -186,6 +234,9 @@ SMOKE_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_TIMEOUT:-60}" "R2E_SMOKE_TI
 SMOKE_CONNECT_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_CONNECT_TIMEOUT:-10}" "R2E_SMOKE_CONNECT_TIMEOUT" "10")"
 SMOKE_RETRIES="$(parse_non_negative_int "${R2E_SMOKE_RETRIES:-0}" "R2E_SMOKE_RETRIES" "0")"
 SMOKE_RETRY_DELAY_SEC="$(parse_positive_int "${R2E_SMOKE_RETRY_DELAY_SEC:-2}" "R2E_SMOKE_RETRY_DELAY_SEC" "2")"
+SMOKE_SHARE_EXHAUSTION_RETRIES="$(
+  parse_non_negative_int "${R2E_SMOKE_SHARE_EXHAUSTION_RETRIES:-5}" "R2E_SMOKE_SHARE_EXHAUSTION_RETRIES" "5"
+)"
 
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
 echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
@@ -223,7 +274,7 @@ first_download_body="${tmp_dir}/first-download.body"
 assert_http_status "200" "first download" "${share_url}" "${first_download_body}" "true"
 
 second_download_body="${tmp_dir}/second-download.body"
-assert_http_status "410" "second download" "${share_url}" "${second_download_body}" "true"
+assert_share_exhaustion "${share_url}" "${second_download_body}"
 
 api_probe_body="${tmp_dir}/api-probe.body"
 assert_http_status "302,401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_probe_body}" "false"

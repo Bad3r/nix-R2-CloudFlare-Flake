@@ -550,9 +550,8 @@ function requireUploadFilename(filename: string): string {
   return trimmed;
 }
 
-function buildRandomObjectKey(prefix: string, filename: string): string {
-  const extension = extractExtension(filename);
-  return `${prefix}${randomTokenId(34)}${extension}`;
+function buildUploadObjectKey(prefix: string, filename: string): string {
+  return `${prefix}${filename}`;
 }
 
 function prefixAllowed(prefix: string, allowlist: string[]): boolean {
@@ -898,7 +897,7 @@ export function createApp(): Hono<AppContext> {
       });
     }
 
-    const key = normalizeObjectKey(buildRandomObjectKey(prefix, filename));
+    const key = normalizeObjectKey(buildUploadObjectKey(prefix, filename));
     const sessionId = randomTokenId(28);
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + policy.sessionTtlSec * 1000).toISOString();

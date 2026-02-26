@@ -71,7 +71,10 @@ Control-plane contract:
 Worker-side security controls:
 
 - Origin + CSRF enforcement on all mutating upload control-plane routes.
-- Server-randomized object keys with original filename stored as metadata.
+- Filename-preserving object keys (`prefix + filename`) with original filename
+  also stored as metadata.
+- Fail-fast in-flight collision handling: `upload/init` rejects `409` when an
+  active session already owns the requested key.
 - MIME/extension allowlist + blacklist policy with allow-all defaults unless
   allowlists are configured.
 - Post-complete magic-byte validation and policy re-check before final accept.
