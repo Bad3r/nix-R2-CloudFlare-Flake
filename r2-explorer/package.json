@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "pnpm": {
+    "overrides": {
+      "rollup": ">=4.59.0"
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
