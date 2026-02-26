@@ -638,7 +638,7 @@ run_target_root_cli_module_eval() {
 }
 
 run_target_worker_typecheck_test() {
-  run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install --frozen-lockfile && pnpm run check && pnpm test"
+  run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install --frozen-lockfile && pnpm run check && pnpm run build:web && pnpm run test:api"
 }
 
 run_target() {

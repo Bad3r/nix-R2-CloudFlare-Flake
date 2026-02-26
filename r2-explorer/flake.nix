@@ -84,12 +84,31 @@
             '';
           };
 
+          deploy-web = pkgs.writeShellApplication {
+            name = "deploy-r2-explorer-web";
+            runtimeInputs = [
+              pkgs.nodejs
+              pkgs.jq
+            ]
+            ++ pkgs.lib.optional (pnpmPkg != null) pnpmPkg
+            ++ [ wranglerPkg ];
+            text = ''
+              set -euo pipefail
+
+              cd ${./.}
+              ${pnpmCmd} install
+              ${pnpmCmd} -C web run build
+              ${wranglerCmd} deploy --config web/wrangler.toml "$@"
+            '';
+          };
+
           default = pkgs.writeShellApplication {
             name = "r2-explorer-status";
             text = ''
               set -euo pipefail
-              echo "R2-Explorer Worker (Phase 5) is implemented."
-              echo "Use deploy-r2-explorer to publish via wrangler."
+              echo "R2-Explorer API + web UI are implemented."
+              echo "Use deploy-r2-explorer for the API Worker."
+              echo "Use deploy-r2-explorer-web for the Astro web Worker."
             '';
           };
         }

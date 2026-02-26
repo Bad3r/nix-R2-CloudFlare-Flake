@@ -13,6 +13,10 @@ enabled = true
 port = 4321
 local_protocol = "http"
 
+[env.preview]
+name = "r2-explorer-web-preview"
+workers_dev = true
+
 # Route this Worker to all non-API paths on the shared host.
 # Keep /api/v2/* and /share/* attached to the API Worker.
 # routes = [

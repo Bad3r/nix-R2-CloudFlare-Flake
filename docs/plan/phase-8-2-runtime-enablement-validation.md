@@ -26,7 +26,7 @@ CLI confirms:
    (`wrangler triggers deploy` route with `custom_domain = true`).
 6. DNS for `files.unsigned.sh` now resolves to Cloudflare edge A records.
 7. Live host checks succeed for protection boundaries:
-   - `GET /api/server/info` unauthenticated returns `401 access_required`.
+   - `GET /api/v2/session/info` unauthenticated returns `401 access_required`.
    - `GET /share/<invalid-token>` returns Worker `404` (public route path reached).
 
 Implication:
@@ -77,13 +77,13 @@ and an evidence template.
 
 ## Milestone Mapping
 
-| Milestone                            | Execution gates in this plan | Completion signal                                                               |
-| ------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------- |
-| `8.2` Staged service enablement      | Gates `B` through `D`        | `nixos-rebuild switch` succeeds for each stage and no manual patching is needed |
-| `8.3` Runtime service verification   | Gate `E`                     | Units/timers/commands are active/invokable from managed config                  |
-| `8.4` Remote connectivity validation | Gate `F`                     | `rclone` listing and `restic snapshots` succeed with runtime secrets            |
-| `8.5` Sharing UX validation          | Gate `G`                     | Presigned and Worker links behave correctly; `/api/*` remains Access-protected  |
-| `8.6` Acceptance + feedback loop     | Gate `H`                     | Evidence and doc updates are merged into planning and operator/user docs        |
+| Milestone                            | Execution gates in this plan | Completion signal                                                                 |
+| ------------------------------------ | ---------------------------- | --------------------------------------------------------------------------------- |
+| `8.2` Staged service enablement      | Gates `B` through `D`        | `nixos-rebuild switch` succeeds for each stage and no manual patching is needed   |
+| `8.3` Runtime service verification   | Gate `E`                     | Units/timers/commands are active/invokable from managed config                    |
+| `8.4` Remote connectivity validation | Gate `F`                     | `rclone` listing and `restic snapshots` succeed with runtime secrets              |
+| `8.5` Sharing UX validation          | Gate `G`                     | Presigned and Worker links behave correctly; `/api/v2/*` remains Access-protected |
+| `8.6` Acceptance + feedback loop     | Gate `H`                     | Evidence and doc updates are merged into planning and operator/user docs          |
 
 ## Scope Boundaries
 
@@ -557,7 +557,7 @@ r2 share "$R2_SYNC_BUCKET" "$R2_SHARE_OBJECT_KEY" 24h
 
 	r2 share worker list "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY"
 	curl -I "${share_url}"
-	curl -I https://files.unsigned.sh/api/list
+	curl -I https://files.unsigned.sh/api/v2/list
 
 	# Cleanup: do not leave tokens around after validation.
 	# Ignore 404 if token was already exhausted/revoked during validation.
@@ -569,7 +569,7 @@ Acceptance:
 - presigned command returns a valid S3 URL
 - Worker create/list succeed with admin auth env
 - `GET /share/<token>` works for valid token
-- `GET /api/list` remains Access-protected (`302` or `401`, not public `200`)
+- `GET /api/v2/list` remains Access-protected (`302` or `401`, not public `200`)
 
 ### Gate H: Milestone `8.6` Acceptance And Feedback Loop
 
@@ -599,7 +599,7 @@ Use these rules to avoid conflating failure domains:
 4. Worker admin `401`/`403`:
    - verify `R2_EXPLORER_BASE_URL`, `R2_EXPLORER_ADMIN_KID`,
      `R2_EXPLORER_ADMIN_SECRET`.
-5. `/api/list` returns unauthenticated `200`:
+5. `/api/v2/list` returns unauthenticated `200`:
    - Access policy split or Worker Access JWT guard regression.
 
 ## Evidence Template

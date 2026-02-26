@@ -110,4 +110,4 @@
   - local and remote expected outcomes are explicit in quickstart sync/backup
     checkpoints
   - worker-share checkpoint now verifies both public `/share/<token>` behavior
-    and Access protection on `/api/*`
+    and Access protection on `/api/v2/*`

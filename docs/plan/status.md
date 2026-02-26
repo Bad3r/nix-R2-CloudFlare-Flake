@@ -47,7 +47,7 @@ Acceptance checks that passed on `system76`:
   `r2 share worker create files workspace/demo.txt 10m --max-downloads 1`
   returns a URL under `files.unsigned.sh/share/<token>` and enforces max-downloads
 - Access split remains enforced:
-  `curl -I https://files.unsigned.sh/api/list` returns `401` (or Access redirect)
+  `curl -I https://files.unsigned.sh/api/v2/list` returns `401` (or Access redirect)
 
 ## What's Next
 
@@ -63,7 +63,7 @@ Operations:
 - Keep Cloudflare Access policy split on `files.unsigned.sh`:
 - `/*` allow trusted identities
 - `/share/*` bypass for public token links
-- `/api/share/*` bypass so `r2 share worker ...` HMAC admin flows work without an Access browser session
+- `/api/v2/share/*` bypass so `r2 share worker ...` HMAC admin flows work without an Access browser session
   (GUI share actions still work for logged-in users because the Worker accepts
   the `CF_Authorization` cookie for Access identity on bypassed share routes)
 

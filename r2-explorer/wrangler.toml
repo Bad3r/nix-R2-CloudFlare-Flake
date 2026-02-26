@@ -12,9 +12,9 @@ R2E_READONLY = "false"
 R2E_PUBLIC_BASE_URL = ""
 # Optional. JSON map of bucket alias -> binding name (must include {"files":"FILES_BUCKET"}).
 R2E_BUCKET_MAP = ""
-# Required for strict Access JWT verification on /api/* routes.
+# Required for strict Access JWT verification on /api/v2/* routes.
 R2E_ACCESS_TEAM_DOMAIN = "replace-with-access-team-domain"
-# Required for strict Access JWT verification on /api/* routes.
+# Required for strict Access JWT verification on /api/v2/* routes.
 R2E_ACCESS_AUD = "replace-with-access-aud"
 # Upload policy defaults. Set to "0" for unlimited where applicable.
 R2E_UPLOAD_MAX_FILE_BYTES = "0"
@@ -67,9 +67,9 @@ R2E_READONLY = "false"
 R2E_PUBLIC_BASE_URL = ""
 # Optional. JSON map of bucket alias -> binding name (must include {"files":"FILES_BUCKET"}).
 R2E_BUCKET_MAP = ""
-# Required for strict Access JWT verification on /api/* routes.
+# Required for strict Access JWT verification on /api/v2/* routes.
 R2E_ACCESS_TEAM_DOMAIN = "replace-with-access-team-domain-preview"
-# Required for strict Access JWT verification on /api/* routes.
+# Required for strict Access JWT verification on /api/v2/* routes.
 R2E_ACCESS_AUD = "replace-with-access-aud-preview"
 R2E_UPLOAD_MAX_FILE_BYTES = "0"
 R2E_UPLOAD_MAX_PARTS = "0"

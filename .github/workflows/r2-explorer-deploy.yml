@@ -109,6 +109,10 @@ jobs:
         working-directory: r2-explorer
         run: pnpm test
 
+      - name: Build web bundle
+        working-directory: r2-explorer
+        run: pnpm run build:web
+
       - name: Sync runtime upload signing secrets (preview)
         working-directory: r2-explorer
         env:
@@ -142,6 +146,12 @@ jobs:
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
         run: pnpm exec wrangler deploy --config wrangler.ci.toml --env preview
+
+      - name: Deploy preview web
+        working-directory: r2-explorer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec wrangler deploy --config web/wrangler.toml --env preview
 
   smoke-preview:
     name: Smoke preview
@@ -397,6 +407,10 @@ jobs:
         working-directory: r2-explorer
         run: pnpm test
 
+      - name: Build web bundle
+        working-directory: r2-explorer
+        run: pnpm run build:web
+
       - name: Sync runtime upload signing secrets (production)
         working-directory: r2-explorer
         run: |
@@ -419,6 +433,12 @@ jobs:
       - name: Deploy production
         working-directory: r2-explorer
         run: pnpm exec wrangler deploy --config wrangler.ci.toml --env ""
+
+      - name: Deploy production web
+        working-directory: r2-explorer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec wrangler deploy --config web/wrangler.toml
 
   smoke-production:
     name: Smoke production

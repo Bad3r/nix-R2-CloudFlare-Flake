@@ -201,6 +201,10 @@ jobs:
           mkdir -p test-results
           pnpm test 2>&1 | tee test-results/vitest.log
 
+      - name: Build web bundle
+        working-directory: r2-explorer
+        run: pnpm run build:web
+
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v6
@@ -226,9 +230,15 @@ jobs:
             r2-explorer/src \
             r2-explorer/package.json \
             r2-explorer/pnpm-lock.yaml \
+            r2-explorer/pnpm-workspace.yaml \
             r2-explorer/tsconfig.json \
             r2-explorer/vitest.config.ts \
-            r2-explorer/wrangler.toml
+            r2-explorer/wrangler.toml \
+            r2-explorer/web/src \
+            r2-explorer/web/package.json \
+            r2-explorer/web/tsconfig.json \
+            r2-explorer/web/astro.config.mjs \
+            r2-explorer/web/wrangler.toml
 
       - name: Upload worker release artifacts
         uses: actions/upload-artifact@v6
