@@ -124,15 +124,19 @@ Browser direct uploads require bucket CORS that allows your app origin and
 exposes `ETag`. Example:
 
 ```json
-[
-  {
-    "AllowedOrigins": ["https://files.unsigned.sh"],
-    "AllowedMethods": ["PUT", "HEAD", "GET"],
-    "AllowedHeaders": ["content-type", "content-length", "content-md5"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": ["https://files.unsigned.sh"],
+        "methods": ["PUT", "HEAD", "GET"],
+        "headers": ["content-type", "content-length", "content-md5"]
+      },
+      "exposeHeaders": ["ETag"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}
 ```
 
 ## Runtime introspection endpoint
@@ -190,6 +194,14 @@ Deploy workflow behavior:
   - `CLOUDFLARE_ACCOUNT_ID`
   - `S3_ACCESS_KEY_ID`
   - `S3_SECRET_ACCESS_KEY`
+- Before each preview/production deploy, CI syncs R2 bucket CORS for multipart
+  direct uploads via `wrangler r2 bucket cors set`:
+  - includes the deploy host origin (`R2E_SMOKE_BASE_URL` for preview,
+    `https://files.unsigned.sh` for production)
+  - merges any extra origins from `R2E_UPLOAD_ALLOWED_ORIGINS*`
+  - enforces `PUT/GET/HEAD`, `content-*` request headers, and exposed `ETag`
+- Production deploys fail fast if `R2E_SMOKE_BASE_URL` is not exactly
+  `https://files.unsigned.sh`.
 
 Required environment variables in both environments (non-secret binding IDs/names):
 

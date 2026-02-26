@@ -12,12 +12,12 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260207.0",
-    "hono": "^4.11.8",
-    "miniflare": "^4.20260205.0",
+    "@cloudflare/workers-types": "^4.20260305.0",
+    "hono": "^4.12.3",
+    "miniflare": "^4.20260305.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
-    "wrangler": "^4.63.0"
+    "wrangler": "^4.69.0"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",
