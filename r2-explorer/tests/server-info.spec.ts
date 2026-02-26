@@ -10,7 +10,7 @@ describe("server info endpoint", () => {
     const app = createApp();
 
     const response = await app.fetch(
-      new Request("https://files.example.com/api/server/info", {
+      new Request("https://files.example.com/api/v2/session/info", {
         headers: accessHeaders("ops@example.com"),
       }),
       env,
@@ -38,7 +38,7 @@ describe("server info endpoint", () => {
     const app = createApp();
 
     const response = await app.fetch(
-      new Request("https://files.example.com/api/server/info", {
+      new Request("https://files.example.com/api/v2/session/info", {
         headers: accessHeaders("ops@example.com"),
       }),
       env,

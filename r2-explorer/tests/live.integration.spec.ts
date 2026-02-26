@@ -115,7 +115,7 @@ describeLive("live worker integration", () => {
         const secondDownload = await fetchWithRetry(createPayload.url, { redirect: "follow" }, attempts);
         expect(secondDownload.status).toBe(410);
 
-        const apiInfoUrl = `${baseUrl}/api/server/info`;
+        const apiInfoUrl = `${baseUrl}/api/v2/session/info`;
 
         const unauthenticated = await fetchWithRetry(
           apiInfoUrl,
@@ -158,7 +158,7 @@ describeLive("live worker integration", () => {
         expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
 
         const uploadInit = await fetchWithRetry(
-          `${baseUrl}/api/upload/init`,
+          `${baseUrl}/api/v2/upload/init`,
           {
             method: "POST",
             redirect: "manual",
@@ -191,7 +191,7 @@ describeLive("live worker integration", () => {
         expect(initPayload.objectKey.startsWith("live/")).toBe(true);
 
         const signPart = await fetchWithRetry(
-          `${baseUrl}/api/upload/sign-part`,
+          `${baseUrl}/api/v2/upload/sign-part`,
           {
             method: "POST",
             redirect: "manual",
@@ -228,7 +228,7 @@ describeLive("live worker integration", () => {
         expect(etag).toBeTruthy();
 
         const completeMultipart = await fetchWithRetry(
-          `${baseUrl}/api/upload/complete`,
+          `${baseUrl}/api/v2/upload/complete`,
           {
             method: "POST",
             redirect: "manual",

@@ -14,7 +14,7 @@ describe("share lifecycle", () => {
       ttl: "24h",
       maxDownloads: 1,
     });
-    const createUrl = "https://files.example.com/api/share/create";
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createTemplate = new Request(createUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -56,7 +56,7 @@ describe("share lifecycle", () => {
       key: "docs/revocable.txt",
       ttl: "24h",
     });
-    const createUrl = "https://files.example.com/api/share/create";
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createHeaders = signedHeaders(
       new Request(createUrl, {
         method: "POST",
@@ -82,7 +82,7 @@ describe("share lifecycle", () => {
     expect(createPayload.tokenId).toBeTruthy();
 
     const revokeBody = JSON.stringify({ tokenId: createPayload.tokenId });
-    const revokeUrl = "https://files.example.com/api/share/revoke";
+    const revokeUrl = "https://files.example.com/api/v2/share/revoke";
     const revokeHeaders = signedHeaders(
       new Request(revokeUrl, {
         method: "POST",
@@ -125,7 +125,7 @@ describe("share lifecycle", () => {
       key: "images/cat.jpg",
       ttl: "1h",
     });
-    const createUrl = "https://files.example.com/api/share/create";
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createHeaders = signedHeaders(
       new Request(createUrl, {
         method: "POST",
@@ -165,7 +165,7 @@ describe("share lifecycle", () => {
       key: "docs/missing.txt",
       ttl: "1h",
     });
-    const createUrl = "https://files.example.com/api/share/create";
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createHeaders = signedHeaders(
       new Request(createUrl, {
         method: "POST",
@@ -205,7 +205,7 @@ describe("share lifecycle", () => {
       key: "logs/boot.txt",
       ttl: "1h",
     });
-    const createUrl = "https://files.example.com/api/share/create";
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createHeaders = signedHeaders(
       new Request(createUrl, {
         method: "POST",

@@ -118,7 +118,7 @@ writeShellApplication {
         "  R2_EXPLORER_ADMIN_KID    key id from R2E_KEYS_KV keyset" \
         "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64:<value>)" \
         "" \
-        "Optional Access service-token headers (for Access-protected /api/share/*):" \
+        "Optional Access service-token headers (for Access-protected /api/v2/share/*):" \
         "  R2_EXPLORER_ACCESS_CLIENT_ID" \
         "  R2_EXPLORER_ACCESS_CLIENT_SECRET"
     }
@@ -568,7 +568,7 @@ writeShellApplication {
         --arg ttl "$ttl" \
         --argjson max "$max_downloads" \
         '{bucket: $bucket, key: $key, ttl: $ttl, maxDownloads: $max}')"
-      response="$(worker_api_json "POST" "/api/share/create" "" "$body")"
+      response="$(worker_api_json "POST" "/api/v2/share/create" "" "$body")"
       echo "$response" | jq '.'
     }
 
@@ -579,7 +579,7 @@ writeShellApplication {
       [[ -n "$token_id" ]] || fail "usage: r2 share worker revoke <token-id>"
 
       body="$(jq -n --arg tokenId "$token_id" '{tokenId: $tokenId}')"
-      response="$(worker_api_json "POST" "/api/share/revoke" "" "$body")"
+      response="$(worker_api_json "POST" "/api/v2/share/revoke" "" "$body")"
       echo "$response" | jq '.'
     }
 
@@ -591,7 +591,7 @@ writeShellApplication {
       [[ -n "$bucket" && -n "$key" ]] || fail "usage: r2 share worker list <bucket> <key>"
 
       query="bucket=$(uri_escape "$bucket")&key=$(uri_escape "$key")"
-      response="$(worker_api_json "GET" "/api/share/list" "$query" "")"
+      response="$(worker_api_json "GET" "/api/v2/share/list" "$query" "")"
       echo "$response" | jq '.'
     }
 

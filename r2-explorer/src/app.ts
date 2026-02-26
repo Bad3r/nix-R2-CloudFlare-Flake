@@ -55,7 +55,6 @@ import {
   type UploadSessionRecord,
 } from "./upload-sessions";
 import type { AccessIdentity, Env, RequestActor, ShareRecord } from "./types";
-import { renderAppHtml } from "./ui";
 import { WORKER_VERSION } from "./version";
 
 type AppVariables = {
@@ -87,20 +86,20 @@ type UploadPolicy = {
 
 const BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const JSON_BODY_PATHS = new Set([
-  "/api/upload/init",
-  "/api/upload/sign-part",
-  "/api/upload/complete",
-  "/api/upload/abort",
-  "/api/object/delete",
-  "/api/object/move",
-  "/api/share/create",
-  "/api/share/revoke",
+  "/api/v2/upload/init",
+  "/api/v2/upload/sign-part",
+  "/api/v2/upload/complete",
+  "/api/v2/upload/abort",
+  "/api/v2/object/delete",
+  "/api/v2/object/move",
+  "/api/v2/share/create",
+  "/api/v2/share/revoke",
 ]);
 const UPLOAD_MUTATION_PATHS = new Set([
-  "/api/upload/init",
-  "/api/upload/sign-part",
-  "/api/upload/complete",
-  "/api/upload/abort",
+  "/api/v2/upload/init",
+  "/api/v2/upload/sign-part",
+  "/api/v2/upload/complete",
+  "/api/v2/upload/abort",
 ]);
 const R2_MAX_UPLOAD_PARTS = 10_000;
 const R2_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
@@ -720,7 +719,7 @@ const accessOrHmacMiddleware: MiddlewareHandler<AppContext> = async (c, next) =>
 export function createApp(): Hono<AppContext> {
   const app = new Hono<AppContext>();
 
-  app.use("/api/*", async (c, next) => {
+  app.use("/api/v2/*", async (c, next) => {
     c.set("accessIdentity", extractAccessIdentity(c.req.raw));
     c.set("rawBody", "");
     c.set("actor", "");
@@ -728,7 +727,7 @@ export function createApp(): Hono<AppContext> {
     await next();
   });
 
-  app.use("/api/*", async (c, next) => {
+  app.use("/api/v2/*", async (c, next) => {
     const method = c.req.method.toUpperCase();
     if (envBool(c.env.R2E_READONLY, false) && method !== "GET" && method !== "HEAD") {
       throw new HttpError(403, "readonly_mode", "This explorer is in readonly mode.");
@@ -736,7 +735,7 @@ export function createApp(): Hono<AppContext> {
     await next();
   });
 
-  app.use("/api/*", async (c, next) => {
+  app.use("/api/v2/*", async (c, next) => {
     const method = c.req.method.toUpperCase();
     if (method === "POST" && UPLOAD_MUTATION_PATHS.has(c.req.path)) {
       assertUploadMutationGuards(c.req.raw, c.env);
@@ -744,7 +743,7 @@ export function createApp(): Hono<AppContext> {
     await next();
   });
 
-  app.use("/api/*", async (c, next) => {
+  app.use("/api/v2/*", async (c, next) => {
     if (c.req.method.toUpperCase() === "POST" && JSON_BODY_PATHS.has(c.req.path)) {
       c.set("rawBody", await c.req.text());
     }
@@ -752,36 +751,27 @@ export function createApp(): Hono<AppContext> {
   });
 
   for (const path of [
-    "/api/list",
-    "/api/meta",
-    "/api/download",
-    "/api/preview",
-    "/api/upload/init",
-    "/api/upload/sign-part",
-    "/api/upload/complete",
-    "/api/upload/abort",
-    "/api/object/delete",
-    "/api/object/move",
-    "/api/server/info",
+    "/api/v2/list",
+    "/api/v2/meta",
+    "/api/v2/download",
+    "/api/v2/preview",
+    "/api/v2/upload/init",
+    "/api/v2/upload/sign-part",
+    "/api/v2/upload/complete",
+    "/api/v2/upload/abort",
+    "/api/v2/object/delete",
+    "/api/v2/object/move",
+    "/api/v2/server/info",
+    "/api/v2/session/info",
   ]) {
     app.use(path, accessMiddleware);
   }
 
-  for (const path of ["/api/share/create", "/api/share/revoke", "/api/share/list"]) {
+  for (const path of ["/api/v2/share/create", "/api/v2/share/revoke", "/api/v2/share/list"]) {
     app.use(path, accessOrHmacMiddleware);
   }
 
-  app.get("/", async () => {
-    return new Response(renderAppHtml(), {
-      status: 200,
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  });
-
-  app.get("/api/list", async (c) => {
+  app.get("/api/v2/list", async (c) => {
     const query = validateSchema(listQuerySchema, queryPayload(c.req.raw), "query");
     const configuredLimit = envInt("R2E_UI_MAX_LIST_LIMIT", c.env.R2E_UI_MAX_LIST_LIMIT, 1000);
     const limit = Math.min(query.limit, configuredLimit);
@@ -803,7 +793,7 @@ export function createApp(): Hono<AppContext> {
     return jsonValidated(listResponseSchema, payload);
   });
 
-  app.get("/api/meta", async (c) => {
+  app.get("/api/v2/meta", async (c) => {
     const query = validateSchema(metaQuerySchema, queryPayload(c.req.raw), "query");
     const key = normalizeObjectKey(query.key);
     const object = await headObject(c.env.FILES_BUCKET, key);
@@ -820,14 +810,14 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.get("/api/download", async (c) => {
+  app.get("/api/v2/download", async (c) => {
     const query = validateSchema(metaQuerySchema, queryPayload(c.req.raw), "query");
     const key = normalizeObjectKey(query.key);
     const object = await getObject(c.env.FILES_BUCKET, key);
     return responseFromObject(object, key, "attachment");
   });
 
-  app.get("/api/preview", async (c) => {
+  app.get("/api/v2/preview", async (c) => {
     const query = validateSchema(metaQuerySchema, queryPayload(c.req.raw), "query");
     const key = normalizeObjectKey(query.key);
     const object = await getObject(c.env.FILES_BUCKET, key);
@@ -838,7 +828,7 @@ export function createApp(): Hono<AppContext> {
     return responseFromObject(object, key, inline ? "inline" : "attachment", sourceType);
   });
 
-  app.post("/api/upload/init", async (c) => {
+  app.post("/api/v2/upload/init", async (c) => {
     const body = readJsonBody(c, uploadInitBodySchema);
     const policy = parseUploadPolicy(c.env);
     const actor = requireUploadActor(c);
@@ -955,7 +945,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.post("/api/upload/sign-part", async (c) => {
+  app.post("/api/v2/upload/sign-part", async (c) => {
     const body = readJsonBody(c, uploadSignPartBodySchema);
     const actor = requireUploadActor(c);
     const session = await requireUploadSession(c.env, actor, {
@@ -1038,7 +1028,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.post("/api/upload/complete", async (c) => {
+  app.post("/api/v2/upload/complete", async (c) => {
     const body = readJsonBody(c, uploadCompleteBodySchema);
     const actor = requireUploadActor(c);
     const session = await requireUploadSession(c.env, actor, {
@@ -1186,7 +1176,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.post("/api/upload/abort", async (c) => {
+  app.post("/api/v2/upload/abort", async (c) => {
     const body = readJsonBody(c, uploadAbortBodySchema);
     const actor = requireUploadActor(c);
     const session = await requireUploadSession(c.env, actor, {
@@ -1214,7 +1204,7 @@ export function createApp(): Hono<AppContext> {
     return jsonValidated(simpleOkResponseSchema, { ok: true });
   });
 
-  app.post("/api/object/delete", async (c) => {
+  app.post("/api/v2/object/delete", async (c) => {
     const body = readJsonBody(c, objectDeleteBodySchema);
     const key = normalizeObjectKey(body.key);
     const result = await softDeleteObject(c.env.FILES_BUCKET, key);
@@ -1224,7 +1214,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.post("/api/object/move", async (c) => {
+  app.post("/api/v2/object/move", async (c) => {
     const body = readJsonBody(c, objectMoveBodySchema);
     const fromKey = normalizeObjectKey(body.fromKey);
     const toKey = normalizeObjectKey(body.toKey);
@@ -1235,7 +1225,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.post("/api/share/create", async (c) => {
+  app.post("/api/v2/share/create", async (c) => {
     const body = readJsonBody(c, shareCreateBodySchema);
     const key = normalizeObjectKey(body.key);
     const bucketAlias = body.bucket ?? "files";
@@ -1276,7 +1266,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.post("/api/share/revoke", async (c) => {
+  app.post("/api/v2/share/revoke", async (c) => {
     const body = readJsonBody(c, shareRevokeBodySchema);
     const record = await getShareRecord(c.env.R2E_SHARES_KV, body.tokenId);
     if (!record) {
@@ -1293,7 +1283,7 @@ export function createApp(): Hono<AppContext> {
     });
   });
 
-  app.get("/api/share/list", async (c) => {
+  app.get("/api/v2/share/list", async (c) => {
     const query = validateSchema(shareListQuerySchema, queryPayload(c.req.raw), "query");
     const { alias: bucketAlias } = resolveBucket(c.env, query.bucket);
     const listing = await listSharesForObject(
@@ -1306,7 +1296,10 @@ export function createApp(): Hono<AppContext> {
     return jsonValidated(shareListResponseSchema, listing);
   });
 
-  app.get("/api/server/info", async (c) => {
+  const serverInfoHandler = async (c: {
+    env: Env;
+    get: (key: "authMode" | "actor") => "access" | "hmac" | string;
+  }) => {
     const uploadPolicy = parseUploadPolicy(c.env);
     const payload = {
       version: WORKER_VERSION,
@@ -1347,7 +1340,10 @@ export function createApp(): Hono<AppContext> {
       actor: requestActor(c),
     };
     return jsonValidated(serverInfoResponseSchema, payload);
-  });
+  };
+
+  app.get("/api/v2/server/info", serverInfoHandler);
+  app.get("/api/v2/session/info", serverInfoHandler);
 
   app.get("/share/:token", async (c) => {
     const tokenId = decodeURIComponent(c.req.param("token"));

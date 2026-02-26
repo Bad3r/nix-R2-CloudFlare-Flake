@@ -12,7 +12,7 @@ describe("readonly middleware", () => {
     const app = createApp();
 
     const deleteResponse = await app.fetch(
-      new Request("https://files.example.com/api/object/delete", {
+      new Request("https://files.example.com/api/v2/object/delete", {
         method: "POST",
         headers: {
           ...accessHeaders(),
@@ -34,7 +34,7 @@ describe("readonly middleware", () => {
     const app = createApp();
 
     const listResponse = await app.fetch(
-      new Request("https://files.example.com/api/list?prefix=docs/1", {
+      new Request("https://files.example.com/api/v2/list?prefix=docs/1", {
         headers: accessHeaders(),
       }),
       env,
