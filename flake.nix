@@ -63,7 +63,12 @@
           };
         };
 
-        lib = import ./lib/r2.nix { inherit (nixpkgs) lib; };
+        lib =
+          let
+            r2Lib = import ./lib/r2.nix { inherit (nixpkgs) lib; };
+            versionLib = import ./lib/version.nix { inherit (nixpkgs) lib; };
+          in
+          r2Lib // versionLib;
       };
 
       perSystem =
@@ -99,6 +104,17 @@
               }
             else
               pkgs.nixfmt;
+          versionLib = import ./lib/version.nix { inherit (pkgs) lib; };
+          inherit (versionLib) releaseBase;
+          r2DerivationVersion = versionLib.mkDerivationVersion {
+            inherit releaseBase;
+            sourceInfo = self.sourceInfo or null;
+            rev = self.rev or null;
+            shortRev = self.shortRev or null;
+            dirtyRev = self.dirtyRev or null;
+            dirtyShortRev = self.dirtyShortRev or null;
+            src = ./.;
+          };
           hookToolPackages =
             optionalPkg "lefthook"
             ++ optionalPkg "deadnix"
@@ -127,7 +143,11 @@
               fi
             fi
           '';
-          r2Package = pkgs.callPackage ./packages/r2-cli.nix { wrangler = wranglerPkg; };
+          r2Package = pkgs.callPackage ./packages/r2-cli.nix {
+            wrangler = wranglerPkg;
+            derivationVersion = r2DerivationVersion;
+            inherit releaseBase;
+          };
         in
         {
           packages = {
