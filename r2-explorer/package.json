@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "pnpm": {
+    "overrides": {
+      "wrangler": "^4.69.0"
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
     "dev:web": "pnpm -C web dev",
