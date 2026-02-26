@@ -107,15 +107,19 @@ cleanup() {
 trap cleanup EXIT
 
 jq -n --argjson origins "${origins_json}" '
-[
-  {
-    AllowedOrigins: $origins,
-    AllowedMethods: ["PUT", "GET", "HEAD"],
-    AllowedHeaders: ["content-type", "content-length", "content-md5"],
-    ExposeHeaders: ["ETag"],
-    MaxAgeSeconds: 3600
-  }
-]
+{
+  rules: [
+    {
+      allowed: {
+        origins: $origins,
+        methods: ["PUT", "GET", "HEAD"],
+        headers: ["content-type", "content-length", "content-md5"]
+      },
+      exposeHeaders: ["ETag"],
+      maxAgeSeconds: 3600
+    }
+  ]
+}
 ' >"${cors_file}"
 
 echo "Syncing upload CORS for bucket '${bucket_name}' with origins: ${origins_json}"

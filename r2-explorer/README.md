@@ -124,15 +124,19 @@ Browser direct uploads require bucket CORS that allows your app origin and
 exposes `ETag`. Example:
 
 ```json
-[
-  {
-    "AllowedOrigins": ["https://files.unsigned.sh"],
-    "AllowedMethods": ["PUT", "HEAD", "GET"],
-    "AllowedHeaders": ["content-type", "content-length", "content-md5"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": ["https://files.unsigned.sh"],
+        "methods": ["PUT", "HEAD", "GET"],
+        "headers": ["content-type", "content-length", "content-md5"]
+      },
+      "exposeHeaders": ["ETag"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}
 ```
 
 ## Runtime introspection endpoint
