@@ -1,6 +1,10 @@
 name = "r2-explorer"
 main = "src/index.ts"
 compatibility_date = "2026-02-06"
+routes = [
+  { pattern = "files.unsigned.sh/api/v2/*", zone_name = "unsigned.sh" },
+  { pattern = "files.unsigned.sh/share/*", zone_name = "unsigned.sh" },
+]
 
 [vars]
 R2E_ADMIN_AUTH_WINDOW_SEC = "300"
