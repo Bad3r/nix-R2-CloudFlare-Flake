@@ -1,6 +1,6 @@
 # R2 Explorer Web UI
 
-Astro + React frontend for the R2 Explorer operator console.
+Astro + Preact frontend for the R2 Explorer operator console.
 
 ## Local dev
 
@@ -9,7 +9,12 @@ pnpm -C .. install --frozen-lockfile
 pnpm dev
 ```
 
-The UI expects the API Worker to be reachable on the same origin under `/api/v2/*`.
+The UI expects the API Worker to be reachable on the same origin under
+`/api/v2/*` and `/share/*`.
+
+Deploy preview with same-host route split (web catches `/*`, API claims
+`/api/v2/*` and `/share/*`). Separate `*.workers.dev` hosts for web and API are
+not supported by this UI contract.
 
 ## Validate
 
