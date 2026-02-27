@@ -51,7 +51,8 @@ Required environment variables for Worker-mode CLI calls:
 - `R2_EXPLORER_OAUTH_CLIENT_ID`
 - `R2_EXPLORER_OAUTH_CLIENT_SECRET`
 - `R2_EXPLORER_OAUTH_TOKEN_URL`
-- optional `R2_EXPLORER_OAUTH_SCOPE`
+- optional `R2_EXPLORER_OAUTH_SCOPE` (default: `r2e.read r2e.write r2e.admin`)
+- optional `R2_EXPLORER_OAUTH_RESOURCE` (default: `R2_EXPLORER_BASE_URL`)
 
 Multi-bucket aliases:
 

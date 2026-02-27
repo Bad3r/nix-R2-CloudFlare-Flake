@@ -88,7 +88,7 @@ Confirm:
 # Managed deployments often provide Worker API credentials via a system env
 # file (so your interactive shell may NOT have these exported).
 test -r /run/secrets/r2/explorer.env
-grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_OAUTH_CLIENT_ID|R2_EXPLORER_OAUTH_TOKEN_URL)=' /run/secrets/r2/explorer.env
+grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_OAUTH_CLIENT_ID|R2_EXPLORER_OAUTH_TOKEN_URL|R2_EXPLORER_OAUTH_RESOURCE)=' /run/secrets/r2/explorer.env
 grep -q '^R2_EXPLORER_OAUTH_CLIENT_SECRET=' /run/secrets/r2/explorer.env
 
 r2 share worker list files workspace/demo.txt
@@ -99,9 +99,11 @@ Likely root causes:
 - Missing/incorrect OAuth client credentials in `R2_EXPLORER_OAUTH_CLIENT_ID`
   / `R2_EXPLORER_OAUTH_CLIENT_SECRET`.
 - Wrong token endpoint in `R2_EXPLORER_OAUTH_TOKEN_URL`.
+- Missing/wrong `R2_EXPLORER_OAUTH_RESOURCE` causing opaque (non-JWT) tokens.
 - IdP token `aud` claim does not match `R2E_IDP_AUDIENCE`.
 - Token lacks required route scope (`r2.read`, `r2.write`,
-  `r2.share.manage`, or configured equivalents).
+  `r2.share.manage`, or configured equivalents). For current direct-IdP
+  production, defaults are `r2e.read`, `r2e.write`, `r2e.admin`.
 
 Repair:
 
@@ -112,6 +114,7 @@ export R2_EXPLORER_BASE_URL="https://files.unsigned.sh"
 export R2_EXPLORER_OAUTH_CLIENT_ID="<oauth-client-id>"
 export R2_EXPLORER_OAUTH_CLIENT_SECRET="<oauth-client-secret>"
 export R2_EXPLORER_OAUTH_TOKEN_URL="https://auth.unsigned.sh/api/auth/oauth2/token"
+export R2_EXPLORER_OAUTH_RESOURCE="https://files.unsigned.sh"
 
 # Fast bearer-token probe:
 token="$(
@@ -120,7 +123,8 @@ token="$(
     --data-urlencode 'grant_type=client_credentials' \
     --data-urlencode "client_id=${R2_EXPLORER_OAUTH_CLIENT_ID}" \
     --data-urlencode "client_secret=${R2_EXPLORER_OAUTH_CLIENT_SECRET}" \
-    --data-urlencode 'scope=r2.read r2.write r2.share.manage' \
+    --data-urlencode 'scope=r2e.read r2e.write r2e.admin' \
+    --data-urlencode "resource=${R2_EXPLORER_OAUTH_RESOURCE}" \
     "${R2_EXPLORER_OAUTH_TOKEN_URL}" | jq -r '.access_token // empty'
 )"
 curl -i \

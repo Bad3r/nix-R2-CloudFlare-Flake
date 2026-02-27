@@ -62,7 +62,8 @@ token="$(
     --data-urlencode 'grant_type=client_credentials' \
     --data-urlencode 'client_id=<client-id>' \
     --data-urlencode 'client_secret=<client-secret>' \
-    --data-urlencode 'scope=r2.read r2.write r2.share.manage' \
+    --data-urlencode 'scope=r2e.read r2e.write r2e.admin' \
+    --data-urlencode 'resource=https://files.unsigned.sh' \
     https://auth.unsigned.sh/api/auth/oauth2/token | jq -r '.access_token // empty'
 )"
 

@@ -226,6 +226,7 @@ export R2_EXPLORER_BASE_URL="${R2E_SMOKE_BASE_URL}"
 export R2_EXPLORER_OAUTH_CLIENT_ID="${R2E_SMOKE_OAUTH_CLIENT_ID}"
 export R2_EXPLORER_OAUTH_CLIENT_SECRET="${R2E_SMOKE_OAUTH_CLIENT_SECRET}"
 export R2_EXPLORER_OAUTH_TOKEN_URL="${R2E_SMOKE_OAUTH_TOKEN_URL}"
+export R2_EXPLORER_OAUTH_RESOURCE="${R2E_SMOKE_OAUTH_RESOURCE:-${R2E_SMOKE_BASE_URL%/}}"
 
 ttl="${R2E_SMOKE_TTL:-10m}"
 SMOKE_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_TIMEOUT:-60}" "R2E_SMOKE_TIMEOUT" "60")"
@@ -243,7 +244,8 @@ oauth_response="$(
     --data-urlencode "grant_type=client_credentials" \
     --data-urlencode "client_id=${R2E_SMOKE_OAUTH_CLIENT_ID}" \
     --data-urlencode "client_secret=${R2E_SMOKE_OAUTH_CLIENT_SECRET}" \
-    --data-urlencode "scope=${R2E_SMOKE_OAUTH_SCOPE:-r2.read r2.write r2.share.manage}" \
+    --data-urlencode "scope=${R2E_SMOKE_OAUTH_SCOPE:-r2e.read r2e.write r2e.admin}" \
+    --data-urlencode "resource=${R2E_SMOKE_OAUTH_RESOURCE:-${R2E_SMOKE_BASE_URL%/}}" \
     --max-time "${SMOKE_TIMEOUT_SEC}" \
     --connect-timeout "${SMOKE_CONNECT_TIMEOUT_SEC}" \
     "${R2E_SMOKE_OAUTH_TOKEN_URL}"
@@ -252,6 +254,11 @@ oauth_access_token="$(jq -r '.access_token // empty' <<<"${oauth_response}")"
 if [[ -z ${oauth_access_token} ]]; then
   echo "${oauth_response}" >&2
   fail "failed to obtain OAuth bearer token from ${R2E_SMOKE_OAUTH_TOKEN_URL}"
+fi
+oauth_token_segments="$(awk -F. '{ print NF }' <<<"${oauth_access_token}")"
+if [[ ${oauth_token_segments} -ne 3 ]]; then
+  echo "${oauth_response}" >&2
+  fail "token endpoint returned non-JWT access token; set R2E_SMOKE_OAUTH_RESOURCE to the expected audience URL."
 fi
 
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
