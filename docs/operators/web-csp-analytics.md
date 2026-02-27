@@ -69,12 +69,9 @@ export R2E_WEB_CSP_RULE_DESCRIPTION="R2 Explorer web CSP (preview, analytics-ena
 
 ## Verification
 
-Use Access service-token headers to validate protected page behavior:
+Validate web page behavior directly:
 
 ```bash
-export R2E_SMOKE_ACCESS_CLIENT_ID="..."
-export R2E_SMOKE_ACCESS_CLIENT_SECRET="..."
-
 ./scripts/ci/check-r2-web-security.sh \
   "https://files.unsigned.sh" \
   "r2-explorer/web/config/csp.analytics.production.txt"

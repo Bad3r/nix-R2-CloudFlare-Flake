@@ -74,24 +74,21 @@ Escalate:
 
 - `docs/operators/incident-response.md` if failures continue after secret refresh.
 
-### B. Worker OAuth auth fails for `r2 share worker ...`
+### B. Worker bearer auth fails (`401`/`403`) for `r2 share worker ...`
 
 Failure signature:
 
-- `r2 share worker create|list|revoke ...` returns:
-  - `401 oauth_required`
-  - `401 oauth_token_invalid`
-  - `403 insufficient_scope`
-- `r2 share worker ...` can also fail with `HTTP 302` when Access intercepts
-  `/api/v2/*` before the Worker.
+- `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
+- `/api/v2/*` calls fail with `token_missing`, `token_invalid_signature`,
+  `token_claim_mismatch`, or `insufficient_scope`.
 
 Confirm:
 
 ```bash
-# Managed deployments often provide Worker OAuth inputs via a system env file
-# (so your interactive shell may NOT have these exported).
+# Managed deployments often provide Worker API credentials via a system env
+# file (so your interactive shell may NOT have these exported).
 test -r /run/secrets/r2/explorer.env
-grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_OAUTH_TOKEN_URL|R2_EXPLORER_OAUTH_CLIENT_ID)=' /run/secrets/r2/explorer.env
+grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_OAUTH_CLIENT_ID|R2_EXPLORER_OAUTH_TOKEN_URL)=' /run/secrets/r2/explorer.env
 grep -q '^R2_EXPLORER_OAUTH_CLIENT_SECRET=' /run/secrets/r2/explorer.env
 
 r2 share worker list files workspace/demo.txt
@@ -99,29 +96,37 @@ r2 share worker list files workspace/demo.txt
 
 Likely root causes:
 
-- `R2_EXPLORER_OAUTH_CLIENT_SECRET` is stale or incorrect.
-- `R2_EXPLORER_OAUTH_TOKEN_URL` is unreachable or misconfigured.
-- OAuth client lacks scope required by `R2E_AUTH_SCOPE_SHARE_MANAGE`.
-- Worker validation config drift (`R2E_AUTH_ISSUER`, `R2E_AUTH_AUDIENCE`,
-  `R2E_AUTH_JWKS_URL`).
-- `/api/v2/share/*` is Access-protected and CLI calls do not include Access
-  browser/session context.
+- Missing/incorrect OAuth client credentials in `R2_EXPLORER_OAUTH_CLIENT_ID`
+  / `R2_EXPLORER_OAUTH_CLIENT_SECRET`.
+- Wrong token endpoint in `R2_EXPLORER_OAUTH_TOKEN_URL`.
+- IdP token `aud` claim does not match `R2E_IDP_AUDIENCE`.
+- Token lacks required route scope (`r2.read`, `r2.write`,
+  `r2.share.manage`, or configured equivalents).
 
 Repair:
 
 ```bash
-# Refresh OAuth client values.
 # For managed NixOS, prefer updating the SOPS-managed source of truth and
 # rebuilding so `/run/secrets/r2/explorer.env` is updated persistently.
-#
-# For ad-hoc testing only:
-export R2_EXPLORER_OAUTH_TOKEN_URL="<oauth-token-endpoint>"
+export R2_EXPLORER_BASE_URL="https://files.unsigned.sh"
 export R2_EXPLORER_OAUTH_CLIENT_ID="<oauth-client-id>"
 export R2_EXPLORER_OAUTH_CLIENT_SECRET="<oauth-client-secret>"
-```
+export R2_EXPLORER_OAUTH_TOKEN_URL="https://auth.unsigned.sh/api/auth/oauth2/token"
 
-If token scope or signing validation mismatch persists, perform OAuth credential
-rotation and issuer/JWKS validation workflow.
+# Fast bearer-token probe:
+token="$(
+  curl -sS -X POST \
+    -H 'content-type: application/x-www-form-urlencoded' \
+    --data-urlencode 'grant_type=client_credentials' \
+    --data-urlencode "client_id=${R2_EXPLORER_OAUTH_CLIENT_ID}" \
+    --data-urlencode "client_secret=${R2_EXPLORER_OAUTH_CLIENT_SECRET}" \
+    --data-urlencode 'scope=r2.read r2.write r2.share.manage' \
+    "${R2_EXPLORER_OAUTH_TOKEN_URL}" | jq -r '.access_token // empty'
+)"
+curl -i \
+  -H "authorization: Bearer ${token}" \
+  "${R2_EXPLORER_BASE_URL%/}/api/v2/session/info"
+```
 
 Verify:
 
@@ -130,44 +135,41 @@ Verify:
 
 Escalate:
 
-- `docs/operators/key-rotation.md`
 - `docs/operators/incident-response.md`
 
-### C. `oauth_token_invalid` caused by JWKS/issuer infrastructure failure
+### C. `token_invalid_signature` caused by JWKS infrastructure failure
 
 Failure signature:
 
-- All `/api/v2/*` requests return `401` with code `oauth_token_invalid`.
+- All `/api/v2/*` requests return `401` with code `token_invalid_signature`.
 - Multiple users affected simultaneously.
 - Previously-working tokens rejected.
 
 Confirm:
 
 ```bash
-curl -sS "${R2E_AUTH_JWKS_URL}" | jq '.keys | length'
+curl -sS "https://auth.unsigned.sh/api/auth/jwks" | jq '.keys | length'
 ```
 
 Likely root causes:
 
-- OAuth provider JWKS endpoint unavailable or returning errors.
-- Worker-side issuer/audience/jwks configuration drift.
-- Signing-key rotation completed at provider before Worker callers were updated.
+- Better Auth IdP JWKS endpoint unavailable or returning invalid payload.
+- DNS/TLS failures reaching the configured `R2E_IDP_JWKS_URL`.
 
 Note: The Worker returns `401` (not `502`/`503`) for JWKS fetch failures as a
 fail-closed security posture. All infrastructure errors during JWT validation
-surface as `oauth_token_invalid` to avoid leaking internal state.
+surface as `token_invalid_signature` to avoid leaking internal state.
 
 Repair:
 
-- Check provider status page for OAuth/JWKS incidents.
+- Check IdP and Cloudflare status for upstream incidents.
 - Verify JWKS endpoint reachable from a separate network.
-- If issuer values changed, update `R2E_AUTH_ISSUER`, `R2E_AUTH_AUDIENCE`, and
-  `R2E_AUTH_JWKS_URL`, then redeploy.
+- If IdP URL changed, update `R2E_IDP_ISSUER` / `R2E_IDP_JWKS_URL` and redeploy.
 
 Verify:
 
 - JWKS endpoint returns JSON with non-empty `keys` array.
-- `/api/v2/session/info` with valid OAuth bearer token returns `200`.
+- `/api/v2/session/info` with valid bearer credentials returns `200`.
 
 Escalate:
 

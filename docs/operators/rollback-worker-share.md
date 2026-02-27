@@ -10,42 +10,33 @@ regression.
 - Post-deploy smoke check failure.
 - Deploy workflow smoke jobs fail (`smoke-preview` or `smoke-production`).
 - Auth or share lifecycle regressions introduced by config/code changes.
-- Access policy changes causing incorrect route exposure.
+- Route/auth configuration drift causing incorrect exposure or auth failures.
 
 ## Prerequisites
 
 - Access to prior deployment revision or release artifact.
 - Access to prior environment variable snapshot.
-- Ability to redeploy Worker and modify Access policies.
+- Ability to redeploy Worker.
 
 ## Inputs / Environment Variables
 
 - Last known-good Worker revision identifier.
 - Last known-good values for:
   - `R2E_READONLY`
-  - `R2E_AUTH_ISSUER` / `R2E_AUTH_AUDIENCE` / `R2E_AUTH_JWKS_URL`
-  - Scope config (`R2E_AUTH_SCOPE_READ`, `R2E_AUTH_SCOPE_WRITE`,
-    `R2E_AUTH_SCOPE_SHARE_MANAGE`)
-  - Bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
+  - IdP verification variables (`R2E_IDP_ISSUER`, `R2E_IDP_AUDIENCE`,
+    optional JWKS/scope overrides)
+  - bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
     `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
     `R2E_SHARES_KV_ID_PREVIEW`)
-- Last known-good machine client credentials used by CLI:
-  - `R2_EXPLORER_OAUTH_TOKEN_URL`
-  - `R2_EXPLORER_OAUTH_CLIENT_ID`
-  - `R2_EXPLORER_OAUTH_CLIENT_SECRET`
-- Target domain for verification (`https://files.unsigned.sh`).
+- Target domain for verification (`https://files.unsigned.sh`)
 
 ## Procedure (CLI-first)
 
 1. Identify rollback target:
-   - most recent known-good deployment passing share/API smoke tests.
+   - Most recent known-good deployment passing share/API smoke tests.
 2. Reapply previous Worker code/config revision.
 3. Reapply previous environment snapshot.
-4. Reconfirm Access policy split:
-   - `/*` allow for org identities.
-   - `/share/*` bypass.
-   - `/api/v2/share/*` bypass (if using CLI machine automation without Access).
-5. Deploy rollback revision:
+4. Deploy rollback revision:
 
 ```bash
 ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
@@ -53,7 +44,7 @@ cd r2-explorer
 wrangler deploy --config wrangler.ci.toml
 ```
 
-6. Validate lifecycle and route behavior:
+5. Validate lifecycle and route behavior:
 
 ```bash
 r2 share worker create files documents/test.txt 1h --max-downloads 1
@@ -65,18 +56,17 @@ curl -I https://files.unsigned.sh/share/<token-id>
 ## Verification
 
 - Share lifecycle endpoints return expected status.
-- `/api/v2/*` remains Access-protected.
-- `/api/v2/share/*` requires OAuth and does not return `200` without bearer.
+- `/api/v2/*` remains bearer-protected in-worker.
 - `/share/*` remains public-token accessible and token-constrained.
 
 ## Failure Signatures and Triage
 
 - Code rollback succeeded but auth still fails:
-  - stale OAuth client secret, issuer/audience mismatch, or stale JWKS config.
+  - stale OAuth client credentials or stale IdP env values.
 - Public links fail while API works:
-  - Access bypass path missing/regressed.
-- KV-driven share behavior inconsistent:
-  - wrong `R2E_SHARES_KV` namespace binding for active environment.
+  - share token state or route mapping regression.
+- KV-driven behavior inconsistent:
+  - wrong namespace binding for active environment.
 
 ## Rollback / Recovery
 

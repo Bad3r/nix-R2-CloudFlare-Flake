@@ -1,99 +1,101 @@
-# Access Policy Split Runbook
+# Direct IdP Auth Routing Runbook
 
 ## Purpose
 
-Use Cloudflare Access as an edge gate for interactive routes while preserving
-public token download links and OAuth-based API authorization.
+Ensure the edge routing model matches the direct IdP design:
+
+- `/api/v2/*` is bearer-protected in-worker.
+- `/share/*` is public token download.
 
 ## When to Use
 
 - Initial setup of R2-Explorer custom domain.
-- Access policy drift correction.
+- Route/auth drift correction.
 - Recovery from unexpected public/private route exposure.
 
 ## Prerequisites
 
-- Access to Cloudflare Access policy management for target domain.
-- Worker deployed on `files.unsigned.sh` and (if enabled) `preview.files.unsigned.sh`.
+- Access to Cloudflare route configuration for target domain.
+- Worker deployed on `files.unsigned.sh` (or equivalent domain).
 - At least one valid share token for validation.
-- OAuth issuer/client setup already active for API calls.
+- Valid OAuth2 client credentials for API validation.
 
 ## Inputs / Environment Variables
 
-- Target domains:
-  - `files.unsigned.sh`
-  - `preview.files.unsigned.sh` (if preview route split is enabled)
-- Access policy include rules for org users/groups.
-- Existing share token ID for public path verification.
+- Target domain, example: `files.unsigned.sh`
+- `R2E_IDP_ISSUER`
+- `R2E_IDP_AUDIENCE`
+- Existing share token ID for public path verification
 
 ## Procedure (CLI-first)
 
-1. Ensure Access app coverage is split by path for each host:
-   - Protected API: `<host>/api/v2/*` with policy action `Allow` for trusted identities.
-   - Public download bypass: `<host>/share/*` with policy action `Bypass`.
-   - Machine share-management bypass: `<host>/api/v2/share/*` with policy action `Bypass`.
-2. Confirm the more-specific bypass apps (`/share/*` and `/api/v2/share/*`) take
-   precedence over broad protected routes.
-3. Validate protected API routes (should redirect to Access login when
-   unauthenticated):
+1. Confirm API and share routes are mapped to the API Worker:
+   - `files.unsigned.sh/api/v2/*`
+   - `files.unsigned.sh/share/*`
+   - `preview.files.unsigned.sh/api/v2/*`
+   - `preview.files.unsigned.sh/share/*`
+
+2. Confirm no stale Access-only routing assumptions remain in deployment docs/config.
+
+3. Validate protected API routes without bearer token:
 
 ```bash
-curl -I https://files.unsigned.sh/api/v2/list
-curl -I https://preview.files.unsigned.sh/api/v2/list
+curl -i https://files.unsigned.sh/api/v2/session/info
+curl -i https://preview.files.unsigned.sh/api/v2/session/info
 ```
 
-4. Validate public token route (no Access redirect):
+Expected: `401` and error code `token_missing`.
+
+4. Validate public token route (no bearer token):
 
 ```bash
 curl -I https://files.unsigned.sh/share/<token-id>
 curl -I https://preview.files.unsigned.sh/share/<token-id>
 ```
 
-5. Validate machine API bypass behavior (no Access redirect, but OAuth still
-   required):
+5. Validate bearer token path with OAuth2 client credentials:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://files.unsigned.sh/api/v2/share/list
-```
+token="$(
+  curl -sS -X POST \
+    -H 'content-type: application/x-www-form-urlencoded' \
+    --data-urlencode 'grant_type=client_credentials' \
+    --data-urlencode 'client_id=<client-id>' \
+    --data-urlencode 'client_secret=<client-secret>' \
+    --data-urlencode 'scope=r2.read r2.write r2.share.manage' \
+    https://auth.unsigned.sh/api/auth/oauth2/token | jq -r '.access_token // empty'
+)"
 
-Expected status without token is `401` (`oauth_required`), not `302`.
-
-6. Validate worker-share lifecycle with OAuth credentials:
-
-```bash
-r2 share worker create files workspace/demo.txt 10m --max-downloads 1
+curl -i \
+  -H "authorization: Bearer ${token}" \
+  https://files.unsigned.sh/api/v2/session/info
 ```
 
 ## Verification
 
-- `/api/v2/*` remains Access-protected for browser/interactive traffic.
-- `/share/<token-id>` is reachable without Access membership and still enforces
-  token validity.
-- `/api/v2/share/*` bypasses Access but still requires OAuth bearer tokens with
-  `R2E_AUTH_SCOPE_SHARE_MANAGE`.
-- Worker is configured with `R2E_AUTH_ISSUER`, `R2E_AUTH_AUDIENCE`, and
-  `R2E_AUTH_JWKS_URL`, and `/api/v2/*` rejects missing or invalid bearer tokens.
+- `/api/v2/*` denies unauthenticated requests with `token_missing`.
+- `/api/v2/*` accepts valid bearer tokens with expected issuer/audience/scope.
+- `/share/<token-id>` remains reachable without bearer token and enforces token validity.
+- `/api/v2/share/*` remains protected by bearer scope.
 
 ## Failure Signatures and Triage
 
-- `/share/*` redirects to Access login:
-  - bypass policy missing, disabled, or lower precedence than broad rule.
-- `r2 share worker create` fails with `HTTP 302`:
-  - `/api/v2/share/*` bypass is missing, so Access is intercepting machine calls.
-- `/api/v2/share/*` returns `200` without bearer token:
-  - Worker middleware regression; OAuth auth/scope enforcement is not active.
-- `/api/v2/*` is publicly reachable:
-  - broad Access policy too permissive or bypass too broad.
+- `/share/*` unexpectedly requires auth:
+  - route mapping or worker behavior regression.
+- `/api/v2/*` returns `token_invalid_signature` globally:
+  - JWKS endpoint/issuer config outage.
+- `/api/v2/*` returns `token_claim_mismatch`:
+  - audience/issuer mismatch between IdP and Worker env config.
 
 ## Rollback / Recovery
 
-1. Reapply last known-good policy pair:
-   - `/*` allow for org identities.
-   - `/share/*` bypass only.
-2. Re-run curl checks for protected and public path behavior.
-3. Audit policy edits and actor history in Cloudflare account logs.
+1. Restore previous known-good Worker deployment + env snapshot.
+2. Restore previous known-good route map.
+3. Re-run both protected/public path checks.
+4. Audit recent route/env changes.
 
 ## Post-incident Notes
 
-- Record policy IDs, order, and change timestamp.
-- Document blast radius and any temporarily exposed paths.
+- Record changed routes and timestamps.
+- Record IdP env values before/after (`issuer`, `audience`, `jwks`).
+- Capture failing and restored request/response evidence.
