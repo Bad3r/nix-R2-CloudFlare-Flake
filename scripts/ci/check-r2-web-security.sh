@@ -25,7 +25,7 @@ Environment (optional):
 Notes:
   - The script performs a protected-page fetch and checks:
     1) Effective response CSP equals normalized expected policy.
-    2) Analytics loader markers are present in HTML.
+    2) Analytics is detectable via HTML loader markers or Zaraz runtime endpoint.
     3) Known empty-content SRI hash marker is absent.
 USAGE
 }
@@ -141,7 +141,16 @@ if [[ ${actual_csp} != "${expected_csp}" ]]; then
 fi
 
 if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflareinsights\.com/beacon\.min\.js' "${body_file}"; then
-  fail "analytics markers not found in HTML (expected Zaraz/Web Analytics loader)"
+  # Zaraz/Web Analytics may be injected at runtime by Cloudflare and absent from raw curl HTML.
+  zaraz_probe_status="$(
+    curl -sS --location "${curl_headers[@]}" \
+      --output /dev/null \
+      --write-out '%{http_code}' \
+      "${request_url%/}/cdn-cgi/zaraz/s.js"
+  )"
+  if [[ ${zaraz_probe_status} == "404" ]]; then
+    fail "analytics markers not found in HTML and Zaraz endpoint unavailable"
+  fi
 fi
 
 if grep -F -q "${EMPTY_BODY_SHA512_B64}" "${body_file}"; then

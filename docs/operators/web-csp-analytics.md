@@ -84,7 +84,8 @@ Expected outcomes:
 
 - Response CSP equals normalized policy content (comment and blank lines are ignored).
 - HTML includes analytics loader markers (`/cdn-cgi/zaraz/` or
-  `static.cloudflareinsights.com/beacon.min.js`).
+  `static.cloudflareinsights.com/beacon.min.js`), or Zaraz runtime endpoint is
+  available when markers are injected client-side.
 - HTML does not include the empty-content sha512 marker associated with broken
   SRI fetches.
 
@@ -101,8 +102,9 @@ Preview workflow behavior:
   - Token lacks `Zone Rulesets` permissions.
 - CSP mismatch:
   - Rule drift in Cloudflare dashboard or wrong zone name/host expression.
-- Analytics marker missing:
-  - Web Analytics/Zaraz injection disabled or blocked by non-CSP controls.
+- Analytics verification failure:
+  - Raw HTML marker and Zaraz runtime endpoint check both failed (injection
+    disabled or blocked by non-CSP controls).
 - Empty-content sha512 marker detected:
   - Broken third-party fetch path (often CSP/CORS/network/intermediary issue).
 
