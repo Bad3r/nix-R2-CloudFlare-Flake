@@ -102,9 +102,9 @@ Configure in Cloudflare dashboard:
 2. **Access Application**:
    - Domain: `files.unsigned.sh`
    - Path policy split:
-     - `/*` → **Allow** trusted identities (org/users)
+     - `/api/v2/*` → **Allow** trusted identities (org/users) + **Service Auth**
+       for service-token automation
      - `/share/*` → **Bypass** for public token links
-     - `/api/v2/share/*` → **Bypass** for HMAC admin share management (CLI)
 
 ### Sharing Modes and Constraints
 
@@ -132,11 +132,10 @@ KV-backed random token records with expiry/revocation/download-limit checks.
 operations (`r2 share worker ...`) authenticate with admin HMAC headers
 validated against `R2E_KEYS_KV`.
 
-Note: in production, `/api/v2/share/*` is commonly configured as an Access
-`Bypass` so HMAC share operations work without an Access browser session. In
-that configuration, Access does not inject `Cf-Access-Jwt-Assertion` headers on
-share-management requests, so the Worker accepts Access identity via the
-`CF_Authorization` cookie for logged-in browser sessions.
+Note: `/api/v2/share/*` is part of the protected API surface and should not be
+configured as Access `Bypass`. CLI and CI callers should send Access
+service-token headers (`CF-Access-Client-Id`, `CF-Access-Client-Secret`) for
+machine authentication at the edge.
 
 ## Files (Current State)
 

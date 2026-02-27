@@ -8,6 +8,9 @@ on:
       - ".github/workflows/r2-explorer-deploy.yml"
       - "scripts/ci/render-r2-explorer-wrangler-config.sh"
       - "scripts/ci/sync-r2-upload-cors.sh"
+      - "scripts/ci/sync-r2-web-csp.sh"
+      - "scripts/ci/check-r2-web-security.sh"
+      - "scripts/ci/check-r2-access-policy.sh"
       - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
     inputs:
@@ -76,11 +79,37 @@ jobs:
       R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW: ${{ vars.R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW }}
       R2E_UPLOAD_S3_BUCKET: ${{ vars.R2E_UPLOAD_S3_BUCKET }}
       R2E_UPLOAD_S3_BUCKET_PREVIEW: ${{ vars.R2E_UPLOAD_S3_BUCKET_PREVIEW }}
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify Access API policy contract (preview)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2E_ACCESS_AUD_PREVIEW: ${{ vars.R2E_ACCESS_AUD_PREVIEW }}
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          ./scripts/ci/check-r2-access-policy.sh \
+            "preview.files.unsigned.sh" \
+            "${R2E_ACCESS_AUD_PREVIEW}" \
+            "${R2E_SMOKE_ACCESS_CLIENT_ID}"
+
+      - name: Reject unexpected preview base URL
+        env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          expected_base_url="https://preview.files.unsigned.sh"
+          if [[ "${R2E_SMOKE_BASE_URL}" != "${expected_base_url}" ]]; then
+            echo "Preview smoke/deploy base URL drift detected." >&2
+            echo "Expected '${expected_base_url}' but got '${R2E_SMOKE_BASE_URL}'." >&2
+            exit 1
+          fi
 
       - name: Render Wrangler config
         run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
@@ -138,6 +167,42 @@ jobs:
             "${R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW:-${R2E_UPLOAD_ALLOWED_ORIGINS}}" \
             "${R2E_SMOKE_BASE_URL}"
 
+      - name: Sync web CSP transform rule (preview, conditional)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          zone_name="$(printf '%s' "${R2E_CF_ZONE_NAME:-}" | tr '[:upper:]' '[:lower:]')"
+          preview_host="$(
+            printf '%s' "${R2E_SMOKE_BASE_URL:-}" |
+              sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##' |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          if [[ -z "${zone_name}" ]]; then
+            echo "::notice::Skipping preview CSP sync: R2E_CF_ZONE_NAME is empty in GitHub preview environment vars."
+            exit 0
+          fi
+
+          if [[ -z "${preview_host}" ]]; then
+            echo "::notice::Skipping preview CSP sync: preview host could not be derived from R2E_SMOKE_BASE_URL."
+            exit 0
+          fi
+
+          if [[ "${preview_host}" == "${zone_name}" || "${preview_host}" == *".${zone_name}" ]]; then
+            echo "Preview host '${preview_host}' is in zone '${zone_name}'; syncing web CSP rule."
+            R2E_WEB_CSP_RULE_REF="r2-explorer-web-csp-preview" \
+            R2E_WEB_CSP_RULE_DESCRIPTION="R2 Explorer web CSP (preview, analytics-enabled)" \
+            ./scripts/ci/sync-r2-web-csp.sh \
+              "${preview_host}" \
+              "r2-explorer/web/config/csp.analytics.production.txt"
+            exit 0
+          fi
+
+          echo "::notice::Skipping preview CSP sync: preview host '${preview_host}' is outside configured zone '${zone_name}'."
+
       - name: Deploy preview
         working-directory: r2-explorer
         env:
@@ -174,6 +239,7 @@ jobs:
     env:
       R2E_SMOKE_RETRIES: "1"
       R2E_SMOKE_RETRY_DELAY_SEC: "2"
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -206,6 +272,41 @@ jobs:
       - name: Install dependencies for live tests
         working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
+
+      - name: Verify preview web CSP and analytics markers (conditional)
+        env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+          R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          zone_name="$(printf '%s' "${R2E_CF_ZONE_NAME:-}" | tr '[:upper:]' '[:lower:]')"
+          preview_host="$(
+            printf '%s' "${R2E_SMOKE_BASE_URL:-}" |
+              sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##' |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          if [[ -z "${zone_name}" ]]; then
+            echo "::notice::Skipping preview CSP/analytics verification: R2E_CF_ZONE_NAME is empty in GitHub preview environment vars."
+            exit 0
+          fi
+
+          if [[ -z "${preview_host}" ]]; then
+            echo "::notice::Skipping preview CSP/analytics verification: preview host could not be derived from R2E_SMOKE_BASE_URL."
+            exit 0
+          fi
+
+          if [[ "${preview_host}" == "${zone_name}" || "${preview_host}" == *".${zone_name}" ]]; then
+            echo "Preview host '${preview_host}' is in zone '${zone_name}'; running web CSP/analytics verification."
+            ./scripts/ci/check-r2-web-security.sh \
+              "${R2E_SMOKE_BASE_URL}" \
+              "r2-explorer/web/config/csp.analytics.production.txt"
+            exit 0
+          fi
+
+          echo "::notice::Skipping preview CSP/analytics verification: preview host '${preview_host}' is outside configured zone '${zone_name}'."
 
       - name: Run Worker smoke checks
         env:
@@ -293,7 +394,7 @@ jobs:
             echo
             echo "Required operator actions:"
             echo "1. Identify the last known-good Worker revision and matching env snapshot."
-            echo "2. Redeploy the rollback target and reapply Access policy split."
+            echo "2. Redeploy the rollback target and reapply Access API policy model (/api/v2/* Allow+Service Auth, /share/* Bypass)."
             echo "3. Re-run share lifecycle and API protection checks."
             echo
             echo "Command checklist:"
@@ -357,12 +458,22 @@ jobs:
       R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW: ${{ vars.R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW }}
       R2E_UPLOAD_S3_BUCKET: ${{ vars.R2E_UPLOAD_S3_BUCKET }}
       R2E_UPLOAD_S3_BUCKET_PREVIEW: ${{ vars.R2E_UPLOAD_S3_BUCKET_PREVIEW }}
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Reject non-main production deploy ref
         run: |
           if [[ "${{ github.event.inputs.ref }}" != "main" ]]; then
             echo "Production deploys require ref=main." >&2
             echo "Got '${{ github.event.inputs.ref }}'." >&2
+            exit 1
+          fi
+
+      - name: Require production zone name variable
+        run: |
+          set -euo pipefail
+          if [[ -z "${R2E_CF_ZONE_NAME:-}" ]]; then
+            echo "R2E_CF_ZONE_NAME is required for production deploys." >&2
+            echo "Set vars.R2E_CF_ZONE_NAME in the GitHub production environment." >&2
             exit 1
           fi
 
@@ -382,6 +493,16 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.ref }}
+
+      - name: Verify Access API policy contract (production)
+        env:
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          ./scripts/ci/check-r2-access-policy.sh \
+            "files.unsigned.sh" \
+            "${R2E_ACCESS_AUD}" \
+            "${R2E_SMOKE_ACCESS_CLIENT_ID}"
 
       - name: Render Wrangler config
         run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
@@ -413,6 +534,17 @@ jobs:
       - name: Build web bundle
         working-directory: r2-explorer
         run: pnpm run build:web
+
+      - name: Sync web CSP transform rule (production)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          R2E_WEB_CSP_RULE_REF="r2-explorer-web-csp" \
+          R2E_WEB_CSP_RULE_DESCRIPTION="R2 Explorer web CSP (production, analytics-enabled)" \
+          ./scripts/ci/sync-r2-web-csp.sh \
+            "files.unsigned.sh" \
+            "r2-explorer/web/config/csp.analytics.production.txt"
 
       - name: Sync runtime upload signing secrets (production)
         working-directory: r2-explorer
@@ -462,6 +594,7 @@ jobs:
       R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
       R2E_SMOKE_RETRIES: "2"
       R2E_SMOKE_RETRY_DELAY_SEC: "3"
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -494,6 +627,13 @@ jobs:
       - name: Install dependencies for live tests
         working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
+
+      - name: Verify web CSP and analytics markers
+        run: |
+          set -euo pipefail
+          ./scripts/ci/check-r2-web-security.sh \
+            "${R2E_SMOKE_BASE_URL}" \
+            "r2-explorer/web/config/csp.analytics.production.txt"
 
       - name: Run Worker smoke checks
         env:
@@ -563,7 +703,7 @@ jobs:
             echo
             echo "Required operator actions:"
             echo "1. Roll back to the last known-good Worker revision."
-            echo "2. Restore matching environment variables and Access policy split."
+            echo "2. Restore matching environment variables and Access API policy model (/api/v2/* Allow+Service Auth, /share/* Bypass)."
             echo "3. Verify /share token behavior and /api Access protection before leaving incident mode."
             echo
             echo "Command checklist:"

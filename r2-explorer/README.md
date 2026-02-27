@@ -88,27 +88,26 @@ Required API Worker secrets:
 - `S3_ACCESS_KEY_ID`
 - `S3_SECRET_ACCESS_KEY`
 
-## Access policy split
+## Access policy model
 
 Recommended policy setup on `files.unsigned.sh`:
 
 1. Protected API app:
 
 - Path: `/api/v2/*`
-- Action: `Allow` for authorized identities
+- Policies:
+  - `Allow` for authorized identities
+  - `Service Auth` for machine callers (CI/service tokens)
 
 2. Public share links:
 
 - Path: `/share/*`
 - Action: `Bypass`
 
-3. HMAC admin share operations (CLI)
-
-- Path: `/api/v2/share/*`
-- Action: `Bypass`
-
-The Worker still validates HMAC signatures and Access JWTs in-app. Bypass only
-removes Access interception.
+`/api/v2/share/*` stays inside the protected API surface. CLI requests should set
+`R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET` when no
+browser Access session is present. The Worker still validates HMAC signatures
+and Access JWTs in-app.
 
 ## Deploy
 
@@ -128,3 +127,51 @@ nix run .#deploy-web
 pnpm -C web run build
 pnpm exec wrangler deploy --config web/wrangler.toml
 ```
+
+## Production CSP + analytics policy
+
+Production uses a Cloudflare Response Header Transform Rule to set the web
+Worker CSP for `files.unsigned.sh` (excluding `/api/v2/*` and `/share/*`).
+The policy source of truth is:
+
+- `r2-explorer/web/config/csp.analytics.production.txt`
+
+The deploy workflow syncs this rule with:
+
+- `scripts/ci/sync-r2-web-csp.sh`
+
+and verifies post-deploy behavior with:
+
+- `scripts/ci/check-r2-web-security.sh`
+
+Workflow-managed CSP rule refs:
+
+- Production: `r2-explorer-web-csp`
+- Preview: `r2-explorer-web-csp-preview`
+
+Required workflow variable in GitHub Environments (`preview` and `production`):
+
+- `R2E_CF_ZONE_NAME` (example: `unsigned.sh`)
+  - Preview: may be empty for out-of-zone preview hosts; CSP sync/check steps
+    are skipped with explicit notices.
+  - Production: must be non-empty; deploy fails fast if not set.
+
+Required API token permissions for CSP sync:
+
+- `Zone Rulesets Write`
+- `Zone Rulesets Read`
+
+## Preview host routing
+
+Preview deploys are expected on:
+
+- `https://preview.files.unsigned.sh`
+
+Route split:
+
+- Web Worker: `preview.files.unsigned.sh/*`
+- API Worker: `preview.files.unsigned.sh/api/v2/*` and
+  `preview.files.unsigned.sh/share/*`
+- Access app paths:
+  - API protected app: `preview.files.unsigned.sh/api/v2/*`
+  - Public share bypass app: `preview.files.unsigned.sh/share/*`

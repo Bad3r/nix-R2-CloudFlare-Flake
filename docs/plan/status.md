@@ -61,11 +61,12 @@ Operations:
 - Schedule Worker admin key rotation using `docs/operators/key-rotation.md`.
   Requirement: always use `wrangler kv ... --remote` for KV updates so you modify the deployed Worker, not local Miniflare storage.
 - Keep Cloudflare Access policy split on `files.unsigned.sh`:
-- `/*` allow trusted identities
+- `/api/v2/*` allow trusted identities + service-token `Service Auth`
 - `/share/*` bypass for public token links
-- `/api/v2/share/*` bypass so `r2 share worker ...` HMAC admin flows work without an Access browser session
-  (GUI share actions still work for logged-in users because the Worker accepts
-  the `CF_Authorization` cookie for Access identity on bypassed share routes)
+- Keep preview as an independent Access-protected API surface:
+  - `preview.files.unsigned.sh/api/v2/*` has distinct app/audience
+    (`R2E_ACCESS_AUD_PREVIEW`) and service-token policy.
+  - `preview.files.unsigned.sh/share/*` remains the public bypass path.
 
 Optional upstream follow-ups:
 

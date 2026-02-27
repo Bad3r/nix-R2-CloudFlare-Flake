@@ -51,7 +51,8 @@ Required environment variables for Worker-mode CLI calls:
 - `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
 - `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
 
-Optional (only when `/api/v2/share/*` is behind Access instead of bypass):
+Required for Access-protected API calls (`/api/v2/*`), including
+`r2 share worker ...`:
 
 - `R2_EXPLORER_ACCESS_CLIENT_ID`
 - `R2_EXPLORER_ACCESS_CLIENT_SECRET`
@@ -76,9 +77,8 @@ Behavior and constraints:
 - Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
 - `/api/v2/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
 - `r2 share worker ...` authenticates request integrity with admin HMAC headers.
-- When `/api/v2/share/*` is Access-protected, CLI calls can additionally present
-  Access service-token headers via `R2_EXPLORER_ACCESS_CLIENT_ID` and
-  `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
+- CLI calls to Worker APIs should present Access service-token headers via
+  `R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
 
 Required Worker vars for `/api/v2/*` JWT verification:
 
@@ -93,15 +93,18 @@ Failure semantics:
 
 ## Cloudflare Access policy model
 
-Use path-based policy split so interactive/admin APIs stay authenticated while
-public token links work as intended:
+Use path-based policy split so all API routes stay authenticated while public
+token links work as intended:
 
 1. Access-protected app policy:
 
 - Domain: `files.unsigned.sh`
-- Path: `/*`
-- Action: `Allow`
-- Include: your org users/groups
+- Path: `/api/v2/*`
+- Policies:
+  - Action: `Allow`
+  - Include: your org users/groups
+  - Action: `Service Auth`
+  - Include: service tokens used by CLI/CI automation
 
 2. Share-link bypass policy (public download):
 
@@ -109,27 +112,20 @@ public token links work as intended:
 - Path: `/share/*`
 - Action: `Bypass`
 
-3. Share-management API bypass policy (HMAC admin):
+3. Preview environment should mirror this split with independent Access apps:
 
-- Domain: `files.unsigned.sh`
-- Path: `/api/v2/share/*`
-- Action: `Bypass`
+- API app: `preview.files.unsigned.sh/api/v2/*` with `Allow` + `Service Auth`
+- Share app: `preview.files.unsigned.sh/share/*` with `Bypass`
+- Independent preview audience value (`R2E_ACCESS_AUD_PREVIEW`)
 
-This keeps `/` and `/api/v2/*` behind Access while allowing:
+This keeps `/api/v2/*` behind Access while allowing:
 
 - `GET /share/<token>` to work for recipients without Access membership
-- `r2 share worker create|list|revoke ...` to work via HMAC without a browser
-  Access session
+- `r2 share worker create|list|revoke ...` with HMAC + Access service-token
+  headers in automation contexts
 
-Note: `/api/v2/share/*` is still protected by Worker auth. The Worker requires
-either a valid Cloudflare Access JWT or valid HMAC admin headers for these
-endpoints.
-
-Important: when `/api/v2/share/*` is configured as an Access `Bypass`, Access will
-not inject `Cf-Access-Jwt-Assertion` headers on those requests. Browser sessions
-can still be authenticated by the Worker via the `CF_Authorization` cookie
-(validated against `R2E_ACCESS_TEAM_DOMAIN` + `R2E_ACCESS_AUD`). CLI-driven
-requests use HMAC admin headers.
+Important: `/api/v2/share/*` is not a bypass path. It is part of the protected
+API surface and inherits Access policy requirements.
 
 Important: Access policy split alone is not sufficient. The Worker must also
 verify Access JWT signature and claims on `/api/v2/*`.

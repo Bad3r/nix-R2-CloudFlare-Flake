@@ -61,6 +61,18 @@ new_sqlite_classes = ["UploadSessionDurableObject"]
 [env.preview]
 workers_dev = true
 
+[[env.preview.routes]]
+pattern = "preview.files.unsigned.sh"
+custom_domain = true
+
+[[env.preview.routes]]
+pattern = "preview.files.unsigned.sh/api/v2/*"
+zone_name = "unsigned.sh"
+
+[[env.preview.routes]]
+pattern = "preview.files.unsigned.sh/share/*"
+zone_name = "unsigned.sh"
+
 [env.preview.vars]
 R2E_ADMIN_AUTH_WINDOW_SEC = "300"
 R2E_MAX_SHARE_TTL_SEC = "2592000"
