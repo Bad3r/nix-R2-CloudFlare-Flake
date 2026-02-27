@@ -417,7 +417,8 @@ async function validateOauthToken(token: string, env: Env): Promise<JwtPayload> 
       verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey, verifyConfig);
     } catch {
       verified = false;
-    }
+  // Retry with fresh JWKS in case keys were rotated since last cache refresh
+  if (!verified) {
   }
 
   if (!verified) {
