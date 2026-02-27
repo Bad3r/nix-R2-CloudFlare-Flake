@@ -71,9 +71,9 @@ function normalizeOwnerKey(ownerId: string): string {
   if (trimmed.length === 0) {
     throw new HttpError(400, "owner_required", "Upload session owner is required.");
   }
-  // Access identities are email-like principals; enforce a canonical lowercase
-  // form so equivalent identifiers cannot bypass session ownership checks.
-  return trimmed.toLowerCase();
+  // OAuth subjects can be case-sensitive opaque identifiers; preserve exact
+  // bytes to avoid cross-principal collisions.
+  return trimmed;
 }
 
 function parseRequestBody<T>(raw: string): T {

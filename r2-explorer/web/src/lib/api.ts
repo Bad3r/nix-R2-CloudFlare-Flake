@@ -1,5 +1,5 @@
 export type RequestActor = {
-  mode: "access" | "hmac";
+  mode: "oauth";
   actor: string;
 };
 

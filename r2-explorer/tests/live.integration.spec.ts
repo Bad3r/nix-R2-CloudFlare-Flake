@@ -6,12 +6,11 @@ const execFileAsync = promisify(execFile);
 
 const REQUIRED_ENV = [
   "R2E_SMOKE_BASE_URL",
-  "R2E_SMOKE_ADMIN_KID",
-  "R2E_SMOKE_ADMIN_SECRET",
   "R2E_SMOKE_BUCKET",
   "R2E_SMOKE_KEY",
-  "R2E_SMOKE_ACCESS_CLIENT_ID",
-  "R2E_SMOKE_ACCESS_CLIENT_SECRET",
+  "R2E_SMOKE_OAUTH_TOKEN_URL",
+  "R2E_SMOKE_OAUTH_CLIENT_ID",
+  "R2E_SMOKE_OAUTH_CLIENT_SECRET",
 ] as const;
 
 const missingEnv = REQUIRED_ENV.filter((name) => {
@@ -62,6 +61,36 @@ async function fetchWithRetry(
   throw new Error(`Request failed after ${attempts} attempts: ${String(attemptError)}`);
 }
 
+async function fetchOauthAccessToken(
+  tokenUrl: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  const response = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    access_token?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (!response.ok || !payload.access_token) {
+    throw new Error(
+      `oauth token request failed: status=${response.status} error=${payload.error || "unknown"} ${payload.error_description || ""}`.trim(),
+    );
+  }
+  return payload.access_token;
+}
+
 describeLive("live worker integration", () => {
   it(
     "validates real share flow plus authenticated multipart upload behavior",
@@ -70,22 +99,21 @@ describeLive("live worker integration", () => {
       const baseOrigin = new URL(baseUrl).origin;
       const bucket = requiredEnv("R2E_SMOKE_BUCKET");
       const key = requiredEnv("R2E_SMOKE_KEY");
-      const adminKid = requiredEnv("R2E_SMOKE_ADMIN_KID");
-      const adminSecret = requiredEnv("R2E_SMOKE_ADMIN_SECRET");
-      const accessClientId = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_ID");
-      const accessClientSecret = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_SECRET");
+      const oauthTokenUrl = requiredEnv("R2E_SMOKE_OAUTH_TOKEN_URL");
+      const oauthClientId = requiredEnv("R2E_SMOKE_OAUTH_CLIENT_ID");
+      const oauthClientSecret = requiredEnv("R2E_SMOKE_OAUTH_CLIENT_SECRET");
       const r2Bin = process.env.R2E_SMOKE_R2_BIN || "r2";
       const ttl = process.env.R2E_SMOKE_TTL || "10m";
       const retries = Number.parseInt(process.env.R2E_SMOKE_RETRIES || "2", 10);
       const attempts = Number.isFinite(retries) && retries >= 0 ? retries + 1 : 3;
+      const accessToken = await fetchOauthAccessToken(oauthTokenUrl, oauthClientId, oauthClientSecret);
 
       const cliEnv = {
         ...process.env,
         R2_EXPLORER_BASE_URL: baseUrl,
-        R2_EXPLORER_ADMIN_KID: adminKid,
-        R2_EXPLORER_ADMIN_SECRET: adminSecret,
-        R2_EXPLORER_ACCESS_CLIENT_ID: accessClientId,
-        R2_EXPLORER_ACCESS_CLIENT_SECRET: accessClientSecret,
+        R2_EXPLORER_OAUTH_TOKEN_URL: oauthTokenUrl,
+        R2_EXPLORER_OAUTH_CLIENT_ID: oauthClientId,
+        R2_EXPLORER_OAUTH_CLIENT_SECRET: oauthClientSecret,
       } as NodeJS.ProcessEnv;
 
       let createdTokenId: string | null = null;
@@ -130,7 +158,7 @@ describeLive("live worker integration", () => {
           expect(location).toContain("/cdn-cgi/access/login/");
         } else {
           const payload = JSON.parse(unauthenticated.body) as { error?: { code?: string } };
-          expect(payload.error?.code).toBe("access_required");
+          expect(payload.error?.code).toBe("oauth_required");
         }
 
         const authenticated = await fetchWithRetry(
@@ -139,8 +167,7 @@ describeLive("live worker integration", () => {
             method: "GET",
             redirect: "manual",
             headers: {
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${accessToken}`,
             },
           },
           attempts,
@@ -153,7 +180,7 @@ describeLive("live worker integration", () => {
         };
         expect(typeof authenticatedPayload.version).toBe("string");
         expect(authenticatedPayload.version?.length).toBeGreaterThan(0);
-        expect(authenticatedPayload.actor?.mode).toBe("access");
+        expect(authenticatedPayload.actor?.mode).toBe("oauth");
         expect(authenticatedPayload.actor?.actor).toBeTruthy();
         expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
 
@@ -166,8 +193,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
               filename: "live-multipart.bin",
@@ -199,8 +225,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
               sessionId: initPayload.sessionId,
@@ -236,8 +261,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
               sessionId: initPayload.sessionId,
