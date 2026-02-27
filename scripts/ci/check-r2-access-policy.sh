@@ -128,9 +128,6 @@ fi
 
 service_token_id="$(
   jq -r --arg client_id "${service_token_client_id}" \
-    '.result[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_json}" | head -n1
-service_token_id="$(
-  jq -r --arg client_id "${service_token_client_id}" \
     '.result[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_json}"
 )"
 token_count="$(printf '%s' "${service_token_id}" | wc -l)"
