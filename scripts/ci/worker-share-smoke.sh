@@ -69,6 +69,40 @@ dump_response_context() {
   fi
 }
 
+assert_no_cloudflare_access_redirect() {
+  local label="$1"
+  local url="$2"
+  local body_file="$3"
+  local headers_file="$4"
+  local status curl_exit location
+
+  set +e
+  status="$(
+    curl -sS \
+      --max-time "${SMOKE_TIMEOUT_SEC}" \
+      --connect-timeout "${SMOKE_CONNECT_TIMEOUT_SEC}" \
+      -D "${headers_file}" \
+      -o "${body_file}" \
+      -w "%{http_code}" \
+      "${url}"
+  )"
+  curl_exit=$?
+  set -e
+
+  if [[ ${curl_exit} -ne 0 ]]; then
+    fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
+  fi
+
+  if [[ ${status} == "302" ]]; then
+    location="$(
+      awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2; exit }' "${headers_file}"
+    )"
+    if [[ ${location} == *"/cdn-cgi/access/login/"* || ${location} == *"/cdn-cgi/access/login"* ]]; then
+      fail "${label} hit Cloudflare Access redirect (${location}). /api/v2/* must not be edge-gated; remove stale Access app domains for this host."
+    fi
+  fi
+}
+
 should_retry_status() {
   local status="$1"
 
@@ -263,6 +297,18 @@ fi
 
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
 echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
+preflight_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke-preflight.XXXXXX")"
+preflight_cleanup() {
+  rm -rf "${preflight_tmp_dir}"
+}
+trap preflight_cleanup EXIT
+
+assert_no_cloudflare_access_redirect \
+  "API preflight" \
+  "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" \
+  "${preflight_tmp_dir}/api-preflight.body" \
+  "${preflight_tmp_dir}/api-preflight.headers"
+
 create_json="$(
   "${R2_BIN}" share worker create \
     "${R2E_SMOKE_BUCKET}" \
@@ -289,6 +335,7 @@ echo "Created smoke share token ${token_id} (expires ${expires_at})"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke.XXXXXX")"
 cleanup() {
+  preflight_cleanup
   rm -rf "${tmp_dir}"
 }
 trap cleanup EXIT

@@ -9,6 +9,7 @@ on:
       - "scripts/ci/render-r2-explorer-wrangler-config.sh"
       - "scripts/ci/sync-r2-upload-cors.sh"
       - "scripts/ci/sync-r2-web-csp.sh"
+      - "scripts/ci/clear-r2-access-gate.sh"
       - "scripts/ci/check-r2-web-security.sh"
       - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
@@ -232,6 +233,15 @@ jobs:
           set -euo pipefail
           cp web/.assetsignore web/dist/.assetsignore
           pnpm exec wrangler deploy --config web/wrangler.toml --env preview
+
+      - name: Remove stale Access API/share gates (preview)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          ./scripts/ci/clear-r2-access-gate.sh "${R2E_SMOKE_BASE_URL}"
 
   smoke-preview:
     name: Smoke preview
@@ -605,6 +615,13 @@ jobs:
           set -euo pipefail
           cp web/.assetsignore web/dist/.assetsignore
           pnpm exec wrangler deploy --config web/wrangler.toml
+
+      - name: Remove stale Access API/share gates (production)
+        env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          ./scripts/ci/clear-r2-access-gate.sh "${R2E_SMOKE_BASE_URL}"
 
   smoke-production:
     name: Smoke production
