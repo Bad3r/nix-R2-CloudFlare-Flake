@@ -85,6 +85,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Reject unexpected preview base URL
+        env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          expected_base_url="https://preview.files.unsigned.sh"
+          if [[ "${R2E_SMOKE_BASE_URL}" != "${expected_base_url}" ]]; then
+            echo "Preview smoke/deploy base URL drift detected." >&2
+            echo "Expected '${expected_base_url}' but got '${R2E_SMOKE_BASE_URL}'." >&2
+            exit 1
+          fi
+
       - name: Render Wrangler config
         run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
 

@@ -156,3 +156,15 @@ Required API token permissions for CSP sync:
 
 - `Zone Rulesets Write`
 - `Zone Rulesets Read`
+
+## Preview host routing
+
+Preview deploys are expected on:
+
+- `https://preview.files.unsigned.sh`
+
+Route split:
+
+- Web Worker: `preview.files.unsigned.sh/*`
+- API Worker: `preview.files.unsigned.sh/api/v2/*` and
+  `preview.files.unsigned.sh/share/*`
