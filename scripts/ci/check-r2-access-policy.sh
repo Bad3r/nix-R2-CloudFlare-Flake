@@ -113,6 +113,13 @@ if [[ ${has_allow_policy} != "true" ]]; then
   fail "API app ${api_app_id} is missing an allow policy"
 fi
 
+has_api_bypass_policy="$(
+  jq -r 'any(.result[]?; .decision == "bypass")' <<<"${api_policies_json}"
+)"
+if [[ ${has_api_bypass_policy} == "true" ]]; then
+  fail "API app ${api_app_id} contains a bypass policy; /api/v2/* must stay Access-protected"
+fi
+
 service_tokens_json="$(cf_api_get "/access/service_tokens")"
 service_tokens_success="$(jq -r '.success' <<<"${service_tokens_json}")"
 if [[ ${service_tokens_success} != "true" ]]; then
