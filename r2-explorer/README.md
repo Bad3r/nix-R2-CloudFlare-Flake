@@ -128,3 +128,28 @@ nix run .#deploy-web
 pnpm -C web run build
 pnpm exec wrangler deploy --config web/wrangler.toml
 ```
+
+## Production CSP + analytics policy
+
+Production uses a Cloudflare Response Header Transform Rule to set the web
+Worker CSP for `files.unsigned.sh` (excluding `/api/v2/*` and `/share/*`).
+The policy source of truth is:
+
+- `r2-explorer/web/config/csp.analytics.production.txt`
+
+The deploy workflow syncs this rule with:
+
+- `scripts/ci/sync-r2-web-csp.sh`
+
+and verifies post-deploy behavior with:
+
+- `scripts/ci/check-r2-web-security.sh`
+
+Required production workflow variable:
+
+- `R2E_CF_ZONE_NAME` (example: `unsigned.sh`)
+
+Required API token permissions for CSP sync:
+
+- `Zone Rulesets Write`
+- `Zone Rulesets Read`
