@@ -48,14 +48,10 @@ r2 share worker revoke <token-id>
 Required environment variables for Worker-mode CLI calls:
 
 - `R2_EXPLORER_BASE_URL` (for example `https://files.unsigned.sh`)
-- `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
-- `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
-
-Required for Access-protected API calls (`/api/v2/*`), including
-`r2 share worker ...`:
-
-- `R2_EXPLORER_ACCESS_CLIENT_ID`
-- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
+- `R2_EXPLORER_OAUTH_CLIENT_ID`
+- `R2_EXPLORER_OAUTH_CLIENT_SECRET`
+- `R2_EXPLORER_OAUTH_TOKEN_URL`
+- optional `R2_EXPLORER_OAUTH_SCOPE`
 
 Multi-bucket aliases:
 
@@ -74,68 +70,44 @@ Behavior and constraints:
 - Share URL format: `https://files.unsigned.sh/share/<token-id>`
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
-- Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
-- `/api/v2/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
-- `r2 share worker ...` authenticates request integrity with admin HMAC headers.
-- CLI calls to Worker APIs should present Access service-token headers via
-  `R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
-
-Required Worker vars for `/api/v2/*` JWT verification:
-
-- `R2E_ACCESS_TEAM_DOMAIN` (for example `team.cloudflareaccess.com`)
-- `R2E_ACCESS_AUD` (Access application audience value)
+- `/api/v2/*` routes require `Authorization: Bearer <token>`.
+- Bearer JWT validation is performed in-worker using IdP issuer/audience/JWKS.
 
 Failure semantics:
 
-- Missing `Cf-Access-Jwt-Assertion` for `/api/v2/*`: `401 access_required`
-- Invalid JWT signature/claims: `401 access_jwt_invalid`
-- Missing verifier config (`R2E_ACCESS_TEAM_DOMAIN` or `R2E_ACCESS_AUD`): `500 access_config_invalid`
+- Missing bearer token for `/api/v2/*`: `401 token_missing`
+- Invalid signature/JWKS/key selection: `401 token_invalid_signature`
+- Issuer/audience mismatch: `401 token_claim_mismatch`
+- Missing required scope: `403 insufficient_scope`
+- Missing verifier config (`R2E_IDP_ISSUER` / `R2E_IDP_AUDIENCE`): `500 idp_config_invalid`
 
-## Cloudflare Access policy model
+## Edge routing model
 
-Use path-based policy split so all API routes stay authenticated while public
-token links work as intended:
+Cloudflare edge config should only route paths; auth is enforced in-worker:
 
-1. Access-protected app policy:
+1. API routes:
 
-- Domain: `files.unsigned.sh`
-- Path: `/api/v2/*`
-- Policies:
-  - Action: `Allow`
-  - Include: your org users/groups
-  - Action: `Service Auth`
-  - Include: service tokens used by CLI/CI automation
+- Domain/path: `files.unsigned.sh/api/v2/*`
+- No Cloudflare Access gate requirement
+- Worker enforces IdP bearer token verification
 
-2. Share-link bypass policy (public download):
+2. Public share routes:
 
-- Domain: `files.unsigned.sh`
-- Path: `/share/*`
-- Action: `Bypass`
+- Domain/path: `files.unsigned.sh/share/*`
+- Public by token design
 
-3. Preview environment should mirror this split with independent Access apps:
+3. Preview should mirror production semantics:
 
-- API app: `preview.files.unsigned.sh/api/v2/*` with `Allow` + `Service Auth`
-- Share app: `preview.files.unsigned.sh/share/*` with `Bypass`
-- Independent preview audience value (`R2E_ACCESS_AUD_PREVIEW`)
+- `preview.files.unsigned.sh/api/v2/*` authenticated by bearer in-worker
+- `preview.files.unsigned.sh/share/*` public by token
 
-This keeps `/api/v2/*` behind Access while allowing:
-
-- `GET /share/<token>` to work for recipients without Access membership
-- `r2 share worker create|list|revoke ...` with HMAC + Access service-token
-  headers in automation contexts
-
-Important: `/api/v2/share/*` is not a bypass path. It is part of the protected
-API surface and inherits Access policy requirements.
-
-Important: Access policy split alone is not sufficient. The Worker must also
-verify Access JWT signature and claims on `/api/v2/*`.
+Important: `/api/v2/share/*` is protected API surface and requires bearer scope.
 
 ## Operator runbooks
 
 Use dedicated runbooks for operations and incident handling:
 
 - `docs/operators/index.md`
-- `docs/operators/key-rotation.md`
 - `docs/operators/readonly-maintenance.md`
 - `docs/operators/access-policy-split.md`
 - `docs/operators/incident-response.md`

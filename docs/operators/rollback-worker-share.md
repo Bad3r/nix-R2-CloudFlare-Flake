@@ -10,24 +10,24 @@ regression.
 - Post-deploy smoke check failure.
 - Deploy workflow smoke jobs fail (`smoke-preview` or `smoke-production`).
 - Auth or share lifecycle regressions introduced by config/code changes.
-- Access policy changes causing incorrect route exposure.
+- Route/auth configuration drift causing incorrect exposure or auth failures.
 
 ## Prerequisites
 
 - Access to prior deployment revision or release artifact.
 - Access to prior environment variable snapshot.
-- Ability to redeploy Worker and modify Access policies.
+- Ability to redeploy Worker.
 
 ## Inputs / Environment Variables
 
 - Last known-good Worker revision identifier.
 - Last known-good values for:
   - `R2E_READONLY`
-  - keyset/secret references for admin auth
+  - IdP verification variables (`R2E_IDP_ISSUER`, `R2E_IDP_AUDIENCE`,
+    optional JWKS/scope overrides)
   - bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
     `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
-    `R2E_SHARES_KV_ID_PREVIEW`, `R2E_KEYS_KV_ID`,
-    `R2E_KEYS_KV_ID_PREVIEW`)
+    `R2E_SHARES_KV_ID_PREVIEW`)
 - Target domain for verification (`https://files.unsigned.sh`)
 
 ## Procedure (CLI-first)
@@ -36,10 +36,7 @@ regression.
    - Most recent known-good deployment passing share/API smoke tests.
 2. Reapply previous Worker code/config revision.
 3. Reapply previous environment snapshot.
-4. Reconfirm Access policy split:
-   - `/*` allow for org identities.
-   - `/share/*` bypass.
-5. Deploy rollback revision:
+4. Deploy rollback revision:
 
 ```bash
 ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
@@ -47,7 +44,7 @@ cd r2-explorer
 wrangler deploy --config wrangler.ci.toml
 ```
 
-6. Validate lifecycle and route behavior:
+5. Validate lifecycle and route behavior:
 
 ```bash
 r2 share worker create files documents/test.txt 1h --max-downloads 1
@@ -58,16 +55,16 @@ curl -I https://files.unsigned.sh/share/<token-id>
 
 ## Verification
 
-- Admin share lifecycle endpoints return expected status.
-- `/api/v2/*` remains Access-protected.
+- Share lifecycle endpoints return expected status.
+- `/api/v2/*` remains bearer-protected in-worker.
 - `/share/*` remains public-token accessible and token-constrained.
 
 ## Failure Signatures and Triage
 
 - Code rollback succeeded but auth still fails:
-  - stale env secrets or keyset mismatch.
+  - stale OAuth client credentials or stale IdP env values.
 - Public links fail while API works:
-  - Access bypass path missing/regressed.
+  - share token state or route mapping regression.
 - KV-driven behavior inconsistent:
   - wrong namespace binding for active environment.
 

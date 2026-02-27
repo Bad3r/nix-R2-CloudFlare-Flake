@@ -1,6 +1,6 @@
 # Plan Status
 
-Last updated: **2026-02-15**
+Last updated: **2026-02-27**
 
 ## Current State
 
@@ -29,7 +29,7 @@ Known-good production inventory (as validated on `system76`):
 - `/run/secrets/r2/account-id`
 - `/run/secrets/r2/credentials.env`
 - `/run/secrets/r2/restic-password`
-- `/run/secrets/r2/explorer.env` (Worker admin signing inputs for `r2 share worker ...`)
+- `/run/secrets/r2/explorer.env` (Worker OAuth client credentials for `r2 share worker ...`)
 
 Acceptance checks that passed on `system76`:
 
@@ -46,8 +46,8 @@ Acceptance checks that passed on `system76`:
 - Worker token share works:
   `r2 share worker create files workspace/demo.txt 10m --max-downloads 1`
   returns a URL under `files.unsigned.sh/share/<token>` and enforces max-downloads
-- Access split remains enforced:
-  `curl -I https://files.unsigned.sh/api/v2/list` returns `401` (or Access redirect)
+- Direct IdP auth remains enforced:
+  `curl -I https://files.unsigned.sh/api/v2/list` returns `401` with `token_missing`
 
 ## What's Next
 
@@ -58,17 +58,15 @@ Consumer repo (`~/nixos`) completion items:
 
 Operations:
 
-- Schedule Worker admin key rotation using `docs/operators/key-rotation.md`.
-  Requirement: always use `wrangler kv ... --remote` for KV updates so you modify the deployed Worker, not local Miniflare storage.
-- Keep Cloudflare Access policy split on `files.unsigned.sh`:
-- `/api/v2/*` allow trusted identities + service-token `Service Auth`
-- `/share/*` bypass for public token links
-- Keep preview as an independent Access-protected API surface:
-  - `preview.files.unsigned.sh/api/v2/*` has distinct app/audience
-    (`R2E_ACCESS_AUD_PREVIEW`) and service-token policy.
-  - `preview.files.unsigned.sh/share/*` remains the public bypass path.
+- Rotate OAuth client credentials periodically using `docs/operators/key-rotation.md`.
+- Keep direct IdP bearer auth on `files.unsigned.sh`:
+- `/api/v2/*` validated in-worker against issuer/audience/JWKS.
+- `/share/*` remains public for token links.
+- Keep preview as an independent direct-IdP API surface:
+  - `preview.files.unsigned.sh/api/v2/*` uses preview issuer/audience settings.
+  - `preview.files.unsigned.sh/share/*` remains public token route.
 
 Optional upstream follow-ups:
 
 - Cut a release version after consumer repo changes are merged, so `~/nixos` can pin a stable tag.
-- Add a small CI/runbook lint rule to flag KV write commands that omit `--remote`.
+- Add a small CI/runbook lint rule to flag stale Access/HMAC references in operational docs.
