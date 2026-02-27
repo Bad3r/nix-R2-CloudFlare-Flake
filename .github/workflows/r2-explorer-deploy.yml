@@ -156,7 +156,7 @@ jobs:
           )"
 
           if [[ -z "${zone_name}" ]]; then
-            echo "::notice::Skipping preview CSP sync: R2E_CF_ZONE_NAME is empty."
+            echo "::notice::Skipping preview CSP sync: R2E_CF_ZONE_NAME is empty in GitHub preview environment vars."
             exit 0
           fi
 
@@ -261,7 +261,7 @@ jobs:
           )"
 
           if [[ -z "${zone_name}" ]]; then
-            echo "::notice::Skipping preview CSP/analytics verification: R2E_CF_ZONE_NAME is empty."
+            echo "::notice::Skipping preview CSP/analytics verification: R2E_CF_ZONE_NAME is empty in GitHub preview environment vars."
             exit 0
           fi
 
@@ -440,6 +440,15 @@ jobs:
             exit 1
           fi
 
+      - name: Require production zone name variable
+        run: |
+          set -euo pipefail
+          if [[ -z "${R2E_CF_ZONE_NAME:-}" ]]; then
+            echo "R2E_CF_ZONE_NAME is required for production deploys." >&2
+            echo "Set vars.R2E_CF_ZONE_NAME in the GitHub production environment." >&2
+            exit 1
+          fi
+
       - name: Reject unexpected production base URL
         env:
           R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
@@ -545,6 +554,7 @@ jobs:
       R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
       R2E_SMOKE_RETRIES: "2"
       R2E_SMOKE_RETRY_DELAY_SEC: "3"
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

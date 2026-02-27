@@ -26,6 +26,15 @@ The API token used for CSP sync must include:
 - `Zone Rulesets Write`
 - `Zone Rulesets Read`
 
+## GitHub Environment Variables
+
+- Set `R2E_CF_ZONE_NAME` in both `preview` and `production` GitHub
+  Environments.
+- Preview: empty `R2E_CF_ZONE_NAME` is allowed; preview CSP sync/verification
+  steps skip with explicit `::notice::` logs.
+- Production: empty `R2E_CF_ZONE_NAME` is not allowed; deploy fails fast before
+  CSP sync.
+
 ## Manual Apply
 
 ```bash

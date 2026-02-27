@@ -145,9 +145,12 @@ and verifies post-deploy behavior with:
 
 - `scripts/ci/check-r2-web-security.sh`
 
-Required production workflow variable:
+Required workflow variable in GitHub Environments (`preview` and `production`):
 
 - `R2E_CF_ZONE_NAME` (example: `unsigned.sh`)
+  - Preview: may be empty for out-of-zone preview hosts; CSP sync/check steps
+    are skipped with explicit notices.
+  - Production: must be non-empty; deploy fails fast if not set.
 
 Required API token permissions for CSP sync:
 
