@@ -1,6 +1,6 @@
 import { createHash, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, beforeEach } from "vitest";
-import { resetAuthJwksCache } from "../../src/auth";
+import { resetAuthSigningKeyCache } from "../../src/auth";
 import type { Env } from "../../src/types";
 
 type KVEntry = {
@@ -599,18 +599,17 @@ export class MemoryUploadSessionNamespace {
   }
 }
 
-export const OAUTH_TEST_ISSUER = "https://auth.example.com";
-export const OAUTH_TEST_AUD = "r2-explorer";
-export const OAUTH_TEST_JWKS_URL = `${OAUTH_TEST_ISSUER}/jwks`;
+export const AUTH_TEST_ISSUER = "https://auth.example.com/api/auth";
+export const AUTH_TEST_AUD = "r2-explorer-test";
 
-const OAUTH_TEST_KID = "oauth-kid-test";
+const ACCESS_TEST_KID = "access-kid-test";
 
-const OAUTH_PRIMARY_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
-const OAUTH_ALTERNATE_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const ACCESS_PRIMARY_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const ACCESS_ALTERNATE_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
-const OAUTH_PUBLIC_JWK: JsonWebKey = {
-  ...(OAUTH_PRIMARY_KEYPAIR.publicKey.export({ format: "jwk" }) as JsonWebKey),
-  kid: OAUTH_TEST_KID,
+const ACCESS_PUBLIC_JWK: JsonWebKey = {
+  ...(ACCESS_PRIMARY_KEYPAIR.publicKey.export({ format: "jwk" }) as JsonWebKey),
+  kid: ACCESS_TEST_KID,
   use: "sig",
   alg: "RS256",
 };
@@ -627,10 +626,12 @@ function base64UrlEncode(value: string | Uint8Array): string {
 type AccessJwtOptions = {
   email?: string | null;
   sub?: string | null;
-  clientId?: string;
-  scope?: string;
+  commonName?: string;
+  serviceTokenId?: string;
   aud?: string | string[];
   iss?: string;
+  scope?: string;
+  scp?: string[] | string;
   expiresInSec?: number;
   /** Offset from now for the nbf claim (default: -5). Use a large positive value to test not-yet-valid rejection. */
   nbfOffsetSec?: number;
@@ -643,16 +644,19 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
   const header = {
     alg: "RS256",
     typ: "JWT",
-    kid: options.headerKid ?? OAUTH_TEST_KID,
+    kid: options.headerKid ?? ACCESS_TEST_KID,
   };
   const payload: Record<string, unknown> = {
-    iss: options.iss ?? OAUTH_TEST_ISSUER,
-    aud: options.aud ?? OAUTH_TEST_AUD,
+    iss: options.iss ?? AUTH_TEST_ISSUER,
+    aud: options.aud ?? AUTH_TEST_AUD,
     exp: now + (options.expiresInSec ?? 300),
     iat: now,
     nbf: now + (options.nbfOffsetSec ?? -5),
     scope: options.scope ?? "r2.read r2.write r2.share.manage",
   };
+  if (options.scp !== undefined) {
+    payload.scp = options.scp;
+  }
   const email = options.email === undefined ? "engineer@example.com" : options.email;
   const sub = options.sub === undefined ? "oauth-user-id" : options.sub;
   if (email !== null) {
@@ -661,8 +665,11 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
   if (sub !== null) {
     payload.sub = sub;
   }
-  if (options.clientId) {
-    payload.client_id = options.clientId;
+  if (options.commonName) {
+    payload.common_name = options.commonName;
+  }
+  if (options.serviceTokenId) {
+    payload.service_token_id = options.serviceTokenId;
   }
 
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
@@ -673,7 +680,7 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
   signer.update(signingInput);
   signer.end();
   const signature = signer.sign(
-    options.signWithAlternateKey ? OAUTH_ALTERNATE_KEYPAIR.privateKey : OAUTH_PRIMARY_KEYPAIR.privateKey,
+    options.signWithAlternateKey ? ACCESS_ALTERNATE_KEYPAIR.privateKey : ACCESS_PRIMARY_KEYPAIR.privateKey,
   );
   const encodedSignature = base64UrlEncode(new Uint8Array(signature));
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
@@ -681,12 +688,13 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
 
 export function installAccessJwksFetchMock(): () => void {
   const originalFetch = globalThis.fetch;
+  const jwksUrl = `${AUTH_TEST_ISSUER}/jwks`;
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === OAUTH_TEST_JWKS_URL) {
-      return new Response(JSON.stringify({ keys: [OAUTH_PUBLIC_JWK] }), {
+    if (url === jwksUrl) {
+      return new Response(JSON.stringify({ keys: [ACCESS_PUBLIC_JWK] }), {
         status: 200,
         headers: {
           "content-type": "application/json",
@@ -716,7 +724,7 @@ export function useAccessJwksFetchMock(): void {
   afterEach(() => {
     restoreFetch?.();
     restoreFetch = null;
-    resetAuthJwksCache();
+    resetAuthSigningKeyCache();
   });
 }
 
@@ -733,9 +741,9 @@ export function accessHeaders(email = "engineer@example.com", options: AccessJwt
   };
 }
 
-export function accessHeadersWithoutJwt(_email = "engineer@example.com", _userId = "oauth-user-id"): HeadersInit {
+export function accessHeadersWithoutJwt(email = "engineer@example.com", userId = "oauth-user-id"): HeadersInit {
   return {
-    authorization: "Bearer",
+    authorization: `Basic ${Buffer.from(`${email}:${userId}`).toString("base64")}`,
   };
 }
 
@@ -764,12 +772,14 @@ export async function createTestEnv(): Promise<{
       files: "FILES_BUCKET",
       photos: "PHOTOS_BUCKET",
     }),
-    R2E_AUTH_ISSUER: OAUTH_TEST_ISSUER,
-    R2E_AUTH_AUDIENCE: OAUTH_TEST_AUD,
-    R2E_AUTH_JWKS_URL: OAUTH_TEST_JWKS_URL,
-    R2E_AUTH_SCOPE_READ: "r2.read",
-    R2E_AUTH_SCOPE_WRITE: "r2.write",
-    R2E_AUTH_SCOPE_SHARE_MANAGE: "r2.share.manage",
+    R2E_IDP_ISSUER: AUTH_TEST_ISSUER,
+    R2E_IDP_AUDIENCE: AUTH_TEST_AUD,
+    R2E_IDP_JWKS_URL: `${AUTH_TEST_ISSUER}/jwks`,
+    R2E_IDP_REQUIRED_SCOPES_READ: "r2.read",
+    R2E_IDP_REQUIRED_SCOPES_WRITE: "r2.write",
+    R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE: "r2.share.manage",
+    R2E_IDP_CLOCK_SKEW_SEC: "60",
+    R2E_IDP_JWKS_CACHE_TTL_SEC: "300",
     R2E_UPLOAD_MAX_FILE_BYTES: "0",
     R2E_UPLOAD_MAX_PARTS: "0",
     R2E_UPLOAD_MAX_CONCURRENT_PER_USER: "0",

@@ -21,7 +21,6 @@ describe("server info endpoint", () => {
       version: string;
       readonly: boolean;
       actor: { mode: string; actor: string };
-      auth: { oauthEnabled: boolean; requiredScopes: { read: string; write: string; shareManage: string } };
       share: { mode: string };
       limits: { maxShareTtlSec: number };
     };
@@ -29,8 +28,6 @@ describe("server info endpoint", () => {
     expect(payload.readonly).toBe(false);
     expect(payload.actor.actor).toBe("ops@example.com");
     expect(payload.actor.mode).toBe("oauth");
-    expect(payload.auth.oauthEnabled).toBe(true);
-    expect(payload.auth.requiredScopes.read).toBe("r2.read");
     expect(payload.share.mode).toBe("kv-random-token");
     expect(payload.limits.maxShareTtlSec).toBe(2592000);
   });

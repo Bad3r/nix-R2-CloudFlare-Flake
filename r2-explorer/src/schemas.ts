@@ -251,13 +251,6 @@ export const serverInfoResponseSchema = z
     auth: z
       .object({
         oauthEnabled: z.boolean(),
-        requiredScopes: z
-          .object({
-            read: z.string().min(1),
-            write: z.string().min(1),
-            shareManage: z.string().min(1),
-          })
-          .strict(),
       })
       .strict(),
     limits: z

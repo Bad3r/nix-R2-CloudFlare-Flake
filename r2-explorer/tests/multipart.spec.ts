@@ -512,14 +512,13 @@ describe("multipart upload flow", () => {
     expect(((await nonCanonicalCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
   });
 
-  it("accepts OAuth machine principals on upload mutation routes", async () => {
+  it("accepts OAuth service-token principals on upload mutation routes", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
     const jwt = createAccessJwt({
       email: null,
       sub: null,
-      clientId: "ci-preview-client",
-      scope: "r2.write",
+      commonName: "ci-preview-service-token",
     });
 
     const response = await app.fetch(

@@ -10,19 +10,21 @@ describe("share lifecycle", () => {
     await bucket.put("docs/file.txt", "hello");
     const app = createApp();
 
+    const rawBody = JSON.stringify({
+      bucket: "files",
+      key: "docs/file.txt",
+      ttl: "24h",
+      maxDownloads: 1,
+    });
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createResponse = await app.fetch(
-      new Request("https://files.example.com/api/v2/share/create", {
+      new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...accessHeaders("engineer@example.com", { scope: "r2.share.manage" }),
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
-        body: JSON.stringify({
-          bucket: "files",
-          key: "docs/file.txt",
-          ttl: "24h",
-          maxDownloads: 1,
-        }),
+        body: rawBody,
       }),
       env,
     );
@@ -45,32 +47,36 @@ describe("share lifecycle", () => {
     await bucket.put("docs/revocable.txt", "revocable");
     const app = createApp();
 
+    const createBody = JSON.stringify({
+      bucket: "files",
+      key: "docs/revocable.txt",
+      ttl: "24h",
+    });
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createResponse = await app.fetch(
-      new Request("https://files.example.com/api/v2/share/create", {
+      new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...accessHeaders("engineer@example.com", { scope: "r2.share.manage" }),
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
-        body: JSON.stringify({
-          bucket: "files",
-          key: "docs/revocable.txt",
-          ttl: "24h",
-        }),
+        body: createBody,
       }),
       env,
     );
     const createPayload = (await createResponse.json()) as { tokenId: string };
     expect(createPayload.tokenId).toBeTruthy();
 
+    const revokeBody = JSON.stringify({ tokenId: createPayload.tokenId });
+    const revokeUrl = "https://files.example.com/api/v2/share/revoke";
     const revokeResponse = await app.fetch(
-      new Request("https://files.example.com/api/v2/share/revoke", {
+      new Request(revokeUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...accessHeaders("engineer@example.com", { scope: "r2.share.manage" }),
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
-        body: JSON.stringify({ tokenId: createPayload.tokenId }),
+        body: revokeBody,
       }),
       env,
     );
@@ -90,18 +96,20 @@ describe("share lifecycle", () => {
     await photosBucket.put("images/cat.jpg", "meow");
     const app = createApp();
 
+    const createBody = JSON.stringify({
+      bucket: "photos",
+      key: "images/cat.jpg",
+      ttl: "1h",
+    });
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createResponse = await app.fetch(
-      new Request("https://files.example.com/api/v2/share/create", {
+      new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...accessHeaders("engineer@example.com", { scope: "r2.share.manage" }),
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
-        body: JSON.stringify({
-          bucket: "photos",
-          key: "images/cat.jpg",
-          ttl: "1h",
-        }),
+        body: createBody,
       }),
       env,
     );
@@ -118,18 +126,20 @@ describe("share lifecycle", () => {
     const { env } = await createTestEnv();
     const app = createApp();
 
+    const createBody = JSON.stringify({
+      bucket: "unknown",
+      key: "docs/missing.txt",
+      ttl: "1h",
+    });
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createResponse = await app.fetch(
-      new Request("https://files.example.com/api/v2/share/create", {
+      new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...accessHeaders("engineer@example.com", { scope: "r2.share.manage" }),
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
-        body: JSON.stringify({
-          bucket: "unknown",
-          key: "docs/missing.txt",
-          ttl: "1h",
-        }),
+        body: createBody,
       }),
       env,
     );
@@ -146,18 +156,20 @@ describe("share lifecycle", () => {
     });
     const app = createApp();
 
+    const createBody = JSON.stringify({
+      bucket: "logs",
+      key: "logs/boot.txt",
+      ttl: "1h",
+    });
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const createResponse = await app.fetch(
-      new Request("https://files.example.com/api/v2/share/create", {
+      new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...accessHeaders("engineer@example.com", { scope: "r2.share.manage" }),
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
-        body: JSON.stringify({
-          bucket: "logs",
-          key: "logs/boot.txt",
-          ttl: "1h",
-        }),
+        body: createBody,
       }),
       env,
     );

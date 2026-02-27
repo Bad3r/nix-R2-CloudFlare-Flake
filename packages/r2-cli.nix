@@ -5,7 +5,6 @@
   curl,
   gawk,
   jq,
-  openssl,
   rclone,
   wrangler ? null,
   derivationVersion ? null,
@@ -31,7 +30,6 @@ writeShellApplication {
     curl
     gawk
     jq
-    openssl
     rclone
   ]
   ++ lib.optionals (wrangler != null) [ wrangler ];
@@ -41,7 +39,8 @@ writeShellApplication {
     credentials_file=""
     default_credentials_file="$HOME/.config/cloudflare/r2/env"
     default_rclone_config="$HOME/.config/rclone/rclone.conf"
-    worker_oauth_access_token=""
+    worker_oauth_token_cache=""
+    worker_oauth_token_expiry_epoch=0
 
     usage_main() {
       printf '%s\n' \
@@ -117,7 +116,11 @@ writeShellApplication {
         "  R2_EXPLORER_BASE_URL     e.g. https://files.unsigned.sh" \
         "  R2_EXPLORER_OAUTH_TOKEN_URL" \
         "  R2_EXPLORER_OAUTH_CLIENT_ID" \
-        "  R2_EXPLORER_OAUTH_CLIENT_SECRET"
+        "  R2_EXPLORER_OAUTH_CLIENT_SECRET" \
+        "" \
+        "Optional OAuth token settings:" \
+        "  R2_EXPLORER_OAUTH_SCOPE         (default: r2.read r2.write r2.share.manage)" \
+        "  R2_EXPLORER_OAUTH_BEARER_TOKEN  (if set, skips token exchange)"
     }
 
     usage_rclone() {
@@ -176,44 +179,57 @@ writeShellApplication {
       if [[ -z "''${R2_EXPLORER_BASE_URL:-}" ]]; then
         fail "R2_EXPLORER_BASE_URL is required for worker share commands."
       fi
-      if [[ -z "''${R2_EXPLORER_OAUTH_TOKEN_URL:-}" ]]; then
-        fail "R2_EXPLORER_OAUTH_TOKEN_URL is required for worker share commands."
-      fi
-      if [[ -z "''${R2_EXPLORER_OAUTH_CLIENT_ID:-}" ]]; then
-        fail "R2_EXPLORER_OAUTH_CLIENT_ID is required for worker share commands."
-      fi
-      if [[ -z "''${R2_EXPLORER_OAUTH_CLIENT_SECRET:-}" ]]; then
-        fail "R2_EXPLORER_OAUTH_CLIENT_SECRET is required for worker share commands."
+      if [[ -z "''${R2_EXPLORER_OAUTH_BEARER_TOKEN:-}" ]]; then
+        if [[ -z "''${R2_EXPLORER_OAUTH_TOKEN_URL:-}" ]]; then
+          fail "R2_EXPLORER_OAUTH_TOKEN_URL is required for worker share commands."
+        fi
+        if [[ -z "''${R2_EXPLORER_OAUTH_CLIENT_ID:-}" || -z "''${R2_EXPLORER_OAUTH_CLIENT_SECRET:-}" ]]; then
+          fail "R2_EXPLORER_OAUTH_CLIENT_ID and R2_EXPLORER_OAUTH_CLIENT_SECRET are required when R2_EXPLORER_OAUTH_BEARER_TOKEN is not provided."
+        fi
       fi
     }
 
-    oauth_client_credentials_token() {
-      local payload token
-      if [[ -n "$worker_oauth_access_token" ]]; then
-        echo "$worker_oauth_access_token"
+    oauth_worker_token() {
+      local now token_response access_token expires_in scope
+
+      if [[ -n "''${R2_EXPLORER_OAUTH_BEARER_TOKEN:-}" ]]; then
+        printf '%s\n' "''${R2_EXPLORER_OAUTH_BEARER_TOKEN}"
         return
       fi
 
-      payload="$(
+      now="$(date +%s)"
+      if [[ -n "$worker_oauth_token_cache" && $worker_oauth_token_expiry_epoch -gt $((now + 30)) ]]; then
+        printf '%s\n' "$worker_oauth_token_cache"
+        return
+      fi
+
+      scope="''${R2_EXPLORER_OAUTH_SCOPE:-r2.read r2.write r2.share.manage}"
+      token_response="$(
         curl -sS \
-          --max-time 30 \
-          --connect-timeout 10 \
           -X POST \
           -H "content-type: application/x-www-form-urlencoded" \
           --data-urlencode "grant_type=client_credentials" \
           --data-urlencode "client_id=$R2_EXPLORER_OAUTH_CLIENT_ID" \
           --data-urlencode "client_secret=$R2_EXPLORER_OAUTH_CLIENT_SECRET" \
+          --data-urlencode "scope=$scope" \
+          --max-time 60 \
+          --connect-timeout 10 \
           "$R2_EXPLORER_OAUTH_TOKEN_URL"
       )"
-      token="$(jq -r '.access_token // empty' <<<"$payload")"
-      if [[ -z "$token" ]]; then
-        if [[ -n "$payload" ]]; then
-          echo "$payload" >&2
-        fi
-        fail "OAuth token request did not return access_token."
+
+      access_token="$(printf '%s' "$token_response" | jq -r '.access_token // empty')"
+      if [[ -z "$access_token" ]]; then
+        echo "$token_response" >&2
+        fail "failed to obtain OAuth access token from R2_EXPLORER_OAUTH_TOKEN_URL"
       fi
-      worker_oauth_access_token="$token"
-      echo "$worker_oauth_access_token"
+      expires_in="$(printf '%s' "$token_response" | jq -r '.expires_in // 300')"
+      if [[ ! "$expires_in" =~ ^[0-9]+$ ]] || [[ "$expires_in" -le 0 ]]; then
+        expires_in=300
+      fi
+
+      worker_oauth_token_cache="$access_token"
+      worker_oauth_token_expiry_epoch=$((now + expires_in))
+      printf '%s\n' "$worker_oauth_token_cache"
     }
 
     uri_escape() {
@@ -226,22 +242,23 @@ writeShellApplication {
       local path="''${2:-}"
       local query="''${3:-}"
       local body="''${4:-}"
-      local bearer_token url response status payload
+      local url response status payload oauth_token
 
       ensure_worker_share_env
-      bearer_token="$(oauth_client_credentials_token)"
 
       url="''${R2_EXPLORER_BASE_URL%/}$path"
       if [[ -n "$query" ]]; then
         url="$url?$query"
       fi
 
+      oauth_token="$(oauth_worker_token)"
+
       if [[ -n "$body" ]]; then
         response="$(
           curl -sS \
             -X "$method" \
             -H "content-type: application/json" \
-            -H "authorization: Bearer $bearer_token" \
+            -H "authorization: Bearer $oauth_token" \
             --data "$body" \
             --max-time 60 \
             --connect-timeout 10 \
@@ -252,7 +269,7 @@ writeShellApplication {
         response="$(
           curl -sS \
             -X "$method" \
-            -H "authorization: Bearer $bearer_token" \
+            -H "authorization: Bearer $oauth_token" \
             --max-time 60 \
             --connect-timeout 10 \
             "$url" \

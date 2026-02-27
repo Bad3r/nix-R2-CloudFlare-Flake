@@ -32,7 +32,7 @@ pnpm dev:web
 
 ## Runtime routes
 
-API routes (OAuth Bearer protected except `/share/*` public token URLs):
+API routes (OAuth2 bearer-protected except `/share/*` public token URLs):
 
 - `GET /api/v2/list`
 - `GET /api/v2/meta`
@@ -62,12 +62,14 @@ Set these in `wrangler.toml` (or CI-rendered config):
 - `R2E_UPLOAD_SESSIONS` (Durable Object session state for multipart uploads)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/v2/*`)
 - `R2E_BUCKET_MAP` (optional JSON alias map; must include `{"files":"FILES_BUCKET"}`)
-- `R2E_AUTH_ISSUER` (required OAuth issuer for `/api/v2/*`)
-- `R2E_AUTH_AUDIENCE` (required OAuth audience claim for `/api/v2/*`)
-- `R2E_AUTH_JWKS_URL` (optional; defaults to `${R2E_AUTH_ISSUER}/jwks`)
-- `R2E_AUTH_SCOPE_READ` (optional; default `r2.read`)
-- `R2E_AUTH_SCOPE_WRITE` (optional; default `r2.write`)
-- `R2E_AUTH_SCOPE_SHARE_MANAGE` (optional; default `r2.share.manage`)
+- `R2E_IDP_ISSUER` (required OAuth issuer URL for JWT verification)
+- `R2E_IDP_AUDIENCE` (required audience claim(s), comma-separated)
+- `R2E_IDP_JWKS_URL` (optional; defaults to `${R2E_IDP_ISSUER}/jwks`)
+- `R2E_IDP_REQUIRED_SCOPES_READ` (optional; defaults to `r2.read`)
+- `R2E_IDP_REQUIRED_SCOPES_WRITE` (optional; defaults to `r2.write`)
+- `R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE` (optional; defaults to `r2.share.manage`)
+- `R2E_IDP_CLOCK_SKEW_SEC` (optional; defaults to `60`)
+- `R2E_IDP_JWKS_CACHE_TTL_SEC` (optional; defaults to `300`)
 - `R2E_UPLOAD_S3_BUCKET` (bucket name used when signing direct multipart part uploads)
 
 Upload policy vars (all optional):
@@ -91,30 +93,22 @@ Required API Worker secrets:
 - `S3_ACCESS_KEY_ID`
 - `S3_SECRET_ACCESS_KEY`
 
-## Access policy model
+## Direct IdP auth model
 
-Recommended policy setup on `files.unsigned.sh`:
+`/api/v2/*` is authenticated directly in-worker using `Authorization: Bearer`
+tokens issued by Better Auth IdP. Cloudflare Access is not used as an edge gate
+for these API routes.
 
-1. Protected API app:
+`/share/*` remains public and token-constrained. `/api/v2/share/*` remains in the
+protected API surface and requires bearer scope `r2.share.manage` (or your
+configured equivalent).
 
-- Path: `/api/v2/*`
-- Action: `Allow`
+CLI machine auth uses OAuth2 client credentials:
 
-2. Public share links:
-
-- Path: `/share/*`
-- Action: `Bypass`
-
-3. Machine share-management API bypass:
-
-- Path: `/api/v2/share/*`
-- Action: `Bypass`
-
-The Worker validates OAuth Bearer JWTs and required scopes in-app:
-
-- `r2.read` for read/info routes
-- `r2.write` for upload/object mutation routes
-- `r2.share.manage` for share management routes
+- `R2_EXPLORER_OAUTH_CLIENT_ID`
+- `R2_EXPLORER_OAUTH_CLIENT_SECRET`
+- `R2_EXPLORER_OAUTH_TOKEN_URL`
+- optional `R2_EXPLORER_OAUTH_SCOPE`
 
 ## Deploy
 
@@ -179,7 +173,6 @@ Route split:
 - Web Worker: `preview.files.unsigned.sh/*`
 - API Worker: `preview.files.unsigned.sh/api/v2/*` and
   `preview.files.unsigned.sh/share/*`
-- Access app paths:
-  - API protected app: `preview.files.unsigned.sh/api/v2/*`
-  - Public share bypass app: `preview.files.unsigned.sh/share/*`
-  - Machine share-management bypass app: `preview.files.unsigned.sh/api/v2/share/*`
+- Auth model:
+  - API auth is enforced in-worker via Better Auth IdP bearer JWT validation
+  - `preview.files.unsigned.sh/share/*` remains publicly reachable by token

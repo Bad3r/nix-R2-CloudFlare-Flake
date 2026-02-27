@@ -8,12 +8,15 @@ export interface Env {
   R2E_PUBLIC_BASE_URL?: string;
   R2E_READONLY?: string;
   R2E_BUCKET_MAP?: string;
-  R2E_AUTH_ISSUER?: string;
-  R2E_AUTH_AUDIENCE?: string;
-  R2E_AUTH_JWKS_URL?: string;
-  R2E_AUTH_SCOPE_READ?: string;
-  R2E_AUTH_SCOPE_WRITE?: string;
-  R2E_AUTH_SCOPE_SHARE_MANAGE?: string;
+  R2E_IDP_ISSUER?: string;
+  R2E_IDP_AUDIENCE?: string;
+  R2E_IDP_JWKS_URL?: string;
+  R2E_IDP_REQUIRED_SCOPES?: string;
+  R2E_IDP_REQUIRED_SCOPES_READ?: string;
+  R2E_IDP_REQUIRED_SCOPES_WRITE?: string;
+  R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE?: string;
+  R2E_IDP_CLOCK_SKEW_SEC?: string;
+  R2E_IDP_JWKS_CACHE_TTL_SEC?: string;
   R2E_UPLOAD_MAX_FILE_BYTES?: string;
   R2E_UPLOAD_MAX_PARTS?: string;
   R2E_UPLOAD_MAX_CONCURRENT_PER_USER?: string;
@@ -33,13 +36,10 @@ export interface Env {
   [key: string]: unknown;
 }
 
-export interface ApiIdentity {
-  subject: string;
+export interface AuthIdentity {
   email: string | null;
-  scopes: Set<string>;
-  issuer: string;
-  audience: string;
-  token: string;
+  userId: string | null;
+  jwt: string | null;
 }
 
 export interface ShareRecord {

@@ -18,10 +18,10 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
-    expect(payload.error.code).toBe("oauth_required");
+    expect(payload.error.code).toBe("token_missing");
   });
 
-  it("rejects /api/v2/list when authorization header is malformed", async () => {
+  it("rejects /api/v2/list when Authorization header does not use Bearer", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
     const request = new Request("https://files.example.com/api/v2/list?prefix=", {
@@ -30,7 +30,7 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
-    expect(payload.error.code).toBe("oauth_required");
+    expect(payload.error.code).toBe("token_invalid");
   });
 
   it("rejects invalid OAuth JWT signature", async () => {
@@ -44,7 +44,7 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
-    expect(payload.error.code).toBe("oauth_token_invalid");
+    expect(payload.error.code).toBe("token_invalid_signature");
   });
 
   it("rejects OAuth JWT with wrong audience", async () => {
@@ -58,7 +58,7 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
-    expect(payload.error.code).toBe("oauth_token_invalid");
+    expect(payload.error.code).toBe("token_claim_mismatch");
   });
 
   it("rejects expired OAuth JWT", async () => {
@@ -70,7 +70,7 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
-    expect(payload.error.code).toBe("oauth_token_invalid");
+    expect(payload.error.code).toBe("token_invalid");
   });
 
   it("rejects OAuth JWT with nbf far in the future", async () => {
@@ -82,12 +82,12 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
-    expect(payload.error.code).toBe("oauth_token_invalid");
+    expect(payload.error.code).toBe("token_invalid");
   });
 
   it("fails closed when OAuth verifier config is missing", async () => {
     const { env } = await createTestEnv();
-    env.R2E_AUTH_AUDIENCE = "";
+    env.R2E_IDP_AUDIENCE = "";
     const app = createApp();
     const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeaders("ops@example.com"),
@@ -95,7 +95,7 @@ describe("auth middleware", () => {
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(500);
-    expect(payload.error.code).toBe("oauth_config_invalid");
+    expect(payload.error.code).toBe("idp_config_invalid");
   });
 
   it("accepts valid OAuth JWT on /api routes", async () => {
@@ -110,24 +110,15 @@ describe("auth middleware", () => {
     expect(response.status).toBe(200);
   });
 
-  it("rejects write routes when required scope is missing", async () => {
+  it("enforces required read scope on /api/v2/list", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
+    const jwt = createAccessJwt({ email: "ops@example.com", scope: "r2.write" });
     const response = await app.fetch(
-      new Request("https://files.example.com/api/v2/upload/init", {
-        method: "POST",
+      new Request("https://files.example.com/api/v2/list?prefix=", {
         headers: {
-          "content-type": "application/json",
-          origin: "https://files.example.com",
-          "x-r2e-csrf": "1",
-          ...accessHeaders("ops@example.com", { scope: "r2.read" }),
+          authorization: `Bearer ${jwt}`,
         },
-        body: JSON.stringify({
-          filename: "insufficient.bin",
-          prefix: "uploads/",
-          declaredSize: 128,
-          contentType: "application/octet-stream",
-        }),
       }),
       env,
     );
@@ -136,23 +127,17 @@ describe("auth middleware", () => {
     expect(payload.error.code).toBe("insufficient_scope");
   });
 
-  it("accepts machine OAuth principal with required scopes", async () => {
+  it("allows share create with bearer token only", async () => {
     const { env, bucket } = await createTestEnv();
     await bucket.put("docs/report.txt", "report");
     const app = createApp();
-    const jwt = createAccessJwt({
-      email: null,
-      sub: null,
-      clientId: "ci-share-client",
-      scope: "r2.share.manage",
-    });
 
-    const createResponse = await app.fetch(
+    const response = await app.fetch(
       new Request("https://files.example.com/api/v2/share/create", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${jwt}`,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: JSON.stringify({
           bucket: "files",
@@ -163,7 +148,6 @@ describe("auth middleware", () => {
       }),
       env,
     );
-
-    expect(createResponse.status).toBe(200);
+    expect(response.status).toBe(200);
   });
 });
