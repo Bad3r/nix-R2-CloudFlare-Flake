@@ -80,7 +80,7 @@ Failure signature:
 
 - `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
 - `r2 share worker ...` can also fail with `HTTP 302` when Access intercepts
-  `/api/v2/share/*` before the Worker.
+  `/api/v2/*` before the Worker.
 
 Confirm:
 
@@ -103,6 +103,10 @@ Likely root causes:
   Worker keyset never actually changed.
 - `/api/v2/share/*` is Access-protected and CLI calls do not include Access
   service-token headers.
+- Access `Service Auth` policy for the CI/service token is missing or
+  mis-scoped on the `/api/v2/*` app.
+- `R2E_ACCESS_AUD` or `R2E_ACCESS_AUD_PREVIEW` does not match the Access app
+  audience claim.
 
 Repair:
 
@@ -114,9 +118,15 @@ Repair:
 # For ad-hoc testing only:
 export R2_EXPLORER_ADMIN_KID="<active-kid>"
 export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
-# Optional when /api/v2/share/* is behind Access:
+# Required for Access-protected Worker API routes:
 export R2_EXPLORER_ACCESS_CLIENT_ID="<access-service-token-id>"
 export R2_EXPLORER_ACCESS_CLIENT_SECRET="<access-service-token-secret>"
+
+# Fast probe for Access service-token auth:
+curl -i \
+  -H "CF-Access-Client-Id: ${R2_EXPLORER_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${R2_EXPLORER_ACCESS_CLIENT_SECRET}" \
+  "${R2_EXPLORER_BASE_URL%/}/api/v2/session/info"
 ```
 
 If key mismatch persists, perform key rotation workflow.

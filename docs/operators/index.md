@@ -13,6 +13,7 @@ with `docs/troubleshooting.md`.
 - [Readonly maintenance windows](./readonly-maintenance.md)
 - [Access policy split](./access-policy-split.md)
 - [Incident response](./incident-response.md)
+- [Web CSP and analytics](./web-csp-analytics.md)
 - [Rollback of Worker/share configuration](./rollback-worker-share.md)
 - [Rollback of CLI release](./rollback-cli-release.md)
 - [Security gates remediation](./security-gates-remediation.md)
