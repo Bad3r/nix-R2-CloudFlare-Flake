@@ -60,19 +60,11 @@ new_sqlite_classes = ["UploadSessionDurableObject"]
 [env.preview]
 workers_dev = true
 # Prevent preview from inheriting production zone routes.
-routes = []
-
-[[env.preview.routes]]
-pattern = "preview.files.unsigned.sh"
-custom_domain = true
-
-[[env.preview.routes]]
-pattern = "preview.files.unsigned.sh/api/v2/*"
-zone_name = "unsigned.sh"
-
-[[env.preview.routes]]
-pattern = "preview.files.unsigned.sh/share/*"
-zone_name = "unsigned.sh"
+routes = [
+  { pattern = "preview.files.unsigned.sh", custom_domain = true },
+  { pattern = "preview.files.unsigned.sh/api/v2/*", zone_name = "unsigned.sh" },
+  { pattern = "preview.files.unsigned.sh/share/*", zone_name = "unsigned.sh" },
+]
 
 [env.preview.vars]
 R2E_MAX_SHARE_TTL_SEC = "2592000"
