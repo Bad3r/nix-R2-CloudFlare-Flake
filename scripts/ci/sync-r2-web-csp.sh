@@ -161,7 +161,7 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/r2-web-csp.XXXXXX")"
 cleanup() {
   rm -rf "${tmp_dir}"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT INT TERM HUP
 
 require_command "curl"
 require_command "jq"
