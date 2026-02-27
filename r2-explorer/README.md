@@ -145,6 +145,11 @@ and verifies post-deploy behavior with:
 
 - `scripts/ci/check-r2-web-security.sh`
 
+Workflow-managed CSP rule refs:
+
+- Production: `r2-explorer-web-csp`
+- Preview: `r2-explorer-web-csp-preview`
+
 Required workflow variable in GitHub Environments (`preview` and `production`):
 
 - `R2E_CF_ZONE_NAME` (example: `unsigned.sh`)

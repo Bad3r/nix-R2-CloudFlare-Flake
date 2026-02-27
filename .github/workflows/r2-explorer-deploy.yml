@@ -179,6 +179,8 @@ jobs:
 
           if [[ "${preview_host}" == "${zone_name}" || "${preview_host}" == *".${zone_name}" ]]; then
             echo "Preview host '${preview_host}' is in zone '${zone_name}'; syncing web CSP rule."
+            R2E_WEB_CSP_RULE_REF="r2-explorer-web-csp-preview" \
+            R2E_WEB_CSP_RULE_DESCRIPTION="R2 Explorer web CSP (preview, analytics-enabled)" \
             ./scripts/ci/sync-r2-web-csp.sh \
               "${preview_host}" \
               "r2-explorer/web/config/csp.analytics.production.txt"
@@ -514,6 +516,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
+          R2E_WEB_CSP_RULE_REF="r2-explorer-web-csp" \
+          R2E_WEB_CSP_RULE_DESCRIPTION="R2 Explorer web CSP (production, analytics-enabled)" \
           ./scripts/ci/sync-r2-web-csp.sh \
             "files.unsigned.sh" \
             "r2-explorer/web/config/csp.analytics.production.txt"

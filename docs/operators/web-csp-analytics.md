@@ -8,6 +8,7 @@ CSP through IaC.
 ## Scope
 
 - Host: `files.unsigned.sh`
+- Preview host: `preview.files.unsigned.sh`
 - Web routes only (`/*` excluding `/api/v2/*` and `/share/*`)
 
 ## Source of Truth
@@ -35,6 +36,13 @@ The API token used for CSP sync must include:
 - Production: empty `R2E_CF_ZONE_NAME` is not allowed; deploy fails fast before
   CSP sync.
 
+## CSP Rule Refs
+
+- Production CSP rule ref: `r2-explorer-web-csp`
+- Preview CSP rule ref: `r2-explorer-web-csp-preview`
+- Keep refs distinct to avoid host-expression overwrite in the shared
+  `http_response_headers_transform` phase entrypoint.
+
 ## Manual Apply
 
 ```bash
@@ -43,6 +51,19 @@ export R2E_CF_ZONE_NAME="unsigned.sh"
 
 ./scripts/ci/sync-r2-web-csp.sh \
   "files.unsigned.sh" \
+  "r2-explorer/web/config/csp.analytics.production.txt"
+```
+
+Preview manual apply (distinct rule ref):
+
+```bash
+export CLOUDFLARE_API_TOKEN="..."
+export R2E_CF_ZONE_NAME="unsigned.sh"
+export R2E_WEB_CSP_RULE_REF="r2-explorer-web-csp-preview"
+export R2E_WEB_CSP_RULE_DESCRIPTION="R2 Explorer web CSP (preview, analytics-enabled)"
+
+./scripts/ci/sync-r2-web-csp.sh \
+  "preview.files.unsigned.sh" \
   "r2-explorer/web/config/csp.analytics.production.txt"
 ```
 
@@ -87,7 +108,8 @@ Preview workflow behavior:
 
 ## Rollback
 
-1. Re-sync the previous known-good CSP policy file.
+1. Re-sync the previous known-good CSP policy file with the affected rule ref
+   (`r2-explorer-web-csp` or `r2-explorer-web-csp-preview`).
 2. Re-run `check-r2-web-security.sh`.
-3. If still failing, remove only the `r2-explorer-web-csp` rule and restore the
+3. If still failing, remove only the affected CSP rule ref and restore the
    previous Cloudflare ruleset version from audit logs.
