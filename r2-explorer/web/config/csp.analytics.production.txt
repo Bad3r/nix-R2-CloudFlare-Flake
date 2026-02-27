@@ -1,3 +1,6 @@
+# Analytics/Zaraz-enabled mode currently requires inline allowances for script/style.
+# If analytics injection is disabled, re-evaluate and remove unsafe-inline where possible.
+# Keep this policy as the canonical source for Cloudflare header-transform sync/check scripts.
 default-src 'self';
 base-uri 'self';
 frame-ancestors 'none';

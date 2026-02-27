@@ -52,11 +52,18 @@ export R2E_SMOKE_ACCESS_CLIENT_SECRET="..."
 
 Expected outcomes:
 
-- Response CSP equals the policy file exactly.
+- Response CSP equals normalized policy content (comment and blank lines are ignored).
 - HTML includes analytics loader markers (`/cdn-cgi/zaraz/` or
   `static.cloudflareinsights.com/beacon.min.js`).
 - HTML does not include the empty-content sha512 marker associated with broken
   SRI fetches.
+
+Preview workflow behavior:
+
+- If preview host is in the configured zone (`R2E_CF_ZONE_NAME`), preview deploy
+  syncs CSP and preview smoke verifies CSP/analytics markers.
+- If preview host is outside the configured zone, CSP sync/verify steps are
+  skipped with explicit `::notice::` logs.
 
 ## Failure Signatures and Triage
 
