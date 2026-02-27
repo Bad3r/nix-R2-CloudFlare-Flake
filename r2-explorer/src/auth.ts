@@ -407,6 +407,7 @@ async function validateOauthToken(token: string, env: Env): Promise<JwtPayload> 
     verified = false;
   }
 
+  // Retry with fresh JWKS in case keys were rotated since last cache refresh
   if (!verified) {
     const refreshed = await signingKeys(jwksUrl, true);
     const refreshedKey = keyForJwt(parsed.header, refreshed);
@@ -417,8 +418,7 @@ async function validateOauthToken(token: string, env: Env): Promise<JwtPayload> 
       verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey, verifyConfig);
     } catch {
       verified = false;
-  // Retry with fresh JWKS in case keys were rotated since last cache refresh
-  if (!verified) {
+    }
   }
 
   if (!verified) {
