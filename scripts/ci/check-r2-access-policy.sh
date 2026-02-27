@@ -122,7 +122,15 @@ fi
 service_token_id="$(
   jq -r --arg client_id "${service_token_client_id}" \
     '.result[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_json}" | head -n1
+service_token_id="$(
+  jq -r --arg client_id "${service_token_client_id}" \
+    '.result[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_json}"
 )"
+token_count="$(printf '%s' "${service_token_id}" | wc -l)"
+if [[ ${token_count} -gt 1 ]]; then
+  echo "Warning: multiple service tokens found for client id ${service_token_client_id}; using first" >&2
+fi
+service_token_id="$(printf '%s' "${service_token_id}" | head -n1)"
 if [[ -z ${service_token_id} ]]; then
   fail "no Cloudflare service token found for client id ${service_token_client_id}"
 fi
