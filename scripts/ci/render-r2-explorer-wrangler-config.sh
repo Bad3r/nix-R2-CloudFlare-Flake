@@ -34,6 +34,12 @@ main() {
   require_env "R2E_IDP_ISSUER_PREVIEW"
   require_env "R2E_IDP_AUDIENCE"
   require_env "R2E_IDP_AUDIENCE_PREVIEW"
+  require_env "R2E_WEB_OAUTH_AUTHORIZE_URL"
+  require_env "R2E_WEB_OAUTH_AUTHORIZE_URL_PREVIEW"
+  require_env "R2E_WEB_OAUTH_TOKEN_URL"
+  require_env "R2E_WEB_OAUTH_TOKEN_URL_PREVIEW"
+  require_env "R2E_WEB_OAUTH_CLIENT_ID"
+  require_env "R2E_WEB_OAUTH_CLIENT_ID_PREVIEW"
 
   bucket_map="${R2E_BUCKET_MAP:-}"
   if [[ -z ${bucket_map} ]]; then
@@ -78,6 +84,14 @@ PY
   local idp_required_scopes_share_manage idp_required_scopes_share_manage_preview
   local idp_clock_skew idp_clock_skew_preview
   local idp_jwks_cache_ttl idp_jwks_cache_ttl_preview
+  local web_oauth_authorize_url web_oauth_authorize_url_preview
+  local web_oauth_token_url web_oauth_token_url_preview
+  local web_oauth_client_id web_oauth_client_id_preview
+  local web_oauth_scope web_oauth_scope_preview
+  local web_oauth_resource web_oauth_resource_preview
+  local web_oauth_redirect_uri web_oauth_redirect_uri_preview
+  local web_cookie_name web_cookie_name_preview
+  local web_cookie_max_age web_cookie_max_age_preview
 
   upload_max_file_bytes="${R2E_UPLOAD_MAX_FILE_BYTES:-0}"
   upload_max_file_bytes_preview="${R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW:-${upload_max_file_bytes}}"
@@ -121,6 +135,22 @@ PY
   idp_clock_skew_preview="${R2E_IDP_CLOCK_SKEW_SEC_PREVIEW:-${idp_clock_skew}}"
   idp_jwks_cache_ttl="${R2E_IDP_JWKS_CACHE_TTL_SEC:-300}"
   idp_jwks_cache_ttl_preview="${R2E_IDP_JWKS_CACHE_TTL_SEC_PREVIEW:-${idp_jwks_cache_ttl}}"
+  web_oauth_authorize_url="${R2E_WEB_OAUTH_AUTHORIZE_URL}"
+  web_oauth_authorize_url_preview="${R2E_WEB_OAUTH_AUTHORIZE_URL_PREVIEW}"
+  web_oauth_token_url="${R2E_WEB_OAUTH_TOKEN_URL}"
+  web_oauth_token_url_preview="${R2E_WEB_OAUTH_TOKEN_URL_PREVIEW}"
+  web_oauth_client_id="${R2E_WEB_OAUTH_CLIENT_ID}"
+  web_oauth_client_id_preview="${R2E_WEB_OAUTH_CLIENT_ID_PREVIEW}"
+  web_oauth_scope="${R2E_WEB_OAUTH_SCOPE:-${idp_required_scopes_read} ${idp_required_scopes_write} ${idp_required_scopes_share_manage}}"
+  web_oauth_scope_preview="${R2E_WEB_OAUTH_SCOPE_PREVIEW:-${web_oauth_scope}}"
+  web_oauth_resource="${R2E_WEB_OAUTH_RESOURCE:-}"
+  web_oauth_resource_preview="${R2E_WEB_OAUTH_RESOURCE_PREVIEW:-${web_oauth_resource}}"
+  web_oauth_redirect_uri="${R2E_WEB_OAUTH_REDIRECT_URI:-}"
+  web_oauth_redirect_uri_preview="${R2E_WEB_OAUTH_REDIRECT_URI_PREVIEW:-${web_oauth_redirect_uri}}"
+  web_cookie_name="${R2E_WEB_COOKIE_NAME:-r2e_session}"
+  web_cookie_name_preview="${R2E_WEB_COOKIE_NAME_PREVIEW:-${web_cookie_name}}"
+  web_cookie_max_age="${R2E_WEB_COOKIE_MAX_AGE_SEC:-3600}"
+  web_cookie_max_age_preview="${R2E_WEB_COOKIE_MAX_AGE_SEC_PREVIEW:-${web_cookie_max_age}}"
 
   escaped_bucket_map="$(escape_sed_replacement "${bucket_map}")"
 
@@ -145,6 +175,16 @@ PY
     -e "s|replace-with-idp-clock-skew-sec|$(escape_sed_replacement "${idp_clock_skew}")|g" \
     -e "s|replace-with-idp-jwks-cache-ttl-sec-preview|$(escape_sed_replacement "${idp_jwks_cache_ttl_preview}")|g" \
     -e "s|replace-with-idp-jwks-cache-ttl-sec|$(escape_sed_replacement "${idp_jwks_cache_ttl}")|g" \
+    -e "s|replace-with-web-oauth-authorize-url-preview|$(escape_sed_replacement "${web_oauth_authorize_url_preview}")|g" \
+    -e "s|replace-with-web-oauth-authorize-url|$(escape_sed_replacement "${web_oauth_authorize_url}")|g" \
+    -e "s|replace-with-web-oauth-token-url-preview|$(escape_sed_replacement "${web_oauth_token_url_preview}")|g" \
+    -e "s|replace-with-web-oauth-token-url|$(escape_sed_replacement "${web_oauth_token_url}")|g" \
+    -e "s|replace-with-web-oauth-client-id-preview|$(escape_sed_replacement "${web_oauth_client_id_preview}")|g" \
+    -e "s|replace-with-web-oauth-client-id|$(escape_sed_replacement "${web_oauth_client_id}")|g" \
+    -e "s|replace-with-web-oauth-scope-preview|$(escape_sed_replacement "${web_oauth_scope_preview}")|g" \
+    -e "s|replace-with-web-oauth-scope|$(escape_sed_replacement "${web_oauth_scope}")|g" \
+    -e "s|replace-with-web-oauth-resource-preview|$(escape_sed_replacement "${web_oauth_resource_preview}")|g" \
+    -e "s|replace-with-web-oauth-resource|$(escape_sed_replacement "${web_oauth_resource}")|g" \
     -e "s|replace-with-upload-max-file-bytes-preview|$(escape_sed_replacement "${upload_max_file_bytes_preview}")|g" \
     -e "s|replace-with-upload-max-file-bytes|$(escape_sed_replacement "${upload_max_file_bytes}")|g" \
     -e "s|replace-with-upload-max-parts-preview|$(escape_sed_replacement "${upload_max_parts_preview}")|g" \
@@ -184,6 +224,9 @@ PY
     -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_PREFIX_ALLOWLIST = \".*\"$|R2E_UPLOAD_PREFIX_ALLOWLIST = \"$(escape_sed_replacement "${upload_prefix_allowlist}")\"|g" \
     -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_ORIGINS = \".*\"$|R2E_UPLOAD_ALLOWED_ORIGINS = \"$(escape_sed_replacement "${upload_allowed_origins}")\"|g" \
     -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_UPLOAD_S3_BUCKET = \".*\"$|R2E_UPLOAD_S3_BUCKET = \"$(escape_sed_replacement "${upload_s3_bucket}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_WEB_OAUTH_REDIRECT_URI = \".*\"$|R2E_WEB_OAUTH_REDIRECT_URI = \"$(escape_sed_replacement "${web_oauth_redirect_uri}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_WEB_COOKIE_NAME = \".*\"$|R2E_WEB_COOKIE_NAME = \"$(escape_sed_replacement "${web_cookie_name}")\"|g" \
+    -e "/^\\[vars\\]/,/^\\[\\[r2_buckets\\]\\]/ s|^R2E_WEB_COOKIE_MAX_AGE_SEC = \".*\"$|R2E_WEB_COOKIE_MAX_AGE_SEC = \"$(escape_sed_replacement "${web_cookie_max_age}")\"|g" \
     -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_FILE_BYTES = \".*\"$|R2E_UPLOAD_MAX_FILE_BYTES = \"$(escape_sed_replacement "${upload_max_file_bytes_preview}")\"|g" \
     -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_PARTS = \".*\"$|R2E_UPLOAD_MAX_PARTS = \"$(escape_sed_replacement "${upload_max_parts_preview}")\"|g" \
     -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_MAX_CONCURRENT_PER_USER = \".*\"$|R2E_UPLOAD_MAX_CONCURRENT_PER_USER = \"$(escape_sed_replacement "${upload_max_concurrent_preview}")\"|g" \
@@ -197,6 +240,9 @@ PY
     -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_PREFIX_ALLOWLIST = \".*\"$|R2E_UPLOAD_PREFIX_ALLOWLIST = \"$(escape_sed_replacement "${upload_prefix_allowlist_preview}")\"|g" \
     -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_ALLOWED_ORIGINS = \".*\"$|R2E_UPLOAD_ALLOWED_ORIGINS = \"$(escape_sed_replacement "${upload_allowed_origins_preview}")\"|g" \
     -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_UPLOAD_S3_BUCKET = \".*\"$|R2E_UPLOAD_S3_BUCKET = \"$(escape_sed_replacement "${upload_s3_bucket_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_WEB_OAUTH_REDIRECT_URI = \".*\"$|R2E_WEB_OAUTH_REDIRECT_URI = \"$(escape_sed_replacement "${web_oauth_redirect_uri_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_WEB_COOKIE_NAME = \".*\"$|R2E_WEB_COOKIE_NAME = \"$(escape_sed_replacement "${web_cookie_name_preview}")\"|g" \
+    -e "/^\\[env\\.preview\\.vars\\]/,/^\\[\\[env\\.preview\\.r2_buckets\\]\\]/ s|^R2E_WEB_COOKIE_MAX_AGE_SEC = \".*\"$|R2E_WEB_COOKIE_MAX_AGE_SEC = \"$(escape_sed_replacement "${web_cookie_max_age_preview}")\"|g" \
     -e "s|R2E_BUCKET_MAP = \"\"|R2E_BUCKET_MAP = \"${escaped_bucket_map}\"|g" \
     "${template_path}" >"${output_path}"
 
