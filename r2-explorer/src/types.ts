@@ -1,17 +1,22 @@
 export interface Env {
   FILES_BUCKET: R2Bucket;
   R2E_SHARES_KV: KVNamespace;
-  R2E_KEYS_KV: KVNamespace;
   R2E_UPLOAD_SESSIONS: DurableObjectNamespace;
-  R2E_ADMIN_AUTH_WINDOW_SEC?: string;
   R2E_MAX_SHARE_TTL_SEC?: string;
   R2E_DEFAULT_SHARE_TTL_SEC?: string;
   R2E_UI_MAX_LIST_LIMIT?: string;
   R2E_PUBLIC_BASE_URL?: string;
   R2E_READONLY?: string;
   R2E_BUCKET_MAP?: string;
-  R2E_ACCESS_TEAM_DOMAIN?: string;
-  R2E_ACCESS_AUD?: string;
+  R2E_IDP_ISSUER?: string;
+  R2E_IDP_AUDIENCE?: string;
+  R2E_IDP_JWKS_URL?: string;
+  R2E_IDP_REQUIRED_SCOPES?: string;
+  R2E_IDP_REQUIRED_SCOPES_READ?: string;
+  R2E_IDP_REQUIRED_SCOPES_WRITE?: string;
+  R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE?: string;
+  R2E_IDP_CLOCK_SKEW_SEC?: string;
+  R2E_IDP_JWKS_CACHE_TTL_SEC?: string;
   R2E_UPLOAD_MAX_FILE_BYTES?: string;
   R2E_UPLOAD_MAX_PARTS?: string;
   R2E_UPLOAD_MAX_CONCURRENT_PER_USER?: string;
@@ -31,7 +36,7 @@ export interface Env {
   [key: string]: unknown;
 }
 
-export interface AccessIdentity {
+export interface AuthIdentity {
   email: string | null;
   userId: string | null;
   jwt: string | null;
@@ -50,13 +55,6 @@ export interface ShareRecord {
   contentDisposition: "attachment" | "inline";
 }
 
-export interface AdminKeyset {
-  activeKid: string;
-  previousKid: string | null;
-  keys: Record<string, string>;
-  updatedAt: string;
-}
-
 export interface ApiErrorPayload {
   error: {
     code: string;
@@ -66,6 +64,6 @@ export interface ApiErrorPayload {
 }
 
 export interface RequestActor {
-  mode: "access" | "hmac";
+  mode: "oauth";
   actor: string;
 }

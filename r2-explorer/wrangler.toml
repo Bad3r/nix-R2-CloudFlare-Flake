@@ -7,7 +7,6 @@ routes = [
 ]
 
 [vars]
-R2E_ADMIN_AUTH_WINDOW_SEC = "300"
 R2E_MAX_SHARE_TTL_SEC = "2592000"
 R2E_DEFAULT_SHARE_TTL_SEC = "86400"
 R2E_UI_MAX_LIST_LIMIT = "1000"
@@ -16,10 +15,17 @@ R2E_READONLY = "false"
 R2E_PUBLIC_BASE_URL = ""
 # Optional. JSON map of bucket alias -> binding name (must include {"files":"FILES_BUCKET"}).
 R2E_BUCKET_MAP = ""
-# Required for strict Access JWT verification on /api/v2/* routes.
-R2E_ACCESS_TEAM_DOMAIN = "replace-with-access-team-domain"
-# Required for strict Access JWT verification on /api/v2/* routes.
-R2E_ACCESS_AUD = "replace-with-access-aud"
+# Required for strict OAuth JWT verification on /api/v2/* routes.
+R2E_IDP_ISSUER = "replace-with-idp-issuer"
+# Required audience claim for /api/v2/* routes.
+R2E_IDP_AUDIENCE = "replace-with-idp-audience"
+# Optional. Defaults to "${R2E_IDP_ISSUER}/jwks".
+R2E_IDP_JWKS_URL = "replace-with-idp-jwks-url"
+R2E_IDP_REQUIRED_SCOPES_READ = "replace-with-idp-required-scopes-read"
+R2E_IDP_REQUIRED_SCOPES_WRITE = "replace-with-idp-required-scopes-write"
+R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE = "replace-with-idp-required-scopes-share-manage"
+R2E_IDP_CLOCK_SKEW_SEC = "replace-with-idp-clock-skew-sec"
+R2E_IDP_JWKS_CACHE_TTL_SEC = "replace-with-idp-jwks-cache-ttl-sec"
 # Upload policy defaults. Set to "0" for unlimited where applicable.
 R2E_UPLOAD_MAX_FILE_BYTES = "0"
 R2E_UPLOAD_MAX_PARTS = "0"
@@ -45,11 +51,6 @@ binding = "R2E_SHARES_KV"
 id = "replace-with-shares-kv-namespace-id"
 preview_id = "replace-with-shares-kv-namespace-id-preview"
 
-[[kv_namespaces]]
-binding = "R2E_KEYS_KV"
-id = "replace-with-keys-kv-namespace-id"
-preview_id = "replace-with-keys-kv-namespace-id-preview"
-
 [[durable_objects.bindings]]
 name = "R2E_UPLOAD_SESSIONS"
 class_name = "UploadSessionDurableObject"
@@ -74,7 +75,6 @@ pattern = "preview.files.unsigned.sh/share/*"
 zone_name = "unsigned.sh"
 
 [env.preview.vars]
-R2E_ADMIN_AUTH_WINDOW_SEC = "300"
 R2E_MAX_SHARE_TTL_SEC = "2592000"
 R2E_DEFAULT_SHARE_TTL_SEC = "86400"
 R2E_UI_MAX_LIST_LIMIT = "1000"
@@ -83,10 +83,17 @@ R2E_READONLY = "false"
 R2E_PUBLIC_BASE_URL = ""
 # Optional. JSON map of bucket alias -> binding name (must include {"files":"FILES_BUCKET"}).
 R2E_BUCKET_MAP = ""
-# Required for strict Access JWT verification on /api/v2/* routes.
-R2E_ACCESS_TEAM_DOMAIN = "replace-with-access-team-domain-preview"
-# Required for strict Access JWT verification on /api/v2/* routes.
-R2E_ACCESS_AUD = "replace-with-access-aud-preview"
+# Required for strict OAuth JWT verification on /api/v2/* routes.
+R2E_IDP_ISSUER = "replace-with-idp-issuer-preview"
+# Required audience claim for /api/v2/* routes.
+R2E_IDP_AUDIENCE = "replace-with-idp-audience-preview"
+# Optional. Defaults to "${R2E_IDP_ISSUER}/jwks".
+R2E_IDP_JWKS_URL = "replace-with-idp-jwks-url-preview"
+R2E_IDP_REQUIRED_SCOPES_READ = "replace-with-idp-required-scopes-read-preview"
+R2E_IDP_REQUIRED_SCOPES_WRITE = "replace-with-idp-required-scopes-write-preview"
+R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE = "replace-with-idp-required-scopes-share-manage-preview"
+R2E_IDP_CLOCK_SKEW_SEC = "replace-with-idp-clock-skew-sec-preview"
+R2E_IDP_JWKS_CACHE_TTL_SEC = "replace-with-idp-jwks-cache-ttl-sec-preview"
 R2E_UPLOAD_MAX_FILE_BYTES = "0"
 R2E_UPLOAD_MAX_PARTS = "0"
 R2E_UPLOAD_MAX_CONCURRENT_PER_USER = "0"
@@ -108,10 +115,6 @@ bucket_name = "replace-with-r2-bucket-preview"
 [[env.preview.kv_namespaces]]
 binding = "R2E_SHARES_KV"
 id = "replace-with-shares-kv-namespace-id-preview"
-
-[[env.preview.kv_namespaces]]
-binding = "R2E_KEYS_KV"
-id = "replace-with-keys-kv-namespace-id-preview"
 
 [[env.preview.durable_objects.bindings]]
 name = "R2E_UPLOAD_SESSIONS"

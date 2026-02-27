@@ -30,12 +30,10 @@ main() {
   require_env "R2E_FILES_BUCKET_PREVIEW"
   require_env "R2E_SHARES_KV_ID"
   require_env "R2E_SHARES_KV_ID_PREVIEW"
-  require_env "R2E_KEYS_KV_ID"
-  require_env "R2E_KEYS_KV_ID_PREVIEW"
-  require_env "R2E_ACCESS_TEAM_DOMAIN"
-  require_env "R2E_ACCESS_TEAM_DOMAIN_PREVIEW"
-  require_env "R2E_ACCESS_AUD"
-  require_env "R2E_ACCESS_AUD_PREVIEW"
+  require_env "R2E_IDP_ISSUER"
+  require_env "R2E_IDP_ISSUER_PREVIEW"
+  require_env "R2E_IDP_AUDIENCE"
+  require_env "R2E_IDP_AUDIENCE_PREVIEW"
 
   bucket_map="${R2E_BUCKET_MAP:-}"
   if [[ -z ${bucket_map} ]]; then
@@ -72,6 +70,14 @@ PY
   local upload_prefix_allowlist upload_prefix_allowlist_preview
   local upload_allowed_origins upload_allowed_origins_preview
   local upload_s3_bucket upload_s3_bucket_preview
+  local idp_issuer idp_issuer_preview
+  local idp_audience idp_audience_preview
+  local idp_jwks_url idp_jwks_url_preview
+  local idp_required_scopes_read idp_required_scopes_read_preview
+  local idp_required_scopes_write idp_required_scopes_write_preview
+  local idp_required_scopes_share_manage idp_required_scopes_share_manage_preview
+  local idp_clock_skew idp_clock_skew_preview
+  local idp_jwks_cache_ttl idp_jwks_cache_ttl_preview
 
   upload_max_file_bytes="${R2E_UPLOAD_MAX_FILE_BYTES:-0}"
   upload_max_file_bytes_preview="${R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW:-${upload_max_file_bytes}}"
@@ -99,6 +105,22 @@ PY
   upload_allowed_origins_preview="${R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW:-${upload_allowed_origins}}"
   upload_s3_bucket="${R2E_UPLOAD_S3_BUCKET:-${R2E_FILES_BUCKET}}"
   upload_s3_bucket_preview="${R2E_UPLOAD_S3_BUCKET_PREVIEW:-${R2E_FILES_BUCKET_PREVIEW}}"
+  idp_issuer="${R2E_IDP_ISSUER}"
+  idp_issuer_preview="${R2E_IDP_ISSUER_PREVIEW}"
+  idp_audience="${R2E_IDP_AUDIENCE}"
+  idp_audience_preview="${R2E_IDP_AUDIENCE_PREVIEW}"
+  idp_jwks_url="${R2E_IDP_JWKS_URL:-${idp_issuer%/}/jwks}"
+  idp_jwks_url_preview="${R2E_IDP_JWKS_URL_PREVIEW:-${idp_issuer_preview%/}/jwks}"
+  idp_required_scopes_read="${R2E_IDP_REQUIRED_SCOPES_READ:-${R2E_IDP_REQUIRED_SCOPES:-r2.read}}"
+  idp_required_scopes_read_preview="${R2E_IDP_REQUIRED_SCOPES_READ_PREVIEW:-${R2E_IDP_REQUIRED_SCOPES_PREVIEW:-${idp_required_scopes_read}}}"
+  idp_required_scopes_write="${R2E_IDP_REQUIRED_SCOPES_WRITE:-${R2E_IDP_REQUIRED_SCOPES:-r2.write}}"
+  idp_required_scopes_write_preview="${R2E_IDP_REQUIRED_SCOPES_WRITE_PREVIEW:-${R2E_IDP_REQUIRED_SCOPES_PREVIEW:-${idp_required_scopes_write}}}"
+  idp_required_scopes_share_manage="${R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE:-${R2E_IDP_REQUIRED_SCOPES:-r2.share.manage}}"
+  idp_required_scopes_share_manage_preview="${R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE_PREVIEW:-${R2E_IDP_REQUIRED_SCOPES_PREVIEW:-${idp_required_scopes_share_manage}}}"
+  idp_clock_skew="${R2E_IDP_CLOCK_SKEW_SEC:-60}"
+  idp_clock_skew_preview="${R2E_IDP_CLOCK_SKEW_SEC_PREVIEW:-${idp_clock_skew}}"
+  idp_jwks_cache_ttl="${R2E_IDP_JWKS_CACHE_TTL_SEC:-300}"
+  idp_jwks_cache_ttl_preview="${R2E_IDP_JWKS_CACHE_TTL_SEC_PREVIEW:-${idp_jwks_cache_ttl}}"
 
   escaped_bucket_map="$(escape_sed_replacement "${bucket_map}")"
 
@@ -107,12 +129,22 @@ PY
     -e "s|replace-with-r2-bucket|$(escape_sed_replacement "${R2E_FILES_BUCKET}")|g" \
     -e "s|replace-with-shares-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_SHARES_KV_ID_PREVIEW}")|g" \
     -e "s|replace-with-shares-kv-namespace-id|$(escape_sed_replacement "${R2E_SHARES_KV_ID}")|g" \
-    -e "s|replace-with-keys-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_KEYS_KV_ID_PREVIEW}")|g" \
-    -e "s|replace-with-keys-kv-namespace-id|$(escape_sed_replacement "${R2E_KEYS_KV_ID}")|g" \
-    -e "s|replace-with-access-team-domain-preview|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN_PREVIEW}")|g" \
-    -e "s|replace-with-access-team-domain|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN}")|g" \
-    -e "s|replace-with-access-aud-preview|$(escape_sed_replacement "${R2E_ACCESS_AUD_PREVIEW}")|g" \
-    -e "s|replace-with-access-aud|$(escape_sed_replacement "${R2E_ACCESS_AUD}")|g" \
+    -e "s|replace-with-idp-issuer-preview|$(escape_sed_replacement "${idp_issuer_preview}")|g" \
+    -e "s|replace-with-idp-issuer|$(escape_sed_replacement "${idp_issuer}")|g" \
+    -e "s|replace-with-idp-audience-preview|$(escape_sed_replacement "${idp_audience_preview}")|g" \
+    -e "s|replace-with-idp-audience|$(escape_sed_replacement "${idp_audience}")|g" \
+    -e "s|replace-with-idp-jwks-url-preview|$(escape_sed_replacement "${idp_jwks_url_preview}")|g" \
+    -e "s|replace-with-idp-jwks-url|$(escape_sed_replacement "${idp_jwks_url}")|g" \
+    -e "s|replace-with-idp-required-scopes-read-preview|$(escape_sed_replacement "${idp_required_scopes_read_preview}")|g" \
+    -e "s|replace-with-idp-required-scopes-read|$(escape_sed_replacement "${idp_required_scopes_read}")|g" \
+    -e "s|replace-with-idp-required-scopes-write-preview|$(escape_sed_replacement "${idp_required_scopes_write_preview}")|g" \
+    -e "s|replace-with-idp-required-scopes-write|$(escape_sed_replacement "${idp_required_scopes_write}")|g" \
+    -e "s|replace-with-idp-required-scopes-share-manage-preview|$(escape_sed_replacement "${idp_required_scopes_share_manage_preview}")|g" \
+    -e "s|replace-with-idp-required-scopes-share-manage|$(escape_sed_replacement "${idp_required_scopes_share_manage}")|g" \
+    -e "s|replace-with-idp-clock-skew-sec-preview|$(escape_sed_replacement "${idp_clock_skew_preview}")|g" \
+    -e "s|replace-with-idp-clock-skew-sec|$(escape_sed_replacement "${idp_clock_skew}")|g" \
+    -e "s|replace-with-idp-jwks-cache-ttl-sec-preview|$(escape_sed_replacement "${idp_jwks_cache_ttl_preview}")|g" \
+    -e "s|replace-with-idp-jwks-cache-ttl-sec|$(escape_sed_replacement "${idp_jwks_cache_ttl}")|g" \
     -e "s|replace-with-upload-max-file-bytes-preview|$(escape_sed_replacement "${upload_max_file_bytes_preview}")|g" \
     -e "s|replace-with-upload-max-file-bytes|$(escape_sed_replacement "${upload_max_file_bytes}")|g" \
     -e "s|replace-with-upload-max-parts-preview|$(escape_sed_replacement "${upload_max_parts_preview}")|g" \

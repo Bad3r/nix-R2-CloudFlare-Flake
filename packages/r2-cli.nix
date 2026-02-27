@@ -5,7 +5,6 @@
   curl,
   gawk,
   jq,
-  openssl,
   rclone,
   wrangler ? null,
   derivationVersion ? null,
@@ -31,7 +30,6 @@ writeShellApplication {
     curl
     gawk
     jq
-    openssl
     rclone
   ]
   ++ lib.optionals (wrangler != null) [ wrangler ];
@@ -41,7 +39,8 @@ writeShellApplication {
     credentials_file=""
     default_credentials_file="$HOME/.config/cloudflare/r2/env"
     default_rclone_config="$HOME/.config/rclone/rclone.conf"
-    worker_admin_secret_hex=""
+    worker_oauth_token_cache=""
+    worker_oauth_token_expiry_epoch=0
 
     usage_main() {
       printf '%s\n' \
@@ -115,12 +114,13 @@ writeShellApplication {
         "" \
         "Required environment variables:" \
         "  R2_EXPLORER_BASE_URL     e.g. https://files.unsigned.sh" \
-        "  R2_EXPLORER_ADMIN_KID    key id from R2E_KEYS_KV keyset" \
-        "  R2_EXPLORER_ADMIN_SECRET key material (plain text or base64:<value>)" \
+        "  R2_EXPLORER_OAUTH_TOKEN_URL" \
+        "  R2_EXPLORER_OAUTH_CLIENT_ID" \
+        "  R2_EXPLORER_OAUTH_CLIENT_SECRET" \
         "" \
-        "Optional Access service-token headers (for Access-protected /api/v2/share/*):" \
-        "  R2_EXPLORER_ACCESS_CLIENT_ID" \
-        "  R2_EXPLORER_ACCESS_CLIENT_SECRET"
+        "Optional OAuth token settings:" \
+        "  R2_EXPLORER_OAUTH_SCOPE         (default: r2.read r2.write r2.share.manage)" \
+        "  R2_EXPLORER_OAUTH_BEARER_TOKEN  (if set, skips token exchange)"
     }
 
     usage_rclone() {
@@ -179,58 +179,57 @@ writeShellApplication {
       if [[ -z "''${R2_EXPLORER_BASE_URL:-}" ]]; then
         fail "R2_EXPLORER_BASE_URL is required for worker share commands."
       fi
-      if [[ -z "''${R2_EXPLORER_ADMIN_KID:-}" ]]; then
-        fail "R2_EXPLORER_ADMIN_KID is required for worker share commands."
-      fi
-      if [[ -z "''${R2_EXPLORER_ADMIN_SECRET:-}" ]]; then
-        fail "R2_EXPLORER_ADMIN_SECRET is required for worker share commands."
-      fi
-      if [[ -z "$worker_admin_secret_hex" ]]; then
-        if ! worker_admin_secret_hex="$(normalize_secret_hex "$R2_EXPLORER_ADMIN_SECRET")"; then
-          fail "R2_EXPLORER_ADMIN_SECRET has invalid key material. Use plain text or base64:<value>."
+      if [[ -z "''${R2_EXPLORER_OAUTH_BEARER_TOKEN:-}" ]]; then
+        if [[ -z "''${R2_EXPLORER_OAUTH_TOKEN_URL:-}" ]]; then
+          fail "R2_EXPLORER_OAUTH_TOKEN_URL is required for worker share commands."
         fi
-      fi
-      if [[ -n "''${R2_EXPLORER_ACCESS_CLIENT_ID:-}" || -n "''${R2_EXPLORER_ACCESS_CLIENT_SECRET:-}" ]]; then
-        if [[ -z "''${R2_EXPLORER_ACCESS_CLIENT_ID:-}" || -z "''${R2_EXPLORER_ACCESS_CLIENT_SECRET:-}" ]]; then
-          fail "R2_EXPLORER_ACCESS_CLIENT_ID and R2_EXPLORER_ACCESS_CLIENT_SECRET must both be set when using Access service tokens."
+        if [[ -z "''${R2_EXPLORER_OAUTH_CLIENT_ID:-}" || -z "''${R2_EXPLORER_OAUTH_CLIENT_SECRET:-}" ]]; then
+          fail "R2_EXPLORER_OAUTH_CLIENT_ID and R2_EXPLORER_OAUTH_CLIENT_SECRET are required when R2_EXPLORER_OAUTH_BEARER_TOKEN is not provided."
         fi
       fi
     }
 
-    bytes_to_hex() {
-      od -An -tx1 -v | tr -d ' \n'
-    }
+    oauth_worker_token() {
+      local now token_response access_token expires_in scope
 
-    is_valid_base64_payload() {
-      local value="''${1:-}"
-      [[ -n "$value" ]] || return 1
-      [[ "$value" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || return 1
-      (( ''${#value} % 4 == 0 )) || return 1
-      return 0
-    }
-
-    normalize_secret_hex() {
-      local raw="''${1:-}"
-      local value key_hex
-      if [[ "$raw" == base64:* ]]; then
-        value="''${raw#base64:}"
-        if ! is_valid_base64_payload "$value"; then
-          echo "R2_EXPLORER_ADMIN_SECRET has invalid base64 payload after base64: prefix." >&2
-          return 1
-        fi
-        if ! key_hex="$(printf '%s' "$value" | openssl base64 -d -A 2>/dev/null | bytes_to_hex)"; then
-          echo "R2_EXPLORER_ADMIN_SECRET has invalid base64 payload after base64: prefix." >&2
-          return 1
-        fi
-      else
-        key_hex="$(printf '%s' "$raw" | bytes_to_hex)"
+      if [[ -n "''${R2_EXPLORER_OAUTH_BEARER_TOKEN:-}" ]]; then
+        printf '%s\n' "''${R2_EXPLORER_OAUTH_BEARER_TOKEN}"
+        return
       fi
 
-      if [[ -z "$key_hex" ]]; then
-        echo "R2_EXPLORER_ADMIN_SECRET resolves to empty key material." >&2
-        return 1
+      now="$(date +%s)"
+      if [[ -n "$worker_oauth_token_cache" && $worker_oauth_token_expiry_epoch -gt $((now + 30)) ]]; then
+        printf '%s\n' "$worker_oauth_token_cache"
+        return
       fi
-      printf '%s\n' "$key_hex"
+
+      scope="''${R2_EXPLORER_OAUTH_SCOPE:-r2.read r2.write r2.share.manage}"
+      token_response="$(
+        curl -sS \
+          -X POST \
+          -H "content-type: application/x-www-form-urlencoded" \
+          --data-urlencode "grant_type=client_credentials" \
+          --data-urlencode "client_id=$R2_EXPLORER_OAUTH_CLIENT_ID" \
+          --data-urlencode "client_secret=$R2_EXPLORER_OAUTH_CLIENT_SECRET" \
+          --data-urlencode "scope=$scope" \
+          --max-time 60 \
+          --connect-timeout 10 \
+          "$R2_EXPLORER_OAUTH_TOKEN_URL"
+      )"
+
+      access_token="$(printf '%s' "$token_response" | jq -r '.access_token // empty')"
+      if [[ -z "$access_token" ]]; then
+        echo "$token_response" >&2
+        fail "failed to obtain OAuth access token from R2_EXPLORER_OAUTH_TOKEN_URL"
+      fi
+      expires_in="$(printf '%s' "$token_response" | jq -r '.expires_in // 300')"
+      if [[ ! "$expires_in" =~ ^[0-9]+$ ]] || [[ "$expires_in" -le 0 ]]; then
+        expires_in=300
+      fi
+
+      worker_oauth_token_cache="$access_token"
+      worker_oauth_token_expiry_epoch=$((now + expires_in))
+      printf '%s\n' "$worker_oauth_token_cache"
     }
 
     uri_escape() {
@@ -238,71 +237,28 @@ writeShellApplication {
       jq -nr --arg value "$value" '$value|@uri'
     }
 
-    sha256_hex() {
-      local payload="''${1:-}"
-      printf '%s' "$payload" | openssl dgst -sha256 | awk '{print $2}'
-    }
-
-    hmac_sha256_hex_with_hex_key() {
-      local secret_hex="''${1:-}"
-      local payload="''${2:-}"
-      printf '%s' "$payload" |
-        openssl dgst -sha256 -mac HMAC -macopt "hexkey:$secret_hex" |
-        awk '{print $2}'
-    }
-
-    worker_sign_request() {
-      local method="''${1:-}"
-      local path="''${2:-}"
-      local query="''${3:-}"
-      local body="''${4:-}"
-      local ts nonce body_hash canonical signature
-
-      ts="$(date +%s)"
-      nonce="$(openssl rand -hex 16)"
-      body_hash="$(sha256_hex "$body")"
-      canonical="$(printf '%s\n%s\n%s\n%s\n%s\n%s' "$method" "$path" "$query" "$body_hash" "$ts" "$nonce")"
-      signature="$(hmac_sha256_hex_with_hex_key "$worker_admin_secret_hex" "$canonical")"
-      printf '%s|%s|%s\n' "$ts" "$nonce" "$signature"
-    }
-
     worker_api_json() {
       local method="''${1:-}"
       local path="''${2:-}"
       local query="''${3:-}"
       local body="''${4:-}"
-      local signed ts nonce signature url response status payload
-      local -a access_headers
+      local url response status payload oauth_token
 
       ensure_worker_share_env
-
-      signed="$(worker_sign_request "$method" "$path" "$query" "$body")"
-      ts="''${signed%%|*}"
-      signed="''${signed#*|}"
-      nonce="''${signed%%|*}"
-      signature="''${signed#*|}"
 
       url="''${R2_EXPLORER_BASE_URL%/}$path"
       if [[ -n "$query" ]]; then
         url="$url?$query"
       fi
 
-      access_headers=()
-      if [[ -n "''${R2_EXPLORER_ACCESS_CLIENT_ID:-}" ]]; then
-        access_headers+=(-H "CF-Access-Client-Id: $R2_EXPLORER_ACCESS_CLIENT_ID")
-        access_headers+=(-H "CF-Access-Client-Secret: $R2_EXPLORER_ACCESS_CLIENT_SECRET")
-      fi
+      oauth_token="$(oauth_worker_token)"
 
       if [[ -n "$body" ]]; then
         response="$(
           curl -sS \
             -X "$method" \
             -H "content-type: application/json" \
-            -H "x-r2e-kid: $R2_EXPLORER_ADMIN_KID" \
-            -H "x-r2e-ts: $ts" \
-            -H "x-r2e-nonce: $nonce" \
-            -H "x-r2e-signature: $signature" \
-            "''${access_headers[@]}" \
+            -H "authorization: Bearer $oauth_token" \
             --data "$body" \
             --max-time 60 \
             --connect-timeout 10 \
@@ -313,11 +269,7 @@ writeShellApplication {
         response="$(
           curl -sS \
             -X "$method" \
-            -H "x-r2e-kid: $R2_EXPLORER_ADMIN_KID" \
-            -H "x-r2e-ts: $ts" \
-            -H "x-r2e-nonce: $nonce" \
-            -H "x-r2e-signature: $signature" \
-            "''${access_headers[@]}" \
+            -H "authorization: Bearer $oauth_token" \
             --max-time 60 \
             --connect-timeout 10 \
             "$url" \

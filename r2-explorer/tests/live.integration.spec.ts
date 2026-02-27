@@ -6,12 +6,11 @@ const execFileAsync = promisify(execFile);
 
 const REQUIRED_ENV = [
   "R2E_SMOKE_BASE_URL",
-  "R2E_SMOKE_ADMIN_KID",
-  "R2E_SMOKE_ADMIN_SECRET",
   "R2E_SMOKE_BUCKET",
   "R2E_SMOKE_KEY",
-  "R2E_SMOKE_ACCESS_CLIENT_ID",
-  "R2E_SMOKE_ACCESS_CLIENT_SECRET",
+  "R2E_SMOKE_OAUTH_CLIENT_ID",
+  "R2E_SMOKE_OAUTH_CLIENT_SECRET",
+  "R2E_SMOKE_OAUTH_TOKEN_URL",
 ] as const;
 
 const missingEnv = REQUIRED_ENV.filter((name) => {
@@ -36,6 +35,32 @@ type ResponseWithBody = {
   headers: Headers;
   body: string;
 };
+
+async function fetchOAuthToken(
+  tokenUrl: string,
+  clientId: string,
+  clientSecret: string,
+  scope = "r2.read r2.write r2.share.manage",
+): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope,
+  });
+  const response = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  const payload = (await response.json()) as { access_token?: string };
+  if (!response.ok || !payload.access_token) {
+    throw new Error(`oauth token exchange failed: status=${response.status}`);
+  }
+  return payload.access_token;
+}
 
 async function fetchWithRetry(
   url: string,
@@ -70,22 +95,21 @@ describeLive("live worker integration", () => {
       const baseOrigin = new URL(baseUrl).origin;
       const bucket = requiredEnv("R2E_SMOKE_BUCKET");
       const key = requiredEnv("R2E_SMOKE_KEY");
-      const adminKid = requiredEnv("R2E_SMOKE_ADMIN_KID");
-      const adminSecret = requiredEnv("R2E_SMOKE_ADMIN_SECRET");
-      const accessClientId = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_ID");
-      const accessClientSecret = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_SECRET");
+      const oauthClientId = requiredEnv("R2E_SMOKE_OAUTH_CLIENT_ID");
+      const oauthClientSecret = requiredEnv("R2E_SMOKE_OAUTH_CLIENT_SECRET");
+      const oauthTokenUrl = requiredEnv("R2E_SMOKE_OAUTH_TOKEN_URL");
       const r2Bin = process.env.R2E_SMOKE_R2_BIN || "r2";
       const ttl = process.env.R2E_SMOKE_TTL || "10m";
       const retries = Number.parseInt(process.env.R2E_SMOKE_RETRIES || "2", 10);
       const attempts = Number.isFinite(retries) && retries >= 0 ? retries + 1 : 3;
+      const oauthBearerToken = await fetchOAuthToken(oauthTokenUrl, oauthClientId, oauthClientSecret);
 
       const cliEnv = {
         ...process.env,
         R2_EXPLORER_BASE_URL: baseUrl,
-        R2_EXPLORER_ADMIN_KID: adminKid,
-        R2_EXPLORER_ADMIN_SECRET: adminSecret,
-        R2_EXPLORER_ACCESS_CLIENT_ID: accessClientId,
-        R2_EXPLORER_ACCESS_CLIENT_SECRET: accessClientSecret,
+        R2_EXPLORER_OAUTH_CLIENT_ID: oauthClientId,
+        R2_EXPLORER_OAUTH_CLIENT_SECRET: oauthClientSecret,
+        R2_EXPLORER_OAUTH_TOKEN_URL: oauthTokenUrl,
       } as NodeJS.ProcessEnv;
 
       let createdTokenId: string | null = null;
@@ -120,27 +144,21 @@ describeLive("live worker integration", () => {
         const unauthenticated = await fetchWithRetry(
           apiInfoUrl,
           {
-            redirect: "manual",
+            redirect: "follow",
           },
           attempts,
         );
-        expect([302, 401]).toContain(unauthenticated.status);
-        if (unauthenticated.status === 302) {
-          const location = unauthenticated.headers.get("location") || "";
-          expect(location).toContain("/cdn-cgi/access/login/");
-        } else {
-          const payload = JSON.parse(unauthenticated.body) as { error?: { code?: string } };
-          expect(payload.error?.code).toBe("access_required");
-        }
+        expect(unauthenticated.status).toBe(401);
+        const unauthenticatedPayload = JSON.parse(unauthenticated.body) as { error?: { code?: string } };
+        expect(unauthenticatedPayload.error?.code).toBe("token_missing");
 
         const authenticated = await fetchWithRetry(
           apiInfoUrl,
           {
             method: "GET",
-            redirect: "manual",
+            redirect: "follow",
             headers: {
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${oauthBearerToken}`,
             },
           },
           attempts,
@@ -153,7 +171,7 @@ describeLive("live worker integration", () => {
         };
         expect(typeof authenticatedPayload.version).toBe("string");
         expect(authenticatedPayload.version?.length).toBeGreaterThan(0);
-        expect(authenticatedPayload.actor?.mode).toBe("access");
+        expect(authenticatedPayload.actor?.mode).toBe("oauth");
         expect(authenticatedPayload.actor?.actor).toBeTruthy();
         expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
 
@@ -166,8 +184,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${oauthBearerToken}`,
             },
             body: JSON.stringify({
               filename: "live-multipart.bin",
@@ -199,8 +216,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${oauthBearerToken}`,
             },
             body: JSON.stringify({
               sessionId: initPayload.sessionId,
@@ -236,8 +252,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              authorization: `Bearer ${oauthBearerToken}`,
             },
             body: JSON.stringify({
               sessionId: initPayload.sessionId,

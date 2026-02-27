@@ -202,12 +202,11 @@ assert_share_exhaustion() {
 }
 
 require_env "R2E_SMOKE_BASE_URL"
-require_env "R2E_SMOKE_ADMIN_KID"
-require_env "R2E_SMOKE_ADMIN_SECRET"
 require_env "R2E_SMOKE_BUCKET"
 require_env "R2E_SMOKE_KEY"
-require_env "R2E_SMOKE_ACCESS_CLIENT_ID"
-require_env "R2E_SMOKE_ACCESS_CLIENT_SECRET"
+require_env "R2E_SMOKE_OAUTH_CLIENT_ID"
+require_env "R2E_SMOKE_OAUTH_CLIENT_SECRET"
+require_env "R2E_SMOKE_OAUTH_TOKEN_URL"
 
 require_command "jq"
 require_command "curl"
@@ -224,10 +223,9 @@ else
 fi
 
 export R2_EXPLORER_BASE_URL="${R2E_SMOKE_BASE_URL}"
-export R2_EXPLORER_ADMIN_KID="${R2E_SMOKE_ADMIN_KID}"
-export R2_EXPLORER_ADMIN_SECRET="${R2E_SMOKE_ADMIN_SECRET}"
-export R2_EXPLORER_ACCESS_CLIENT_ID="${R2E_SMOKE_ACCESS_CLIENT_ID}"
-export R2_EXPLORER_ACCESS_CLIENT_SECRET="${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
+export R2_EXPLORER_OAUTH_CLIENT_ID="${R2E_SMOKE_OAUTH_CLIENT_ID}"
+export R2_EXPLORER_OAUTH_CLIENT_SECRET="${R2E_SMOKE_OAUTH_CLIENT_SECRET}"
+export R2_EXPLORER_OAUTH_TOKEN_URL="${R2E_SMOKE_OAUTH_TOKEN_URL}"
 
 ttl="${R2E_SMOKE_TTL:-10m}"
 SMOKE_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_TIMEOUT:-60}" "R2E_SMOKE_TIMEOUT" "60")"
@@ -237,6 +235,24 @@ SMOKE_RETRY_DELAY_SEC="$(parse_positive_int "${R2E_SMOKE_RETRY_DELAY_SEC:-2}" "R
 SMOKE_SHARE_EXHAUSTION_RETRIES="$(
   parse_non_negative_int "${R2E_SMOKE_SHARE_EXHAUSTION_RETRIES:-5}" "R2E_SMOKE_SHARE_EXHAUSTION_RETRIES" "5"
 )"
+
+oauth_response="$(
+  curl -sS \
+    -X POST \
+    -H "content-type: application/x-www-form-urlencoded" \
+    --data-urlencode "grant_type=client_credentials" \
+    --data-urlencode "client_id=${R2E_SMOKE_OAUTH_CLIENT_ID}" \
+    --data-urlencode "client_secret=${R2E_SMOKE_OAUTH_CLIENT_SECRET}" \
+    --data-urlencode "scope=${R2E_SMOKE_OAUTH_SCOPE:-r2.read r2.write r2.share.manage}" \
+    --max-time "${SMOKE_TIMEOUT_SEC}" \
+    --connect-timeout "${SMOKE_CONNECT_TIMEOUT_SEC}" \
+    "${R2E_SMOKE_OAUTH_TOKEN_URL}"
+)"
+oauth_access_token="$(jq -r '.access_token // empty' <<<"${oauth_response}")"
+if [[ -z ${oauth_access_token} ]]; then
+  echo "${oauth_response}" >&2
+  fail "failed to obtain OAuth bearer token from ${R2E_SMOKE_OAUTH_TOKEN_URL}"
+fi
 
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
 echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
@@ -277,23 +293,20 @@ second_download_body="${tmp_dir}/second-download.body"
 assert_share_exhaustion "${share_url}" "${second_download_body}"
 
 api_probe_body="${tmp_dir}/api-probe.body"
-assert_http_status "302,401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_probe_body}" "false"
+assert_http_status "401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_probe_body}" "false"
 
-if [[ ${LAST_HTTP_STATUS} == "401" ]]; then
-  api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
-  if [[ -n ${api_error_code} && ${api_error_code} != "access_required" ]]; then
-    fail "unauthenticated /api/v2/session/info returned unexpected error code: ${api_error_code}"
-  fi
+api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
+if [[ -n ${api_error_code} && ${api_error_code} != "token_missing" ]]; then
+  fail "unauthenticated /api/v2/session/info returned unexpected error code: ${api_error_code}"
 fi
 
 api_authed_probe_body="${tmp_dir}/api-authed-probe.body"
 assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_authed_probe_body}" "false" \
-  -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
-  -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
+  -H "authorization: Bearer ${oauth_access_token}"
 
 api_authed_mode="$(jq -r '.actor.mode // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
-if [[ ${api_authed_mode} != "access" ]]; then
-  fail "authenticated /api/v2/session/info did not return actor.mode=access (got '${api_authed_mode}')"
+if [[ ${api_authed_mode} != "oauth" ]]; then
+  fail "authenticated /api/v2/session/info did not return actor.mode=oauth (got '${api_authed_mode}')"
 fi
 
 api_authed_version="$(jq -r '.version // empty' "${api_authed_probe_body}" 2>/dev/null || true)"

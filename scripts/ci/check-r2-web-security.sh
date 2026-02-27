@@ -19,8 +19,7 @@ Arguments:
   expected-csp-file   Path to the canonical CSP policy text file.
 
 Environment (optional):
-  R2E_SMOKE_ACCESS_CLIENT_ID      Cloudflare Access service token client id.
-  R2E_SMOKE_ACCESS_CLIENT_SECRET  Cloudflare Access service token client secret.
+  (none)
 
 Notes:
   - The script performs a protected-page fetch and checks:
@@ -99,15 +98,6 @@ headers_file="${tmp_dir}/headers.txt"
 body_file="${tmp_dir}/body.html"
 
 curl_headers=()
-if [[ -n ${R2E_SMOKE_ACCESS_CLIENT_ID:-} || -n ${R2E_SMOKE_ACCESS_CLIENT_SECRET:-} ]]; then
-  if [[ -z ${R2E_SMOKE_ACCESS_CLIENT_ID:-} || -z ${R2E_SMOKE_ACCESS_CLIENT_SECRET:-} ]]; then
-    fail "set both R2E_SMOKE_ACCESS_CLIENT_ID and R2E_SMOKE_ACCESS_CLIENT_SECRET, or neither"
-  fi
-  curl_headers+=(
-    -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}"
-    -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
-  )
-fi
 
 http_code="$(
   curl -sS --location "${curl_headers[@]}" \

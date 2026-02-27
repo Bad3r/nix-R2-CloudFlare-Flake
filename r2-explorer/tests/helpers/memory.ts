@@ -1,6 +1,6 @@
-import { createHash, createHmac, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, beforeEach } from "vitest";
-import { resetAccessSigningKeyCache } from "../../src/auth";
+import { resetAuthSigningKeyCache } from "../../src/auth";
 import type { Env } from "../../src/types";
 
 type KVEntry = {
@@ -599,28 +599,8 @@ export class MemoryUploadSessionNamespace {
   }
 }
 
-function canonicalQuery(url: URL): string {
-  const entries = [...url.searchParams.entries()].sort(([aKey, aValue], [bKey, bValue]) => {
-    if (aKey === bKey) {
-      return aValue.localeCompare(bValue);
-    }
-    return aKey.localeCompare(bKey);
-  });
-  return entries
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-    .join("&");
-}
-
-function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-function hmacSha256Hex(secret: string, payload: string): string {
-  return createHmac("sha256", secret).update(payload).digest("hex");
-}
-
-export const ACCESS_TEST_TEAM_DOMAIN = "team.example.cloudflareaccess.com";
-export const ACCESS_TEST_AUD = "r2e-access-aud-test";
+export const AUTH_TEST_ISSUER = "https://auth.example.com/api/auth";
+export const AUTH_TEST_AUD = "r2-explorer-test";
 
 const ACCESS_TEST_KID = "access-kid-test";
 
@@ -650,6 +630,8 @@ type AccessJwtOptions = {
   serviceTokenId?: string;
   aud?: string | string[];
   iss?: string;
+  scope?: string;
+  scp?: string[] | string;
   expiresInSec?: number;
   /** Offset from now for the nbf claim (default: -5). Use a large positive value to test not-yet-valid rejection. */
   nbfOffsetSec?: number;
@@ -665,14 +647,18 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
     kid: options.headerKid ?? ACCESS_TEST_KID,
   };
   const payload: Record<string, unknown> = {
-    iss: options.iss ?? `https://${ACCESS_TEST_TEAM_DOMAIN}`,
-    aud: options.aud ?? ACCESS_TEST_AUD,
+    iss: options.iss ?? AUTH_TEST_ISSUER,
+    aud: options.aud ?? AUTH_TEST_AUD,
     exp: now + (options.expiresInSec ?? 300),
     iat: now,
     nbf: now + (options.nbfOffsetSec ?? -5),
+    scope: options.scope ?? "r2.read r2.write r2.share.manage",
   };
+  if (options.scp !== undefined) {
+    payload.scp = options.scp;
+  }
   const email = options.email === undefined ? "engineer@example.com" : options.email;
-  const sub = options.sub === undefined ? "access-user-id" : options.sub;
+  const sub = options.sub === undefined ? "oauth-user-id" : options.sub;
   if (email !== null) {
     payload.email = email;
   }
@@ -702,12 +688,12 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
 
 export function installAccessJwksFetchMock(): () => void {
   const originalFetch = globalThis.fetch;
-  const certsUrl = `https://${ACCESS_TEST_TEAM_DOMAIN}/cdn-cgi/access/certs`;
+  const jwksUrl = `${AUTH_TEST_ISSUER}/jwks`;
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === certsUrl) {
+    if (url === jwksUrl) {
       return new Response(JSON.stringify({ keys: [ACCESS_PUBLIC_JWK] }), {
         status: 200,
         headers: {
@@ -738,55 +724,26 @@ export function useAccessJwksFetchMock(): void {
   afterEach(() => {
     restoreFetch?.();
     restoreFetch = null;
-    resetAccessSigningKeyCache();
+    resetAuthSigningKeyCache();
   });
 }
 
 export function accessHeaders(email = "engineer@example.com", options: AccessJwtOptions = {}): HeadersInit {
-  const userId = options.sub === undefined ? "access-user-id" : options.sub;
+  const userId = options.sub === undefined ? "oauth-user-id" : options.sub;
   const resolvedEmail = options.email === undefined ? email : options.email;
   const jwt = createAccessJwt({
     ...options,
     email: resolvedEmail,
     sub: userId,
   });
-  const headers: Record<string, string> = {
-    "cf-access-jwt-assertion": jwt,
-  };
-  if (resolvedEmail !== null) {
-    headers["cf-access-authenticated-user-email"] = resolvedEmail;
-  }
-  if (userId !== null) {
-    headers["cf-access-authenticated-user-id"] = userId;
-  }
-  return headers;
-}
-
-export function accessHeadersWithoutJwt(email = "engineer@example.com", userId = "access-user-id"): HeadersInit {
   return {
-    "cf-access-authenticated-user-email": email,
-    "cf-access-authenticated-user-id": userId,
+    authorization: `Bearer ${jwt}`,
   };
 }
 
-export function signedHeaders(
-  request: Request,
-  kid: string,
-  secret: string,
-  rawBody: string,
-  timestamp?: number,
-  nonce?: string,
-): HeadersInit {
-  const ts = timestamp ?? Math.floor(Date.now() / 1000);
-  const nonceValue = nonce ?? randomBytes(12).toString("hex");
-  const url = new URL(request.url);
-  const canonicalPayload = `${request.method.toUpperCase()}\n${url.pathname}\n${canonicalQuery(url)}\n${sha256Hex(rawBody)}\n${ts}\n${nonceValue}`;
-  const signature = hmacSha256Hex(secret, canonicalPayload);
+export function accessHeadersWithoutJwt(email = "engineer@example.com", userId = "oauth-user-id"): HeadersInit {
   return {
-    "x-r2e-kid": kid,
-    "x-r2e-ts": String(ts),
-    "x-r2e-nonce": nonceValue,
-    "x-r2e-signature": signature,
+    authorization: `Basic ${Buffer.from(`${email}:${userId}`).toString("base64")}`,
   };
 }
 
@@ -795,38 +752,17 @@ export async function createTestEnv(): Promise<{
   bucket: MemoryR2Bucket;
   photosBucket: MemoryR2Bucket;
   sharesKv: MemoryKV;
-  keysKv: MemoryKV;
-  kid: string;
-  secret: string;
 }> {
   const bucket = new MemoryR2Bucket();
   const photosBucket = new MemoryR2Bucket();
   const sharesKv = new MemoryKV();
-  const keysKv = new MemoryKV();
   const uploadSessions = new MemoryUploadSessionNamespace();
-  const kid = "k-test";
-  const previousKid = "k-prev";
-  const secret = "super-secret";
-  await keysKv.put(
-    "admin:keyset:active",
-    JSON.stringify({
-      activeKid: kid,
-      previousKid,
-      keys: {
-        [kid]: secret,
-        [previousKid]: "previous-secret",
-      },
-      updatedAt: "2026-02-07T00:00:00Z",
-    }),
-  );
 
   const env: Env = {
     FILES_BUCKET: bucket as unknown as R2Bucket,
     PHOTOS_BUCKET: photosBucket as unknown as R2Bucket,
     R2E_SHARES_KV: sharesKv as unknown as KVNamespace,
-    R2E_KEYS_KV: keysKv as unknown as KVNamespace,
     R2E_UPLOAD_SESSIONS: uploadSessions as unknown as DurableObjectNamespace,
-    R2E_ADMIN_AUTH_WINDOW_SEC: "300",
     R2E_MAX_SHARE_TTL_SEC: "2592000",
     R2E_DEFAULT_SHARE_TTL_SEC: "86400",
     R2E_UI_MAX_LIST_LIMIT: "1000",
@@ -836,8 +772,14 @@ export async function createTestEnv(): Promise<{
       files: "FILES_BUCKET",
       photos: "PHOTOS_BUCKET",
     }),
-    R2E_ACCESS_TEAM_DOMAIN: ACCESS_TEST_TEAM_DOMAIN,
-    R2E_ACCESS_AUD: ACCESS_TEST_AUD,
+    R2E_IDP_ISSUER: AUTH_TEST_ISSUER,
+    R2E_IDP_AUDIENCE: AUTH_TEST_AUD,
+    R2E_IDP_JWKS_URL: `${AUTH_TEST_ISSUER}/jwks`,
+    R2E_IDP_REQUIRED_SCOPES_READ: "r2.read",
+    R2E_IDP_REQUIRED_SCOPES_WRITE: "r2.write",
+    R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE: "r2.share.manage",
+    R2E_IDP_CLOCK_SKEW_SEC: "60",
+    R2E_IDP_JWKS_CACHE_TTL_SEC: "300",
     R2E_UPLOAD_MAX_FILE_BYTES: "0",
     R2E_UPLOAD_MAX_PARTS: "0",
     R2E_UPLOAD_MAX_CONCURRENT_PER_USER: "0",
@@ -861,8 +803,5 @@ export async function createTestEnv(): Promise<{
     bucket,
     photosBucket,
     sharesKv,
-    keysKv,
-    kid,
-    secret,
   };
 }

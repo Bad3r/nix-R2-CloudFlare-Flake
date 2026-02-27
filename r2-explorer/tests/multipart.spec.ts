@@ -512,7 +512,7 @@ describe("multipart upload flow", () => {
     expect(((await nonCanonicalCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
   });
 
-  it("accepts Access service-token principals on upload mutation routes", async () => {
+  it("accepts OAuth service-token principals on upload mutation routes", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
     const jwt = createAccessJwt({
@@ -528,7 +528,7 @@ describe("multipart upload flow", () => {
           "content-type": "application/json",
           origin: "https://files.example.com",
           "x-r2e-csrf": "1",
-          "cf-access-jwt-assertion": jwt,
+          authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
           filename: "service-token.bin",
