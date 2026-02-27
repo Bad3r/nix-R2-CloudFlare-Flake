@@ -66,6 +66,12 @@ if [[ $# -ne 2 ]]; then
   fail "expected 2 arguments, got $#"
 fi
 
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/r2-web-security.XXXXXX")"
+cleanup() {
+  rm -rf "${tmp_dir}"
+}
+trap cleanup EXIT INT TERM
+
 require_command "curl"
 require_command "rg"
 
@@ -81,8 +87,8 @@ if [[ -z ${base_url} ]]; then
 fi
 
 request_url="${base_url%/}/"
-headers_file="$(mktemp "${TMPDIR:-/tmp}/r2-web-security-headers.XXXXXX.txt")"
-body_file="$(mktemp "${TMPDIR:-/tmp}/r2-web-security-body.XXXXXX.html")"
+headers_file="${tmp_dir}/headers.txt"
+body_file="${tmp_dir}/body.html"
 
 curl_headers=()
 if [[ -n ${R2E_SMOKE_ACCESS_CLIENT_ID:-} || -n ${R2E_SMOKE_ACCESS_CLIENT_SECRET:-} ]]; then

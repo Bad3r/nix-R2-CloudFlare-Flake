@@ -59,7 +59,7 @@ cf_api() {
   local response_file
   local http_code
 
-  response_file="$(mktemp "${TMPDIR:-/tmp}/r2-web-csp-api.XXXXXX.json")"
+  response_file="$(mktemp "${tmp_dir}/api-response.XXXXXX.json")"
 
   if [[ -n ${payload_file} ]]; then
     http_code="$(
@@ -109,7 +109,7 @@ ensure_response_headers_ruleset() {
   local http_code
   local create_payload
 
-  response_file="$(mktemp "${TMPDIR:-/tmp}/r2-web-csp-entrypoint.XXXXXX.json")"
+  response_file="$(mktemp "${tmp_dir}/entrypoint-response.XXXXXX.json")"
   http_code="$(
     curl -sS \
       --request GET \
@@ -121,7 +121,7 @@ ensure_response_headers_ruleset() {
   )"
 
   if [[ ${http_code} == "404" ]]; then
-    create_payload="$(mktemp "${TMPDIR:-/tmp}/r2-web-csp-create-ruleset.XXXXXX.json")"
+    create_payload="$(mktemp "${tmp_dir}/create-ruleset-payload.XXXXXX.json")"
     jq -n \
       --arg name "default" \
       --arg kind "zone" \
@@ -156,6 +156,12 @@ if [[ $# -ne 2 ]]; then
   usage >&2
   fail "expected 2 arguments, got $#"
 fi
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/r2-web-csp.XXXXXX")"
+cleanup() {
+  rm -rf "${tmp_dir}"
+}
+trap cleanup EXIT INT TERM
 
 require_command "curl"
 require_command "jq"
@@ -206,7 +212,7 @@ existing_rule_id="$(
   ' | head -n 1
 )"
 
-rule_payload="$(mktemp "${TMPDIR:-/tmp}/r2-web-csp-rule.XXXXXX.json")"
+rule_payload="$(mktemp "${tmp_dir}/rule-payload.XXXXXX.json")"
 jq -n \
   --arg ref "${rule_ref}" \
   --arg description "${rule_description}" \
