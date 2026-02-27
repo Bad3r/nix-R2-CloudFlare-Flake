@@ -34,6 +34,10 @@ pnpm dev:web
 
 API routes (OAuth2 bearer-protected except `/share/*` public token URLs):
 
+- `GET /api/v2/auth/login`
+- `GET /api/v2/auth/callback`
+- `GET /api/v2/auth/logout`
+- `POST /api/v2/auth/logout`
 - `GET /api/v2/list`
 - `GET /api/v2/meta`
 - `GET /api/v2/download`
@@ -70,6 +74,14 @@ Set these in `wrangler.toml` (or CI-rendered config):
 - `R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE` (optional; defaults to `r2.share.manage`)
 - `R2E_IDP_CLOCK_SKEW_SEC` (optional; defaults to `60`)
 - `R2E_IDP_JWKS_CACHE_TTL_SEC` (optional; defaults to `300`)
+- `R2E_WEB_OAUTH_AUTHORIZE_URL` (required for browser sign-in redirect)
+- `R2E_WEB_OAUTH_TOKEN_URL` (required for OAuth code exchange on callback)
+- `R2E_WEB_OAUTH_CLIENT_ID` (required for browser OAuth client)
+- `R2E_WEB_OAUTH_SCOPE` (optional; defaults to required API scopes)
+- `R2E_WEB_OAUTH_RESOURCE` (optional; Better Auth token resource)
+- `R2E_WEB_OAUTH_REDIRECT_URI` (optional; defaults to `<base>/api/v2/auth/callback`)
+- `R2E_WEB_COOKIE_NAME` (optional; defaults to `r2e_session`)
+- `R2E_WEB_COOKIE_MAX_AGE_SEC` (optional; defaults to `3600`)
 - `R2E_UPLOAD_S3_BUCKET` (bucket name used when signing direct multipart part uploads)
 
 Upload policy vars (all optional):
@@ -95,9 +107,16 @@ Required API Worker secrets:
 
 ## Direct IdP auth model
 
-`/api/v2/*` is authenticated directly in-worker using `Authorization: Bearer`
-tokens issued by Better Auth IdP. Cloudflare Access is not used as an edge gate
-for these API routes.
+`/api/v2/*` is authenticated directly in-worker with either:
+
+- `Authorization: Bearer <jwt>` for CLI/machine/API clients
+- HttpOnly same-origin session cookie for browser UI flows
+
+Browser sessions are created by `/api/v2/auth/login` (OAuth2 Authorization Code
+with PKCE) and `/api/v2/auth/callback`, so web actions that use `window.open`
+(`preview`/`download`) stay authenticated without exposing tokens to JS.
+
+Cloudflare Access is not used as an edge gate for these API routes.
 
 `/share/*` remains public and token-constrained. `/api/v2/share/*` remains in the
 protected API surface and requires bearer scope `r2.share.manage` (or your

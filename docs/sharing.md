@@ -71,8 +71,10 @@ Behavior and constraints:
 - Share URL format: `https://files.unsigned.sh/share/<token-id>`
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
-- `/api/v2/*` routes require `Authorization: Bearer <token>`.
-- Bearer JWT validation is performed in-worker using IdP issuer/audience/JWKS.
+- `/api/v2/*` routes accept either:
+  - `Authorization: Bearer <token>` (CLI/machine/API clients)
+  - browser session cookie from `/api/v2/auth/login` + `/api/v2/auth/callback`
+- JWT validation is performed in-worker using IdP issuer/audience/JWKS.
 
 Failure semantics:
 
@@ -90,7 +92,7 @@ Cloudflare edge config should only route paths; auth is enforced in-worker:
 
 - Domain/path: `files.unsigned.sh/api/v2/*`
 - No Cloudflare Access gate requirement
-- Worker enforces IdP bearer token verification
+- Worker enforces IdP JWT verification (bearer header or session cookie)
 
 2. Public share routes:
 
@@ -99,7 +101,7 @@ Cloudflare edge config should only route paths; auth is enforced in-worker:
 
 3. Preview should mirror production semantics:
 
-- `preview.files.unsigned.sh/api/v2/*` authenticated by bearer in-worker
+- `preview.files.unsigned.sh/api/v2/*` authenticated in-worker (bearer or session cookie)
 - `preview.files.unsigned.sh/share/*` public by token
 
 Important: `/api/v2/share/*` is protected API surface and requires bearer scope.

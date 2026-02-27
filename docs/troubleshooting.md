@@ -74,13 +74,15 @@ Escalate:
 
 - `docs/operators/incident-response.md` if failures continue after secret refresh.
 
-### B. Worker bearer auth fails (`401`/`403`) for `r2 share worker ...`
+### B. Worker auth fails (`401`/`403`) for API/CLI or browser UI
 
 Failure signature:
 
 - `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
 - `/api/v2/*` calls fail with `token_missing`, `token_invalid_signature`,
   `token_claim_mismatch`, or `insufficient_scope`.
+- Browser preview/download (`/api/v2/preview`, `/api/v2/download`) returns `401`
+  in a new tab after clicking from the web UI.
 
 Confirm:
 
@@ -104,6 +106,8 @@ Likely root causes:
 - Token lacks required route scope (`r2.read`, `r2.write`,
   `r2.share.manage`, or configured equivalents). For current direct-IdP
   production, defaults are `r2e.read`, `r2e.write`, `r2e.admin`.
+- Browser session cookie missing/expired (web UI must complete
+  `/api/v2/auth/login` -> `/api/v2/auth/callback` before opening preview/download).
 
 Repair:
 
@@ -136,6 +140,7 @@ Verify:
 
 - `r2 share worker create ...` succeeds and returns a `url`.
 - `r2 share worker list ...` returns token records.
+- Browser web UI can list objects and open preview/download without `401`.
 
 Escalate:
 
