@@ -4,7 +4,8 @@ This repository supports two sharing modes.
 
 Option reference for CLI and credentials behavior: `docs/reference/index.md`.
 
-Quickstart entrypoint: run the sharing checkpoint in `docs/quickstart.md` first, then use this page for detailed mode-specific behavior and policy setup.
+Quickstart entrypoint: run the sharing checkpoint in `docs/quickstart.md`
+first, then use this page for detailed mode-specific behavior and policy setup.
 For auth/token/multipart failures, use `docs/troubleshooting.md` first, then
 escalate to operator runbooks as needed.
 
@@ -48,20 +49,16 @@ r2 share worker revoke <token-id>
 Required environment variables for Worker-mode CLI calls:
 
 - `R2_EXPLORER_BASE_URL` (for example `https://files.unsigned.sh`)
-- `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
-- `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
-
-Required for Access-protected API calls (`/api/v2/*`), including
-`r2 share worker ...`:
-
-- `R2_EXPLORER_ACCESS_CLIENT_ID`
-- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
+- `R2_EXPLORER_OAUTH_TOKEN_URL` (for example `https://auth.example.com/oauth2/token`)
+- `R2_EXPLORER_OAUTH_CLIENT_ID`
+- `R2_EXPLORER_OAUTH_CLIENT_SECRET`
 
 Multi-bucket aliases:
 
 - Optional `R2E_BUCKET_MAP` defines bucket aliases to Worker bindings.
 - The map must include `{"files":"FILES_BUCKET"}` to keep default behavior.
-- Each additional alias requires a matching `[[r2_buckets]]` binding in `wrangler.toml`.
+- Each additional alias requires a matching `[[r2_buckets]]` binding in
+  `wrangler.toml`.
 
 Example:
 
@@ -74,37 +71,34 @@ Behavior and constraints:
 - Share URL format: `https://files.unsigned.sh/share/<token-id>`
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
-- Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
-- `/api/v2/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
-- `r2 share worker ...` authenticates request integrity with admin HMAC headers.
-- CLI calls to Worker APIs should present Access service-token headers via
-  `R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
+- `/api/v2/*` routes require OAuth Bearer JWT validation
+  (`Authorization: Bearer ...`).
+- Share management APIs require `r2.share.manage`.
+- Read routes require `r2.read`; upload/object mutations require `r2.write`.
 
-Required Worker vars for `/api/v2/*` JWT verification:
+Required Worker vars for `/api/v2/*` OAuth verification:
 
-- `R2E_ACCESS_TEAM_DOMAIN` (for example `team.cloudflareaccess.com`)
-- `R2E_ACCESS_AUD` (Access application audience value)
+- `R2E_AUTH_ISSUER`
+- `R2E_AUTH_AUDIENCE`
+- Optional `R2E_AUTH_JWKS_URL` (defaults to `${R2E_AUTH_ISSUER}/jwks`)
 
 Failure semantics:
 
-- Missing `Cf-Access-Jwt-Assertion` for `/api/v2/*`: `401 access_required`
-- Invalid JWT signature/claims: `401 access_jwt_invalid`
-- Missing verifier config (`R2E_ACCESS_TEAM_DOMAIN` or `R2E_ACCESS_AUD`): `500 access_config_invalid`
+- Missing bearer token for `/api/v2/*`: `401 oauth_required`
+- Invalid JWT signature/claims: `401 oauth_token_invalid`
+- Missing verifier config (`R2E_AUTH_ISSUER` or `R2E_AUTH_AUDIENCE`):
+  `500 oauth_config_invalid`
+- Missing route scope: `403 insufficient_scope`
 
-## Cloudflare Access policy model
+## Access policy model
 
-Use path-based policy split so all API routes stay authenticated while public
-token links work as intended:
+Recommended path split for `files.unsigned.sh`:
 
-1. Access-protected app policy:
+1. Protected API policy:
 
 - Domain: `files.unsigned.sh`
 - Path: `/api/v2/*`
-- Policies:
-  - Action: `Allow`
-  - Include: your org users/groups
-  - Action: `Service Auth`
-  - Include: service tokens used by CLI/CI automation
+- Action: `Allow`
 
 2. Share-link bypass policy (public download):
 
@@ -112,30 +106,32 @@ token links work as intended:
 - Path: `/share/*`
 - Action: `Bypass`
 
-3. Preview environment should mirror this split with independent Access apps:
+3. Machine share-management bypass policy:
 
-- API app: `preview.files.unsigned.sh/api/v2/*` with `Allow` + `Service Auth`
-- Share app: `preview.files.unsigned.sh/share/*` with `Bypass`
-- Independent preview audience value (`R2E_ACCESS_AUD_PREVIEW`)
+- Domain: `files.unsigned.sh`
+- Path: `/api/v2/share/*`
+- Action: `Bypass`
+
+Preview environment should mirror this split with independent Access apps:
+
+- API protected app: `preview.files.unsigned.sh/api/v2/*`
+- Public share bypass app: `preview.files.unsigned.sh/share/*`
+- Machine share-management bypass app: `preview.files.unsigned.sh/api/v2/share/*`
 
 This keeps `/api/v2/*` behind Access while allowing:
 
-- `GET /share/<token>` to work for recipients without Access membership
-- `r2 share worker create|list|revoke ...` with HMAC + Access service-token
-  headers in automation contexts
-
-Important: `/api/v2/share/*` is not a bypass path. It is part of the protected
-API surface and inherits Access policy requirements.
+- `GET /share/<token>` for recipients without Access membership
+- `r2 share worker create|list|revoke ...` via OAuth client credentials without
+  Access browser/session requirements
 
 Important: Access policy split alone is not sufficient. The Worker must also
-verify Access JWT signature and claims on `/api/v2/*`.
+verify OAuth JWT signature/claims and route scopes on `/api/v2/*`.
 
 ## Operator runbooks
 
 Use dedicated runbooks for operations and incident handling:
 
 - `docs/operators/index.md`
-- `docs/operators/key-rotation.md`
 - `docs/operators/readonly-maintenance.md`
 - `docs/operators/access-policy-split.md`
 - `docs/operators/incident-response.md`

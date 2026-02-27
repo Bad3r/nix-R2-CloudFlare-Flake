@@ -23,22 +23,28 @@ regression.
 - Last known-good Worker revision identifier.
 - Last known-good values for:
   - `R2E_READONLY`
-  - keyset/secret references for admin auth
-  - bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
+  - `R2E_AUTH_ISSUER` / `R2E_AUTH_AUDIENCE` / `R2E_AUTH_JWKS_URL`
+  - Scope config (`R2E_AUTH_SCOPE_READ`, `R2E_AUTH_SCOPE_WRITE`,
+    `R2E_AUTH_SCOPE_SHARE_MANAGE`)
+  - Bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
     `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
-    `R2E_SHARES_KV_ID_PREVIEW`, `R2E_KEYS_KV_ID`,
-    `R2E_KEYS_KV_ID_PREVIEW`)
-- Target domain for verification (`https://files.unsigned.sh`)
+    `R2E_SHARES_KV_ID_PREVIEW`)
+- Last known-good machine client credentials used by CLI:
+  - `R2_EXPLORER_OAUTH_TOKEN_URL`
+  - `R2_EXPLORER_OAUTH_CLIENT_ID`
+  - `R2_EXPLORER_OAUTH_CLIENT_SECRET`
+- Target domain for verification (`https://files.unsigned.sh`).
 
 ## Procedure (CLI-first)
 
 1. Identify rollback target:
-   - Most recent known-good deployment passing share/API smoke tests.
+   - most recent known-good deployment passing share/API smoke tests.
 2. Reapply previous Worker code/config revision.
 3. Reapply previous environment snapshot.
 4. Reconfirm Access policy split:
    - `/*` allow for org identities.
    - `/share/*` bypass.
+   - `/api/v2/share/*` bypass (if using CLI machine automation without Access).
 5. Deploy rollback revision:
 
 ```bash
@@ -58,18 +64,19 @@ curl -I https://files.unsigned.sh/share/<token-id>
 
 ## Verification
 
-- Admin share lifecycle endpoints return expected status.
+- Share lifecycle endpoints return expected status.
 - `/api/v2/*` remains Access-protected.
+- `/api/v2/share/*` requires OAuth and does not return `200` without bearer.
 - `/share/*` remains public-token accessible and token-constrained.
 
 ## Failure Signatures and Triage
 
 - Code rollback succeeded but auth still fails:
-  - stale env secrets or keyset mismatch.
+  - stale OAuth client secret, issuer/audience mismatch, or stale JWKS config.
 - Public links fail while API works:
   - Access bypass path missing/regressed.
-- KV-driven behavior inconsistent:
-  - wrong namespace binding for active environment.
+- KV-driven share behavior inconsistent:
+  - wrong `R2E_SHARES_KV` namespace binding for active environment.
 
 ## Rollback / Recovery
 

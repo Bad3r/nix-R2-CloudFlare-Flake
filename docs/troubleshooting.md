@@ -74,62 +74,54 @@ Escalate:
 
 - `docs/operators/incident-response.md` if failures continue after secret refresh.
 
-### B. Worker admin auth fails (`401`/`403`) for `r2 share worker ...`
+### B. Worker OAuth auth fails for `r2 share worker ...`
 
 Failure signature:
 
-- `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
+- `r2 share worker create|list|revoke ...` returns:
+  - `401 oauth_required`
+  - `401 oauth_token_invalid`
+  - `403 insufficient_scope`
 - `r2 share worker ...` can also fail with `HTTP 302` when Access intercepts
   `/api/v2/*` before the Worker.
 
 Confirm:
 
 ```bash
-# Managed deployments often provide Worker admin signing inputs via a system
-# env file (so your interactive shell may NOT have these exported).
+# Managed deployments often provide Worker OAuth inputs via a system env file
+# (so your interactive shell may NOT have these exported).
 test -r /run/secrets/r2/explorer.env
-grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_ADMIN_KID)=' /run/secrets/r2/explorer.env
-grep -q '^R2_EXPLORER_ADMIN_SECRET=' /run/secrets/r2/explorer.env
+grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_OAUTH_TOKEN_URL|R2_EXPLORER_OAUTH_CLIENT_ID)=' /run/secrets/r2/explorer.env
+grep -q '^R2_EXPLORER_OAUTH_CLIENT_SECRET=' /run/secrets/r2/explorer.env
 
 r2 share worker list files workspace/demo.txt
 ```
 
 Likely root causes:
 
-- `R2_EXPLORER_ADMIN_KID` not present in `R2E_KEYS_KV`.
-- `R2_EXPLORER_ADMIN_SECRET` mismatch for the configured key ID.
-- Caller/Worker clock skew causing signature validation failures.
-- KV was updated locally (missing `wrangler kv ... --remote`), so the deployed
-  Worker keyset never actually changed.
+- `R2_EXPLORER_OAUTH_CLIENT_SECRET` is stale or incorrect.
+- `R2_EXPLORER_OAUTH_TOKEN_URL` is unreachable or misconfigured.
+- OAuth client lacks scope required by `R2E_AUTH_SCOPE_SHARE_MANAGE`.
+- Worker validation config drift (`R2E_AUTH_ISSUER`, `R2E_AUTH_AUDIENCE`,
+  `R2E_AUTH_JWKS_URL`).
 - `/api/v2/share/*` is Access-protected and CLI calls do not include Access
-  service-token headers.
-- Access `Service Auth` policy for the CI/service token is missing or
-  mis-scoped on the `/api/v2/*` app.
-- `R2E_ACCESS_AUD` or `R2E_ACCESS_AUD_PREVIEW` does not match the Access app
-  audience claim.
+  browser/session context.
 
 Repair:
 
 ```bash
-# Refresh to current active key material.
+# Refresh OAuth client values.
 # For managed NixOS, prefer updating the SOPS-managed source of truth and
 # rebuilding so `/run/secrets/r2/explorer.env` is updated persistently.
 #
 # For ad-hoc testing only:
-export R2_EXPLORER_ADMIN_KID="<active-kid>"
-export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
-# Required for Access-protected Worker API routes:
-export R2_EXPLORER_ACCESS_CLIENT_ID="<access-service-token-id>"
-export R2_EXPLORER_ACCESS_CLIENT_SECRET="<access-service-token-secret>"
-
-# Fast probe for Access service-token auth:
-curl -i \
-  -H "CF-Access-Client-Id: ${R2_EXPLORER_ACCESS_CLIENT_ID}" \
-  -H "CF-Access-Client-Secret: ${R2_EXPLORER_ACCESS_CLIENT_SECRET}" \
-  "${R2_EXPLORER_BASE_URL%/}/api/v2/session/info"
+export R2_EXPLORER_OAUTH_TOKEN_URL="<oauth-token-endpoint>"
+export R2_EXPLORER_OAUTH_CLIENT_ID="<oauth-client-id>"
+export R2_EXPLORER_OAUTH_CLIENT_SECRET="<oauth-client-secret>"
 ```
 
-If key mismatch persists, perform key rotation workflow.
+If token scope or signing validation mismatch persists, perform OAuth credential
+rotation and issuer/JWKS validation workflow.
 
 Verify:
 
@@ -141,39 +133,41 @@ Escalate:
 - `docs/operators/key-rotation.md`
 - `docs/operators/incident-response.md`
 
-### C. `access_jwt_invalid` caused by JWKS infrastructure failure
+### C. `oauth_token_invalid` caused by JWKS/issuer infrastructure failure
 
 Failure signature:
 
-- All `/api/v2/*` requests return `401` with code `access_jwt_invalid`.
+- All `/api/v2/*` requests return `401` with code `oauth_token_invalid`.
 - Multiple users affected simultaneously.
 - Previously-working tokens rejected.
 
 Confirm:
 
 ```bash
-curl -sS "https://<team-domain>.cloudflareaccess.com/cdn-cgi/access/certs" | jq '.keys | length'
+curl -sS "${R2E_AUTH_JWKS_URL}" | jq '.keys | length'
 ```
 
 Likely root causes:
 
-- Cloudflare Access JWKS endpoint unavailable or returning errors.
-- DNS resolution failure for the team domain from the Worker runtime.
+- OAuth provider JWKS endpoint unavailable or returning errors.
+- Worker-side issuer/audience/jwks configuration drift.
+- Signing-key rotation completed at provider before Worker callers were updated.
 
 Note: The Worker returns `401` (not `502`/`503`) for JWKS fetch failures as a
 fail-closed security posture. All infrastructure errors during JWT validation
-surface as `access_jwt_invalid` to avoid leaking internal state.
+surface as `oauth_token_invalid` to avoid leaking internal state.
 
 Repair:
 
-- Check [Cloudflare Status](https://www.cloudflarestatus.com/) for Access incidents.
+- Check provider status page for OAuth/JWKS incidents.
 - Verify JWKS endpoint reachable from a separate network.
-- If team domain changed, update `R2E_ACCESS_TEAM_DOMAIN` and redeploy.
+- If issuer values changed, update `R2E_AUTH_ISSUER`, `R2E_AUTH_AUDIENCE`, and
+  `R2E_AUTH_JWKS_URL`, then redeploy.
 
 Verify:
 
 - JWKS endpoint returns JSON with non-empty `keys` array.
-- `/api/v2/session/info` with valid Access credentials returns `200`.
+- `/api/v2/session/info` with valid OAuth bearer token returns `200`.
 
 Escalate:
 

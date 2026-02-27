@@ -22,8 +22,13 @@ with `docs/troubleshooting.md`.
 
 - `wrangler` authenticated for the target account.
 - Worker environment variables and KV bindings configured:
+  - `R2E_AUTH_ISSUER`
+  - `R2E_AUTH_AUDIENCE`
+  - `R2E_AUTH_JWKS_URL` (optional when issuer default is valid)
+  - `R2E_AUTH_SCOPE_READ`
+  - `R2E_AUTH_SCOPE_WRITE`
+  - `R2E_AUTH_SCOPE_SHARE_MANAGE`
   - `R2E_SHARES_KV`
-  - `R2E_KEYS_KV`
   - `R2E_READONLY`
 - `r2` CLI available for Worker share lifecycle checks.
 - Access to the deployment target for `https://files.unsigned.sh`.

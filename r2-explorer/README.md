@@ -32,7 +32,7 @@ pnpm dev:web
 
 ## Runtime routes
 
-API routes (Access-protected except `/share/*` public token URLs):
+API routes (OAuth Bearer protected except `/share/*` public token URLs):
 
 - `GET /api/v2/list`
 - `GET /api/v2/meta`
@@ -59,12 +59,15 @@ Set these in `wrangler.toml` (or CI-rendered config):
 
 - `FILES_BUCKET` (R2 bucket binding)
 - `R2E_SHARES_KV` (share token state)
-- `R2E_KEYS_KV` (admin keyset + nonce replay keys)
 - `R2E_UPLOAD_SESSIONS` (Durable Object session state for multipart uploads)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/v2/*`)
 - `R2E_BUCKET_MAP` (optional JSON alias map; must include `{"files":"FILES_BUCKET"}`)
-- `R2E_ACCESS_TEAM_DOMAIN` (required for Access JWT verification on `/api/v2/*`)
-- `R2E_ACCESS_AUD` (required Access app audience claim for `/api/v2/*`)
+- `R2E_AUTH_ISSUER` (required OAuth issuer for `/api/v2/*`)
+- `R2E_AUTH_AUDIENCE` (required OAuth audience claim for `/api/v2/*`)
+- `R2E_AUTH_JWKS_URL` (optional; defaults to `${R2E_AUTH_ISSUER}/jwks`)
+- `R2E_AUTH_SCOPE_READ` (optional; default `r2.read`)
+- `R2E_AUTH_SCOPE_WRITE` (optional; default `r2.write`)
+- `R2E_AUTH_SCOPE_SHARE_MANAGE` (optional; default `r2.share.manage`)
 - `R2E_UPLOAD_S3_BUCKET` (bucket name used when signing direct multipart part uploads)
 
 Upload policy vars (all optional):
@@ -95,19 +98,23 @@ Recommended policy setup on `files.unsigned.sh`:
 1. Protected API app:
 
 - Path: `/api/v2/*`
-- Policies:
-  - `Allow` for authorized identities
-  - `Service Auth` for machine callers (CI/service tokens)
+- Action: `Allow`
 
 2. Public share links:
 
 - Path: `/share/*`
 - Action: `Bypass`
 
-`/api/v2/share/*` stays inside the protected API surface. CLI requests should set
-`R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET` when no
-browser Access session is present. The Worker still validates HMAC signatures
-and Access JWTs in-app.
+3. Machine share-management API bypass:
+
+- Path: `/api/v2/share/*`
+- Action: `Bypass`
+
+The Worker validates OAuth Bearer JWTs and required scopes in-app:
+
+- `r2.read` for read/info routes
+- `r2.write` for upload/object mutation routes
+- `r2.share.manage` for share management routes
 
 ## Deploy
 
@@ -175,3 +182,4 @@ Route split:
 - Access app paths:
   - API protected app: `preview.files.unsigned.sh/api/v2/*`
   - Public share bypass app: `preview.files.unsigned.sh/share/*`
+  - Machine share-management bypass app: `preview.files.unsigned.sh/api/v2/share/*`

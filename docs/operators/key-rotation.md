@@ -1,14 +1,16 @@
-# Key Rotation Runbook
+# OAuth Credential and JWKS Rotation Runbook
 
 ## Purpose
 
-Rotate Worker admin HMAC credentials used by `r2 share worker ...` automation
-without interrupting share management operations.
+Rotate machine OAuth client credentials and (when required) OAuth signing keys
+used for `r2 share worker ...` automation, without interrupting share
+management operations.
 
 ## When to Use
 
-- Scheduled key rotation.
-- Suspected admin secret exposure.
+- Scheduled credential rotation.
+- Suspected client secret exposure.
+- Suspected signing key compromise.
 - Operator handoff or boundary changes.
 
 ## Prerequisites
@@ -16,134 +18,82 @@ without interrupting share management operations.
 - `wrangler` and `r2` are installed.
 - You can deploy `r2-explorer`.
 - You can update secrets/env used by CLI automation.
-- `R2E_KEYS_KV` is bound in `wrangler.toml`.
+- You can rotate client secrets and signing keys at the OAuth provider.
 
 ## Inputs / Environment Variables
 
 - `R2_EXPLORER_BASE_URL`
-- `R2_EXPLORER_ADMIN_KID`
-- `R2_EXPLORER_ADMIN_SECRET`
-- Active Worker KV namespace binding for `R2E_KEYS_KV`
+- `R2_EXPLORER_OAUTH_TOKEN_URL`
+- `R2_EXPLORER_OAUTH_CLIENT_ID`
+- `R2_EXPLORER_OAUTH_CLIENT_SECRET`
+- Worker validation config:
+  - `R2E_AUTH_ISSUER`
+  - `R2E_AUTH_AUDIENCE`
+  - `R2E_AUTH_JWKS_URL`
 
 ## Procedure (CLI-first)
 
 1. Export existing values for rollback reference:
 
 ```bash
-export OLD_KID="${R2_EXPLORER_ADMIN_KID}"
-export OLD_SECRET="${R2_EXPLORER_ADMIN_SECRET}"
+export OLD_CLIENT_ID="${R2_EXPLORER_OAUTH_CLIENT_ID}"
+export OLD_CLIENT_SECRET="${R2_EXPLORER_OAUTH_CLIENT_SECRET}"
 ```
 
-2. Generate new key material:
-
-```bash
-export NEW_KID="ops-$(date -u +%Y%m%d%H%M%S)"
-export NEW_SECRET="$(openssl rand -hex 32)"
-```
-
-3. Add the new key to the Worker keyset while keeping the old key valid during
-   overlap. Update KV state so `active` is `NEW_KID` and old key is retained as
-   previous.
-
-Concrete KV update (production):
-
-```bash
-set -euo pipefail
-
-# IMPORTANT: always use --remote for KV operations.
-# Wrangler can otherwise talk to local Miniflare storage, which does NOT affect
-# the deployed Worker.
-
-export KEYS_NS_TITLE="nix-r2-cf-r2e-keys-prod"
-keys_ns_id="$(
-  wrangler kv namespace list |
-    jq -r --arg title "$KEYS_NS_TITLE" '.[] | select(.title==$title) | .id'
-)"
-test -n "$keys_ns_id"
-
-existing="$(
-  wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active
-)"
-
-updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-payload="$(
-  jq -cn \
-    --arg newKid "$NEW_KID" \
-    --arg newSecret "$NEW_SECRET" \
-    --arg updatedAt "$updated_at" \
-    --arg existing "$existing" '
-    def base: ($existing | fromjson);
-    {
-      activeKid: $newKid,
-      previousKid: (base.activeKid // null),
-      updatedAt: $updatedAt,
-      keys: (base.keys // {}) + {($newKid): $newSecret}
-    }
-  '
-)"
-
-umask 077
-tmp="$(mktemp)"
-printf '%s' "$payload" > "$tmp"
-wrangler kv key put --remote --namespace-id "$keys_ns_id" --path "$tmp" admin:keyset:active
-rm -f "$tmp"
-
-# Verify without dumping key material
-wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active |
-  jq '{activeKid, previousKid, updatedAt, kids: (.keys|keys)}'
-```
-
-4. Deploy Worker config update:
+2. Rotate client secret in your OAuth provider (or create a replacement
+   client with equivalent scopes).
+3. Update deployment secret source (SOPS/CI variables) with new
+   `R2_EXPLORER_OAUTH_CLIENT_SECRET` (and client ID when replaced).
+4. If signing-key rotation is required, rotate keys in OAuth provider and keep
+   overlap until Worker validation succeeds with newly issued tokens.
+5. Deploy Worker config update if issuer/audience/jwks values changed:
 
 ```bash
 cd r2-explorer
 wrangler deploy
 ```
 
-5. Update automation environment to the new active key:
-
-```bash
-export R2_EXPLORER_ADMIN_KID="${NEW_KID}"
-export R2_EXPLORER_ADMIN_SECRET="${NEW_SECRET}"
-```
-
-6. Validate worker-admin share lifecycle calls:
+6. Validate worker-share lifecycle calls:
 
 ```bash
 r2 share worker create files documents/test.txt 1h --max-downloads 1
 r2 share worker list files documents/test.txt
 ```
 
-7. End overlap window and remove old key from keyset after successful validation.
+7. End overlap window:
+   - Disable old client secret.
+   - Remove retired signing keys from issuer JWKS after confirmation that no
+     required callers still depend on them.
 
 ## Verification
 
-- `r2 share worker create` succeeds with the new key.
+- `r2 share worker create` succeeds with the new client credentials.
 - `r2 share worker list` returns expected records.
-- Worker responses no longer accept the old key after overlap removal.
+- Tokens signed with retired keys are rejected after overlap removal.
 
 ## Failure Signatures and Triage
 
-- `401 Unauthorized` with valid timestamp:
-  - `R2_EXPLORER_ADMIN_KID` does not match keyset.
-- `403 Forbidden` on admin routes:
-  - secret mismatch or stale secret in automation.
-- Intermittent signature failures:
-  - clock skew between caller and Worker verifier.
+- `401 oauth_token_invalid`:
+  - signing key mismatch, wrong issuer/audience, or stale JWKS endpoint.
+- `401 oauth_required`:
+  - token fetch failed or CLI env missing `R2_EXPLORER_OAUTH_*`.
+- `403 insufficient_scope`:
+  - client token missing `R2E_AUTH_SCOPE_SHARE_MANAGE`.
 
 ## Rollback / Recovery
 
-1. Restore previous key as `active` in `R2E_KEYS_KV`.
-2. Re-export previous automation credentials:
+1. Restore previous client secret in your secret source:
 
 ```bash
-export R2_EXPLORER_ADMIN_KID="${OLD_KID}"
-export R2_EXPLORER_ADMIN_SECRET="${OLD_SECRET}"
+export R2_EXPLORER_OAUTH_CLIENT_ID="${OLD_CLIENT_ID}"
+export R2_EXPLORER_OAUTH_CLIENT_SECRET="${OLD_CLIENT_SECRET}"
 ```
 
-3. Redeploy Worker and rerun lifecycle verification commands.
+2. Re-enable previous signing key in OAuth provider if rotation caused outage.
+3. Redeploy Worker if validation config changed.
+4. Re-run lifecycle verification commands.
 
 ## Post-incident Notes
 
-- Record rotation timestamp, operator, and retired key ID.
+- Record rotation timestamp, operator, and retired client/key IDs.
 - Document overlap duration and reason for emergency vs scheduled rotation.
