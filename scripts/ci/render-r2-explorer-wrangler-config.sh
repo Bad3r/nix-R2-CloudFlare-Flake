@@ -30,12 +30,12 @@ main() {
   require_env "R2E_FILES_BUCKET_PREVIEW"
   require_env "R2E_SHARES_KV_ID"
   require_env "R2E_SHARES_KV_ID_PREVIEW"
-  require_env "R2E_KEYS_KV_ID"
-  require_env "R2E_KEYS_KV_ID_PREVIEW"
-  require_env "R2E_ACCESS_TEAM_DOMAIN"
-  require_env "R2E_ACCESS_TEAM_DOMAIN_PREVIEW"
-  require_env "R2E_ACCESS_AUD"
-  require_env "R2E_ACCESS_AUD_PREVIEW"
+  require_env "R2E_AUTH_ISSUER"
+  require_env "R2E_AUTH_ISSUER_PREVIEW"
+  require_env "R2E_AUTH_AUDIENCE"
+  require_env "R2E_AUTH_AUDIENCE_PREVIEW"
+  require_env "R2E_AUTH_JWKS_URL"
+  require_env "R2E_AUTH_JWKS_URL_PREVIEW"
 
   bucket_map="${R2E_BUCKET_MAP:-}"
   if [[ -z ${bucket_map} ]]; then
@@ -107,12 +107,12 @@ PY
     -e "s|replace-with-r2-bucket|$(escape_sed_replacement "${R2E_FILES_BUCKET}")|g" \
     -e "s|replace-with-shares-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_SHARES_KV_ID_PREVIEW}")|g" \
     -e "s|replace-with-shares-kv-namespace-id|$(escape_sed_replacement "${R2E_SHARES_KV_ID}")|g" \
-    -e "s|replace-with-keys-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_KEYS_KV_ID_PREVIEW}")|g" \
-    -e "s|replace-with-keys-kv-namespace-id|$(escape_sed_replacement "${R2E_KEYS_KV_ID}")|g" \
-    -e "s|replace-with-access-team-domain-preview|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN_PREVIEW}")|g" \
-    -e "s|replace-with-access-team-domain|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN}")|g" \
-    -e "s|replace-with-access-aud-preview|$(escape_sed_replacement "${R2E_ACCESS_AUD_PREVIEW}")|g" \
-    -e "s|replace-with-access-aud|$(escape_sed_replacement "${R2E_ACCESS_AUD}")|g" \
+    -e "s|replace-with-auth-issuer-preview|$(escape_sed_replacement "${R2E_AUTH_ISSUER_PREVIEW}")|g" \
+    -e "s|replace-with-auth-issuer|$(escape_sed_replacement "${R2E_AUTH_ISSUER}")|g" \
+    -e "s|replace-with-auth-audience-preview|$(escape_sed_replacement "${R2E_AUTH_AUDIENCE_PREVIEW}")|g" \
+    -e "s|replace-with-auth-audience|$(escape_sed_replacement "${R2E_AUTH_AUDIENCE}")|g" \
+    -e "s|replace-with-auth-jwks-url-preview|$(escape_sed_replacement "${R2E_AUTH_JWKS_URL_PREVIEW}")|g" \
+    -e "s|replace-with-auth-jwks-url|$(escape_sed_replacement "${R2E_AUTH_JWKS_URL}")|g" \
     -e "s|replace-with-upload-max-file-bytes-preview|$(escape_sed_replacement "${upload_max_file_bytes_preview}")|g" \
     -e "s|replace-with-upload-max-file-bytes|$(escape_sed_replacement "${upload_max_file_bytes}")|g" \
     -e "s|replace-with-upload-max-parts-preview|$(escape_sed_replacement "${upload_max_parts_preview}")|g" \

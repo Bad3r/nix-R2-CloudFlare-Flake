@@ -17,6 +17,8 @@ local_protocol = "http"
 [env.preview]
 name = "r2-explorer-web-preview"
 workers_dev = true
+# Prevent preview from inheriting production zone routes.
+routes = []
 
 [[env.preview.routes]]
 pattern = "preview.files.unsigned.sh/*"
