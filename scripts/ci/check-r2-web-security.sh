@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# base64(sha512(empty content)); used as broken-SRI empty-body sentinel.
+EMPTY_BODY_SHA512_B64='z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg=='
+
 fail() {
   echo "Error: $*" >&2
   exit 1
@@ -21,7 +24,7 @@ Environment (optional):
 
 Notes:
   - The script performs a protected-page fetch and checks:
-    1) Effective response CSP equals expected policy.
+    1) Effective response CSP equals normalized expected policy.
     2) Analytics loader markers are present in HTML.
     3) Known empty-content SRI hash marker is absent.
 USAGE
@@ -36,6 +39,11 @@ require_command() {
 
 normalize_space() {
   tr '\n' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ +| +$//g'
+}
+
+read_csp_policy() {
+  local path="$1"
+  sed -E '/^[[:space:]]*#/d;/^[[:space:]]*$/d' "${path}" | normalize_space
 }
 
 extract_csp_header() {
@@ -118,7 +126,10 @@ if [[ -z ${effective_csp} ]]; then
   fail "response did not include content-security-policy header"
 fi
 
-expected_csp="$(normalize_space <"${expected_csp_file}")"
+expected_csp="$(read_csp_policy "${expected_csp_file}")"
+if [[ -z ${expected_csp} ]]; then
+  fail "expected CSP file resolved to an empty policy: ${expected_csp_file}"
+fi
 actual_csp="$(printf '%s' "${effective_csp}" | normalize_space)"
 
 if [[ ${actual_csp} != "${expected_csp}" ]]; then
@@ -133,7 +144,7 @@ if ! rg -q "/cdn-cgi/zaraz/" "${body_file}" && ! rg -q 'static\.cloudflareinsigh
   fail "analytics markers not found in HTML (expected Zaraz/Web Analytics loader)"
 fi
 
-if rg -q 'z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP\+DGNKHfuwvY7kxvUdBeoGlODJ6\+SfaPg==' "${body_file}"; then
+if rg -F -q "${EMPTY_BODY_SHA512_B64}" "${body_file}"; then
   fail "detected empty-content sha512 marker associated with broken SRI fetches"
 fi
 
