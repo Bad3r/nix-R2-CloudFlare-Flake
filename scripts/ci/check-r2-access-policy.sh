@@ -43,6 +43,46 @@ cf_api_get() {
     "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}${path}"
 }
 
+cf_api_get_paginated_results() {
+  local path="$1"
+  local resource_name="$2"
+  local page=1
+  local total_pages=1
+  local all_results='[]'
+
+  while :; do
+    local separator="?"
+    if [[ ${path} == *\?* ]]; then
+      separator="&"
+    fi
+
+    local response
+    response="$(cf_api_get "${path}${separator}page=${page}&per_page=50")"
+
+    local success
+    success="$(jq -r '.success' <<<"${response}")"
+    if [[ ${success} != "true" ]]; then
+      fail "Cloudflare ${resource_name} API returned success=${success} (page ${page})"
+    fi
+
+    local page_results
+    page_results="$(jq -c '.result // []' <<<"${response}")"
+    all_results="$(jq -cn --argjson acc "${all_results}" --argjson page_data "${page_results}" '$acc + $page_data')"
+
+    total_pages="$(jq -r '.result_info.total_pages // 1' <<<"${response}")"
+    if [[ ! ${total_pages} =~ ^[0-9]+$ ]] || [[ ${total_pages} -lt 1 ]]; then
+      total_pages=1
+    fi
+
+    if ((page >= total_pages)); then
+      break
+    fi
+    ((page += 1))
+  done
+
+  printf '%s\n' "${all_results}"
+}
+
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   usage
   exit 0
@@ -79,22 +119,18 @@ legacy_share_domains=(
   "${host}/api/share/*"
 )
 
-apps_json="$(cf_api_get "/access/apps")"
-apps_success="$(jq -r '.success' <<<"${apps_json}")"
-if [[ ${apps_success} != "true" ]]; then
-  fail "Cloudflare Access apps API returned success=${apps_success}"
-fi
+apps_results_json="$(cf_api_get_paginated_results "/access/apps" "Access apps")"
 
 api_app_count="$(
-  jq -r --arg domain "${api_domain}" '[.result[] | select(.domain == $domain)] | length' <<<"${apps_json}"
+  jq -r --arg domain "${api_domain}" '[.[] | select(.domain == $domain)] | length' <<<"${apps_results_json}"
 )"
 if [[ ${api_app_count} != "1" ]]; then
   fail "expected exactly 1 Access app for ${api_domain}; found ${api_app_count}"
 fi
 
-api_app_id="$(jq -r --arg domain "${api_domain}" '.result[] | select(.domain == $domain) | .id' <<<"${apps_json}")"
-api_app_name="$(jq -r --arg domain "${api_domain}" '.result[] | select(.domain == $domain) | .name' <<<"${apps_json}")"
-api_app_aud="$(jq -r --arg domain "${api_domain}" '.result[] | select(.domain == $domain) | .aud' <<<"${apps_json}")"
+api_app_id="$(jq -r --arg domain "${api_domain}" '.[] | select(.domain == $domain) | .id' <<<"${apps_results_json}")"
+api_app_name="$(jq -r --arg domain "${api_domain}" '.[] | select(.domain == $domain) | .name' <<<"${apps_results_json}")"
+api_app_aud="$(jq -r --arg domain "${api_domain}" '.[] | select(.domain == $domain) | .aud' <<<"${apps_results_json}")"
 
 if [[ ${api_app_aud} != "${expected_api_aud}" ]]; then
   fail "API app aud mismatch for ${api_domain}: expected ${expected_api_aud}, got ${api_app_aud}"
@@ -120,15 +156,11 @@ if [[ ${has_api_bypass_policy} == "true" ]]; then
   fail "API app ${api_app_id} contains a bypass policy; /api/v2/* must stay Access-protected"
 fi
 
-service_tokens_json="$(cf_api_get "/access/service_tokens")"
-service_tokens_success="$(jq -r '.success' <<<"${service_tokens_json}")"
-if [[ ${service_tokens_success} != "true" ]]; then
-  fail "Cloudflare Access service tokens API returned success=${service_tokens_success}"
-fi
+service_tokens_results_json="$(cf_api_get_paginated_results "/access/service_tokens" "Access service tokens")"
 
 service_token_id="$(
   jq -r --arg client_id "${service_token_client_id}" \
-    '.result[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_json}"
+    '.[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_results_json}"
 )"
 token_count="$(printf '%s' "${service_token_id}" | wc -l)"
 if [[ ${token_count} -gt 1 ]]; then
@@ -152,13 +184,13 @@ if [[ ${has_service_auth_policy} != "true" ]]; then
 fi
 
 share_app_count="$(
-  jq -r --arg domain "${share_domain}" '[.result[] | select(.domain == $domain)] | length' <<<"${apps_json}"
+  jq -r --arg domain "${share_domain}" '[.[] | select(.domain == $domain)] | length' <<<"${apps_results_json}"
 )"
 if [[ ${share_app_count} != "1" ]]; then
   fail "expected exactly 1 Access app for ${share_domain}; found ${share_app_count}"
 fi
 
-share_app_id="$(jq -r --arg domain "${share_domain}" '.result[] | select(.domain == $domain) | .id' <<<"${apps_json}")"
+share_app_id="$(jq -r --arg domain "${share_domain}" '.[] | select(.domain == $domain) | .id' <<<"${apps_results_json}")"
 share_policies_json="$(cf_api_get "/access/apps/${share_app_id}/policies")"
 share_policies_success="$(jq -r '.success' <<<"${share_policies_json}")"
 if [[ ${share_policies_success} != "true" ]]; then
@@ -174,7 +206,7 @@ fi
 
 for legacy_domain in "${legacy_share_domains[@]}"; do
   legacy_count="$(
-    jq -r --arg domain "${legacy_domain}" '[.result[] | select(.domain == $domain)] | length' <<<"${apps_json}"
+    jq -r --arg domain "${legacy_domain}" '[.[] | select(.domain == $domain)] | length' <<<"${apps_results_json}"
   )"
   if [[ ${legacy_count} != "0" ]]; then
     fail "found deprecated Access app domain ${legacy_domain}; remove stale bypass app(s)"
