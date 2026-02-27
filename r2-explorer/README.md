@@ -88,27 +88,26 @@ Required API Worker secrets:
 - `S3_ACCESS_KEY_ID`
 - `S3_SECRET_ACCESS_KEY`
 
-## Access policy split
+## Access policy model
 
 Recommended policy setup on `files.unsigned.sh`:
 
 1. Protected API app:
 
 - Path: `/api/v2/*`
-- Action: `Allow` for authorized identities
+- Policies:
+  - `Allow` for authorized identities
+  - `Service Auth` for machine callers (CI/service tokens)
 
 2. Public share links:
 
 - Path: `/share/*`
 - Action: `Bypass`
 
-3. HMAC admin share operations (CLI)
-
-- Path: `/api/v2/share/*`
-- Action: `Bypass`
-
-The Worker still validates HMAC signatures and Access JWTs in-app. Bypass only
-removes Access interception.
+`/api/v2/share/*` stays inside the protected API surface. CLI requests should set
+`R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET` when no
+browser Access session is present. The Worker still validates HMAC signatures
+and Access JWTs in-app.
 
 ## Deploy
 
@@ -173,3 +172,6 @@ Route split:
 - Web Worker: `preview.files.unsigned.sh/*`
 - API Worker: `preview.files.unsigned.sh/api/v2/*` and
   `preview.files.unsigned.sh/share/*`
+- Access app paths:
+  - API protected app: `preview.files.unsigned.sh/api/v2/*`
+  - Public share bypass app: `preview.files.unsigned.sh/share/*`
