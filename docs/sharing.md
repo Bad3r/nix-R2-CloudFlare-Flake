@@ -51,7 +51,7 @@ Required environment variables for Worker-mode CLI calls:
 - `R2_EXPLORER_ADMIN_KID` (active or previous key id from `R2E_KEYS_KV`)
 - `R2_EXPLORER_ADMIN_SECRET` (matching key material; plain text or `base64:<value>`)
 
-Optional (only when `/api/share/*` is behind Access instead of bypass):
+Optional (only when `/api/v2/share/*` is behind Access instead of bypass):
 
 - `R2_EXPLORER_ACCESS_CLIENT_ID`
 - `R2_EXPLORER_ACCESS_CLIENT_SECRET`
@@ -74,20 +74,20 @@ Behavior and constraints:
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
 - Worker admin HMAC keyset and replay-nonce state are stored in `R2E_KEYS_KV`.
-- `/api/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
+- `/api/v2/*` routes require Cloudflare Access JWT verification (`Cf-Access-Jwt-Assertion`) plus expected issuer/audience.
 - `r2 share worker ...` authenticates request integrity with admin HMAC headers.
-- When `/api/share/*` is Access-protected, CLI calls can additionally present
+- When `/api/v2/share/*` is Access-protected, CLI calls can additionally present
   Access service-token headers via `R2_EXPLORER_ACCESS_CLIENT_ID` and
   `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
 
-Required Worker vars for `/api/*` JWT verification:
+Required Worker vars for `/api/v2/*` JWT verification:
 
 - `R2E_ACCESS_TEAM_DOMAIN` (for example `team.cloudflareaccess.com`)
 - `R2E_ACCESS_AUD` (Access application audience value)
 
 Failure semantics:
 
-- Missing `Cf-Access-Jwt-Assertion` for `/api/*`: `401 access_required`
+- Missing `Cf-Access-Jwt-Assertion` for `/api/v2/*`: `401 access_required`
 - Invalid JWT signature/claims: `401 access_jwt_invalid`
 - Missing verifier config (`R2E_ACCESS_TEAM_DOMAIN` or `R2E_ACCESS_AUD`): `500 access_config_invalid`
 
@@ -112,27 +112,27 @@ public token links work as intended:
 3. Share-management API bypass policy (HMAC admin):
 
 - Domain: `files.unsigned.sh`
-- Path: `/api/share/*`
+- Path: `/api/v2/share/*`
 - Action: `Bypass`
 
-This keeps `/` and `/api/*` behind Access while allowing:
+This keeps `/` and `/api/v2/*` behind Access while allowing:
 
 - `GET /share/<token>` to work for recipients without Access membership
 - `r2 share worker create|list|revoke ...` to work via HMAC without a browser
   Access session
 
-Note: `/api/share/*` is still protected by Worker auth. The Worker requires
+Note: `/api/v2/share/*` is still protected by Worker auth. The Worker requires
 either a valid Cloudflare Access JWT or valid HMAC admin headers for these
 endpoints.
 
-Important: when `/api/share/*` is configured as an Access `Bypass`, Access will
+Important: when `/api/v2/share/*` is configured as an Access `Bypass`, Access will
 not inject `Cf-Access-Jwt-Assertion` headers on those requests. Browser sessions
 can still be authenticated by the Worker via the `CF_Authorization` cookie
 (validated against `R2E_ACCESS_TEAM_DOMAIN` + `R2E_ACCESS_AUD`). CLI-driven
 requests use HMAC admin headers.
 
 Important: Access policy split alone is not sufficient. The Worker must also
-verify Access JWT signature and claims on `/api/*`.
+verify Access JWT signature and claims on `/api/v2/*`.
 
 ## Operator runbooks
 

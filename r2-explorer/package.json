@@ -3,11 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "pnpm": {
+    "overrides": {
+      "wrangler": "^4.69.0"
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
+    "dev:web": "pnpm -C web dev",
+    "build:web": "pnpm -C web build",
+    "check:api": "tsc --noEmit",
+    "check:web": "pnpm -C web check",
+    "check": "pnpm run check:api && pnpm run check:web",
     "deploy": "wrangler deploy",
-    "check": "tsc --noEmit",
-    "test": "vitest run",
+    "test:api": "vitest run",
+    "test": "pnpm run test:api",
     "test:live": "vitest run tests/live.integration.spec.ts",
     "test:watch": "vitest"
   },

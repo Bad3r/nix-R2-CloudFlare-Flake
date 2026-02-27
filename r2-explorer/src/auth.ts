@@ -537,11 +537,11 @@ export async function requireApiIdentity(request: Request, env: Env): Promise<Ac
     throw new HttpError(
       401,
       "access_required",
-      "Cloudflare Access identity is required for /api routes.",
+      "Cloudflare Access identity is required for /api/v2 routes.",
     );
   }
   if (!identity.jwt) {
-    throw new HttpError(401, "access_required", "Cf-Access-Jwt-Assertion header is required for /api routes.");
+    throw new HttpError(401, "access_required", "Cf-Access-Jwt-Assertion header is required for /api/v2 routes.");
   }
   const jwtPayload = await validateAccessJwt(identity.jwt, env);
   const jwtEmail = claimString(jwtPayload.email);

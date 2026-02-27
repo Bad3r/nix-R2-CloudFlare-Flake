@@ -52,14 +52,14 @@ wrangler deploy --config wrangler.ci.toml
 ```bash
 r2 share worker create files documents/test.txt 1h --max-downloads 1
 r2 share worker list files documents/test.txt
-curl -I https://files.unsigned.sh/api/list
+curl -I https://files.unsigned.sh/api/v2/list
 curl -I https://files.unsigned.sh/share/<token-id>
 ```
 
 ## Verification
 
 - Admin share lifecycle endpoints return expected status.
-- `/api/*` remains Access-protected.
+- `/api/v2/*` remains Access-protected.
 - `/share/*` remains public-token accessible and token-constrained.
 
 ## Failure Signatures and Triage

@@ -30,10 +30,10 @@ tokenized share downloads.
      trusted identities.
    - App B (public download bypass): `files.unsigned.sh/share/*` with policy
      action `Bypass`.
-   - App C (HMAC admin bypass): `files.unsigned.sh/api/share/*` with policy
+   - App C (HMAC admin bypass): `files.unsigned.sh/api/v2/share/*` with policy
      action `Bypass`.
 
-2. Confirm the more-specific bypass apps (`/share/*` and `/api/share/*`) take
+2. Confirm the more-specific bypass apps (`/share/*` and `/api/v2/share/*`) take
    precedence over the broad `/*` app.
 
 3. Validate protected root and API routes (should redirect to Access login when
@@ -41,7 +41,7 @@ tokenized share downloads.
 
 ```bash
 curl -I https://files.unsigned.sh/
-curl -I https://files.unsigned.sh/api/list
+curl -I https://files.unsigned.sh/api/v2/list
 ```
 
 4. Validate public token route (no Access redirect):
@@ -58,17 +58,17 @@ r2 share worker create files workspace/demo.txt 10m --max-downloads 1
 
 ## Verification
 
-- `/api/*` requires Access-authenticated session.
+- `/api/v2/*` requires Access-authenticated session.
 - `/share/<token-id>` is reachable without Access membership and still enforces
   token validity.
-- `/api/share/*` is reachable without Access membership but still requires
+- `/api/v2/share/*` is reachable without Access membership but still requires
   Worker admin HMAC (or Access JWT) and should not become public `200`.
 - Worker is configured with `R2E_ACCESS_TEAM_DOMAIN` and `R2E_ACCESS_AUD`, and
-  `/api/*` rejects invalid or missing Access JWT assertions.
+  `/api/v2/*` rejects invalid or missing Access JWT assertions.
 
 Notes:
 
-- When `/api/share/*` is an Access `Bypass`, Access does not inject
+- When `/api/v2/share/*` is an Access `Bypass`, Access does not inject
   `Cf-Access-Jwt-Assertion` on those requests. A logged-in browser session can
   still be authenticated by the Worker via the `CF_Authorization` cookie. CLI
   callers should use HMAC admin headers.
@@ -78,11 +78,11 @@ Notes:
 - `/share/*` redirects to Access login:
   - bypass policy missing, disabled, or lower precedence than broad rule.
 - `r2 share worker create` fails with `HTTP 302`:
-  - `/api/share/*` bypass is missing, so Access is intercepting HMAC traffic.
+  - `/api/v2/share/*` bypass is missing, so Access is intercepting HMAC traffic.
   - If bypass is intentionally disabled, set
     `R2_EXPLORER_ACCESS_CLIENT_ID`/`R2_EXPLORER_ACCESS_CLIENT_SECRET` for
     CLI calls so Access service-token auth is presented at the edge.
-- `/api/*` is publicly reachable:
+- `/api/v2/*` is publicly reachable:
   - broad access policy too permissive or bypass too broad.
 - Mixed behavior across clients:
   - stale DNS/session/cache state; retest with clean session.

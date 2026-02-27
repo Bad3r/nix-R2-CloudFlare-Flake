@@ -277,28 +277,28 @@ second_download_body="${tmp_dir}/second-download.body"
 assert_share_exhaustion "${share_url}" "${second_download_body}"
 
 api_probe_body="${tmp_dir}/api-probe.body"
-assert_http_status "302,401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_probe_body}" "false"
+assert_http_status "302,401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_probe_body}" "false"
 
 if [[ ${LAST_HTTP_STATUS} == "401" ]]; then
   api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
   if [[ -n ${api_error_code} && ${api_error_code} != "access_required" ]]; then
-    fail "unauthenticated /api/server/info returned unexpected error code: ${api_error_code}"
+    fail "unauthenticated /api/v2/session/info returned unexpected error code: ${api_error_code}"
   fi
 fi
 
 api_authed_probe_body="${tmp_dir}/api-authed-probe.body"
-assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/server/info" "${api_authed_probe_body}" "false" \
+assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_authed_probe_body}" "false" \
   -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
   -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
 
 api_authed_mode="$(jq -r '.actor.mode // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
 if [[ ${api_authed_mode} != "access" ]]; then
-  fail "authenticated /api/server/info did not return actor.mode=access (got '${api_authed_mode}')"
+  fail "authenticated /api/v2/session/info did not return actor.mode=access (got '${api_authed_mode}')"
 fi
 
 api_authed_version="$(jq -r '.version // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
 if [[ -z ${api_authed_version} ]]; then
-  fail "authenticated /api/server/info did not return version"
+  fail "authenticated /api/v2/session/info did not return version"
 fi
 
 revoke_json="$("${R2_BIN}" share worker revoke "${token_id}")"

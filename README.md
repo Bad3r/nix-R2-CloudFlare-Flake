@@ -13,7 +13,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - Home Manager CLI surface: `programs.r2-cloud` (`r2` wrapper + tool installation)
 - Home Manager credentials assembly: `programs.r2-cloud.credentials`
 - Home Manager managed `rclone.conf`: generated from `programs.r2-cloud` options
-- Worker subflake: R2-Explorer routes, share token lifecycle, and tests
+- Worker subflake: split API + web Workers (Hono API + Astro/Preact UI)
 - Worker share tokens support multi-bucket aliases via `R2E_BUCKET_MAP`
 
 ## Documentation Status
@@ -28,7 +28,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - `modules/`: NixOS and Home Manager modules
 - `packages/`: CLI package derivations
 - `lib/r2.nix`: shared library helpers
-- `r2-explorer/`: Worker subflake and deployment tooling
+- `r2-explorer/`: API Worker + web Worker subflake and deployment tooling
 - `templates/`: starter flake templates
 - `docs/`: usage and design documentation
   - includes first-line triage in `docs/troubleshooting.md`
@@ -59,7 +59,8 @@ runs documentation quality checks (stale-language scan + reference/docs-link che
 runs both formatting (`nix fmt`) and
 all pre-commit hooks (`lefthook run pre-commit --all-files`) in an isolated temp checkout.
 The validation flow also runs Worker checks/tests in `r2-explorer`
-(`pnpm run check`, `pnpm test`) through `nix develop ./r2-explorer`.
+(`pnpm run check`, `pnpm run build:web`, `pnpm run test:api`) through
+`nix develop ./r2-explorer`.
 If cache access is unavailable, validation disables substituters for that run to avoid
 repeated timeout loops. Override cache selection with `NIX_VALIDATE_SUBSTITUTERS`.
 

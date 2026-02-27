@@ -12,20 +12,20 @@ import {
 describe("auth middleware", () => {
   useAccessJwksFetchMock();
 
-  it("rejects /api/list without Access identity", async () => {
+  it("rejects /api/v2/list without Access identity", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=");
+    const request = new Request("https://files.example.com/api/v2/list?prefix=");
     const response = await app.fetch(request, env);
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(401);
     expect(payload.error.code).toBe("access_required");
   });
 
-  it("rejects /api/list when Access headers are present but JWT is missing", async () => {
+  it("rejects /api/v2/list when Access headers are present but JWT is missing", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=", {
+    const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeadersWithoutJwt("ops@example.com"),
     });
     const response = await app.fetch(request, env);
@@ -37,7 +37,7 @@ describe("auth middleware", () => {
   it("rejects invalid Access JWT signature", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=", {
+    const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeaders("ops@example.com", {
         signWithAlternateKey: true,
       }),
@@ -51,7 +51,7 @@ describe("auth middleware", () => {
   it("rejects Access JWT with wrong audience", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=", {
+    const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeaders("ops@example.com", {
         aud: "unexpected-audience",
       }),
@@ -65,7 +65,7 @@ describe("auth middleware", () => {
   it("rejects expired Access JWT", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=", {
+    const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeaders("ops@example.com", { expiresInSec: -60 }),
     });
     const response = await app.fetch(request, env);
@@ -77,7 +77,7 @@ describe("auth middleware", () => {
   it("rejects Access JWT with nbf far in the future", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=", {
+    const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeaders("ops@example.com", { nbfOffsetSec: 120 }),
     });
     const response = await app.fetch(request, env);
@@ -90,7 +90,7 @@ describe("auth middleware", () => {
     const { env } = await createTestEnv();
     env.R2E_ACCESS_AUD = "";
     const app = createApp();
-    const request = new Request("https://files.example.com/api/list?prefix=", {
+    const request = new Request("https://files.example.com/api/v2/list?prefix=", {
       headers: accessHeaders("ops@example.com"),
     });
     const response = await app.fetch(request, env);
@@ -103,7 +103,7 @@ describe("auth middleware", () => {
     const { env } = await createTestEnv();
     const app = createApp();
     const response = await app.fetch(
-      new Request("https://files.example.com/api/list?prefix=", {
+      new Request("https://files.example.com/api/v2/list?prefix=", {
         headers: accessHeaders("ops@example.com"),
       }),
       env,
@@ -116,7 +116,7 @@ describe("auth middleware", () => {
     const app = createApp();
     const jwt = createAccessJwt({ email: "ops@example.com" });
     const response = await app.fetch(
-      new Request("https://files.example.com/api/list?prefix=", {
+      new Request("https://files.example.com/api/v2/list?prefix=", {
         headers: {
           cookie: `CF_Authorization=${jwt}`,
         },
@@ -140,7 +140,7 @@ describe("auth middleware", () => {
     const timestamp = Math.floor(Date.now() / 1000);
     const nonce = "fixed-replay-nonce";
 
-    const createUrl = "https://files.example.com/api/share/create";
+    const createUrl = "https://files.example.com/api/v2/share/create";
     const templateRequest = new Request(createUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },

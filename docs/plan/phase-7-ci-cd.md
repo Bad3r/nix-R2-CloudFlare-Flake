@@ -177,8 +177,8 @@ CI automation does not remove break-glass/manual deployment workflows.
   - first `/share/<token>` access returns success
   - second `/share/<token>` access converges to expected token exhaustion
     (`410`) with bounded retries for KV propagation delays
-  - unauthenticated `/api/server/info` remains blocked (`302` Access redirect or Worker `401`)
-  - authenticated `/api/server/info` succeeds (`200`) via Access service-token headers
+  - unauthenticated `/api/v2/session/info` remains blocked (`302` Access redirect or Worker `401`)
+  - authenticated `/api/v2/session/info` succeeds (`200`) via Access service-token headers
   - configurable timeout/retry controls:
     - `R2E_SMOKE_TIMEOUT`, `R2E_SMOKE_CONNECT_TIMEOUT`
     - `R2E_SMOKE_RETRIES`, `R2E_SMOKE_RETRY_DELAY_SEC`
@@ -221,8 +221,8 @@ CI automation does not remove break-glass/manual deployment workflows.
    - `smoke-production` fails
    - `rollback-guidance-production` runs with operator rollback steps
 5. Access regression detection:
-   - if unauthenticated `/api/server/info` is not blocked (`302`/`401`)
-   - if authenticated `/api/server/info` fails to return `200`
+   - if unauthenticated `/api/v2/session/info` is not blocked (`302`/`401`)
+   - if authenticated `/api/v2/session/info` fails to return `200`
    - smoke checks fail with explicit status mismatch
 6. CLI release smoke gate:
    - `verify-cli-smoke` must pass (`r2 help`, `bucket help`, `share help`,

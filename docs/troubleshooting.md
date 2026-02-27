@@ -80,7 +80,7 @@ Failure signature:
 
 - `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
 - `r2 share worker ...` can also fail with `HTTP 302` when Access intercepts
-  `/api/share/*` before the Worker.
+  `/api/v2/share/*` before the Worker.
 
 Confirm:
 
@@ -101,7 +101,7 @@ Likely root causes:
 - Caller/Worker clock skew causing signature validation failures.
 - KV was updated locally (missing `wrangler kv ... --remote`), so the deployed
   Worker keyset never actually changed.
-- `/api/share/*` is Access-protected and CLI calls do not include Access
+- `/api/v2/share/*` is Access-protected and CLI calls do not include Access
   service-token headers.
 
 Repair:
@@ -114,7 +114,7 @@ Repair:
 # For ad-hoc testing only:
 export R2_EXPLORER_ADMIN_KID="<active-kid>"
 export R2_EXPLORER_ADMIN_SECRET="<matching-secret>"
-# Optional when /api/share/* is behind Access:
+# Optional when /api/v2/share/* is behind Access:
 export R2_EXPLORER_ACCESS_CLIENT_ID="<access-service-token-id>"
 export R2_EXPLORER_ACCESS_CLIENT_SECRET="<access-service-token-secret>"
 ```
@@ -135,7 +135,7 @@ Escalate:
 
 Failure signature:
 
-- All `/api/*` requests return `401` with code `access_jwt_invalid`.
+- All `/api/v2/*` requests return `401` with code `access_jwt_invalid`.
 - Multiple users affected simultaneously.
 - Previously-working tokens rejected.
 
@@ -163,7 +163,7 @@ Repair:
 Verify:
 
 - JWKS endpoint returns JSON with non-empty `keys` array.
-- `/api/server/info` with valid Access credentials returns `200`.
+- `/api/v2/session/info` with valid Access credentials returns `200`.
 
 Escalate:
 
@@ -387,8 +387,8 @@ Confirm:
 
 ```bash
 # Validate API protection and worker reachability
-curl -I https://files.unsigned.sh/api/server/info
-curl -I https://files.unsigned.sh/api/upload/init
+curl -I https://files.unsigned.sh/api/v2/session/info
+curl -I https://files.unsigned.sh/api/v2/upload/init
 ```
 
 For authenticated test sessions, retry init/sign-part/complete sequence and
@@ -445,7 +445,7 @@ Confirm:
 ```bash
 curl -I https://files.unsigned.sh/share/<token-id>
 curl -I https://files.unsigned.sh/share/<token-id>
-curl -I https://files.unsigned.sh/api/list
+curl -I https://files.unsigned.sh/api/v2/list
 r2 share worker list files workspace/demo.txt
 ```
 
@@ -466,7 +466,7 @@ r2 share worker create files workspace/demo.txt 1h --max-downloads 1
 If the bucket mapping is suspect, verify Worker settings:
 
 ```bash
-curl -s https://files.unsigned.sh/api/server/info | jq '.buckets'
+curl -s https://files.unsigned.sh/api/v2/session/info | jq '.buckets'
 ```
 
 If fresh token still fails, re-validate Access split for:
@@ -477,7 +477,7 @@ If fresh token still fails, re-validate Access split for:
 Verify:
 
 - Fresh `url` is reachable publicly.
-- `/api/*` remains Access-protected.
+- `/api/v2/*` remains Access-protected.
 
 Escalate:
 

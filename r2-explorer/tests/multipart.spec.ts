@@ -55,7 +55,7 @@ async function initUpload(
   },
 ): Promise<Response> {
   return app.fetch(
-    new Request("https://files.example.com/api/upload/init", {
+    new Request("https://files.example.com/api/v2/upload/init", {
       method: "POST",
       headers: uploadHeaders({
         email: options?.email,
@@ -105,7 +105,7 @@ describe("multipart upload flow", () => {
     partOneBytes.fill(65);
     const partOneMd5 = md5Base64(partOneBytes);
     const signPartOneResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -136,7 +136,7 @@ describe("multipart upload flow", () => {
     partTwoBytes.fill(66);
     const partTwoMd5 = md5Base64(partTwoBytes);
     const signPartTwoResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -153,7 +153,7 @@ describe("multipart upload flow", () => {
     const uploadedPartTwo = await upload.uploadPart(2, partTwoBytes);
 
     const completeResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -186,7 +186,7 @@ describe("multipart upload flow", () => {
     expect(completePayload.originalFilename).toBe("sample.bin");
 
     const downloadResponse = await app.fetch(
-      new Request(`https://files.example.com/api/download?key=${encodeURIComponent(initPayload.objectKey)}`, {
+      new Request(`https://files.example.com/api/v2/download?key=${encodeURIComponent(initPayload.objectKey)}`, {
         headers: accessHeaders("engineer@example.com", { sub: "user-a" }),
       }),
       env,
@@ -226,7 +226,7 @@ describe("multipart upload flow", () => {
     const app = createApp();
 
     const response = await app.fetch(
-      new Request("https://files.example.com/api/upload/part", {
+      new Request("https://files.example.com/api/v2/upload/part", {
         method: "POST",
         headers: {
           ...uploadHeaders({ contentType: "application/octet-stream" }),
@@ -252,7 +252,7 @@ describe("multipart upload flow", () => {
     const initPayload = await parseInitPayload(initResponse);
 
     const wrongOwnerSign = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders({ email: "owner-b@example.com", sub: "owner-b" }),
         body: JSON.stringify({
@@ -268,7 +268,7 @@ describe("multipart upload flow", () => {
     expect(((await wrongOwnerSign.json()) as ErrorPayload).error?.code).toBe("upload_session_not_found");
 
     const wrongSessionSign = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders({ email: "owner-a@example.com", sub: "owner-a" }),
         body: JSON.stringify({
@@ -284,7 +284,7 @@ describe("multipart upload flow", () => {
     expect(((await wrongSessionSign.json()) as ErrorPayload).error?.code).toBe("upload_session_not_found");
 
     const wrongUploadSign = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders({ email: "owner-a@example.com", sub: "owner-a" }),
         body: JSON.stringify({
@@ -300,7 +300,7 @@ describe("multipart upload flow", () => {
     expect(((await wrongUploadSign.json()) as ErrorPayload).error?.code).toBe("upload_session_mismatch");
 
     const wrongUploadComplete = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders({ email: "owner-a@example.com", sub: "owner-a" }),
         body: JSON.stringify({
@@ -321,7 +321,7 @@ describe("multipart upload flow", () => {
     expect(((await wrongUploadComplete.json()) as ErrorPayload).error?.code).toBe("upload_session_mismatch");
 
     const wrongUploadAbort = await app.fetch(
-      new Request("https://files.example.com/api/upload/abort", {
+      new Request("https://files.example.com/api/v2/upload/abort", {
         method: "POST",
         headers: uploadHeaders({ email: "owner-a@example.com", sub: "owner-a" }),
         body: JSON.stringify({
@@ -356,7 +356,7 @@ describe("multipart upload flow", () => {
     const uploadedPartTwo = await upload.uploadPart(2, second);
 
     const duplicateResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -375,7 +375,7 @@ describe("multipart upload flow", () => {
     expect(((await duplicateResponse.json()) as ErrorPayload).error?.code).toBe("duplicate_part_number");
 
     const unsortedResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -402,7 +402,7 @@ describe("multipart upload flow", () => {
     const outOfRangePayload = await parseInitPayload(outOfRangeInit);
 
     const outOfRangeResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -431,7 +431,7 @@ describe("multipart upload flow", () => {
     const initPayload = await parseInitPayload(initResponse);
 
     const firstAbort = await app.fetch(
-      new Request("https://files.example.com/api/upload/abort", {
+      new Request("https://files.example.com/api/v2/upload/abort", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -444,7 +444,7 @@ describe("multipart upload flow", () => {
     expect(firstAbort.status).toBe(200);
 
     const secondAbort = await app.fetch(
-      new Request("https://files.example.com/api/upload/abort", {
+      new Request("https://files.example.com/api/v2/upload/abort", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -522,7 +522,7 @@ describe("multipart upload flow", () => {
     });
 
     const response = await app.fetch(
-      new Request("https://files.example.com/api/upload/init", {
+      new Request("https://files.example.com/api/v2/upload/init", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -555,7 +555,7 @@ describe("multipart upload flow", () => {
     const app = createApp();
 
     const serverInfo = await app.fetch(
-      new Request("https://files.example.com/api/server/info", {
+      new Request("https://files.example.com/api/v2/session/info", {
         headers: accessHeaders("engineer@example.com", { sub: "user-a" }),
       }),
       env,
@@ -685,7 +685,7 @@ describe("multipart upload flow", () => {
     expect(initPayload.objectKey.includes("//")).toBe(true);
 
     const signResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -729,7 +729,7 @@ describe("multipart upload flow", () => {
     const partMd5 = md5Base64(partBytes);
 
     const signResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -748,7 +748,7 @@ describe("multipart upload flow", () => {
     const uploadedPart = await upload.uploadPart(1, partBytes);
 
     const completeResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -793,7 +793,7 @@ describe("multipart upload flow", () => {
     const partMd5 = md5Base64(partBytes);
 
     const signResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/sign-part", {
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({
@@ -812,7 +812,7 @@ describe("multipart upload flow", () => {
     const uploadedPart = await upload.uploadPart(1, partBytes);
 
     const completeResponse = await app.fetch(
-      new Request("https://files.example.com/api/upload/complete", {
+      new Request("https://files.example.com/api/v2/upload/complete", {
         method: "POST",
         headers: uploadHeaders(),
         body: JSON.stringify({

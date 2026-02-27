@@ -185,7 +185,7 @@ share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
 token_id="$(printf '%s' "${share_json}" | jq -r '.tokenId')"
 r2 share worker list files workspace/demo.txt
 curl -I "${share_url}"
-curl -I https://files.unsigned.sh/api/list
+curl -I https://files.unsigned.sh/api/v2/list
 # Best-effort cleanup (ignore if token already exhausted/revoked).
 r2 share worker revoke "${token_id}" || true
 ```
@@ -196,7 +196,7 @@ Expected result:
 - worker create returns a `url` on your custom domain
 - worker list includes the created token record
 - `GET <url>` returns object response headers for a valid token
-- `GET /api/list` remains Cloudflare-Access protected (not public)
+- `GET /api/v2/list` remains Cloudflare-Access protected (not public)
 
 For Access policy and Worker token behavior details, continue in `docs/sharing.md`.
 For failure diagnosis across sync/backup/share/auth flows, use
