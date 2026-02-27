@@ -312,6 +312,7 @@ jobs:
           R2E_SMOKE_OAUTH_CLIENT_ID: ${{ secrets.R2E_SMOKE_OAUTH_CLIENT_ID }}
           R2E_SMOKE_OAUTH_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_OAUTH_CLIENT_SECRET }}
           R2E_SMOKE_OAUTH_TOKEN_URL: ${{ secrets.R2E_SMOKE_OAUTH_TOKEN_URL }}
+          R2E_SMOKE_OAUTH_RESOURCE: ${{ vars.R2E_SMOKE_OAUTH_RESOURCE }}
           R2E_SMOKE_R2_BIN: ./result/bin/r2
         run: |
           set -euo pipefail
@@ -326,6 +327,7 @@ jobs:
           R2E_SMOKE_OAUTH_CLIENT_ID: ${{ secrets.R2E_SMOKE_OAUTH_CLIENT_ID }}
           R2E_SMOKE_OAUTH_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_OAUTH_CLIENT_SECRET }}
           R2E_SMOKE_OAUTH_TOKEN_URL: ${{ secrets.R2E_SMOKE_OAUTH_TOKEN_URL }}
+          R2E_SMOKE_OAUTH_RESOURCE: ${{ vars.R2E_SMOKE_OAUTH_RESOURCE }}
           R2E_SMOKE_R2_BIN: ../result/bin/r2
         run: |
           set -euo pipefail
@@ -585,6 +587,7 @@ jobs:
       R2E_SMOKE_OAUTH_CLIENT_ID: ${{ secrets.R2E_SMOKE_OAUTH_CLIENT_ID }}
       R2E_SMOKE_OAUTH_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_OAUTH_CLIENT_SECRET }}
       R2E_SMOKE_OAUTH_TOKEN_URL: ${{ secrets.R2E_SMOKE_OAUTH_TOKEN_URL }}
+      R2E_SMOKE_OAUTH_RESOURCE: ${{ vars.R2E_SMOKE_OAUTH_RESOURCE }}
       R2E_SMOKE_RETRIES: "2"
       R2E_SMOKE_RETRY_DELAY_SEC: "3"
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}

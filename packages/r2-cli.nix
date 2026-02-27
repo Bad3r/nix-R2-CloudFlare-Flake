@@ -119,7 +119,8 @@ writeShellApplication {
         "  R2_EXPLORER_OAUTH_CLIENT_SECRET" \
         "" \
         "Optional OAuth token settings:" \
-        "  R2_EXPLORER_OAUTH_SCOPE         (default: r2.read r2.write r2.share.manage)" \
+        "  R2_EXPLORER_OAUTH_SCOPE         (default: r2e.read r2e.write r2e.admin)" \
+        "  R2_EXPLORER_OAUTH_RESOURCE      (default: \$R2_EXPLORER_BASE_URL)" \
         "  R2_EXPLORER_OAUTH_BEARER_TOKEN  (if set, skips token exchange)"
     }
 
@@ -190,7 +191,7 @@ writeShellApplication {
     }
 
     oauth_worker_token() {
-      local now token_response access_token expires_in scope
+      local now token_response access_token expires_in scope resource token_segments
 
       if [[ -n "''${R2_EXPLORER_OAUTH_BEARER_TOKEN:-}" ]]; then
         printf '%s\n' "''${R2_EXPLORER_OAUTH_BEARER_TOKEN}"
@@ -203,7 +204,8 @@ writeShellApplication {
         return
       fi
 
-      scope="''${R2_EXPLORER_OAUTH_SCOPE:-r2.read r2.write r2.share.manage}"
+      scope="''${R2_EXPLORER_OAUTH_SCOPE:-r2e.read r2e.write r2e.admin}"
+      resource="''${R2_EXPLORER_OAUTH_RESOURCE:-''${R2_EXPLORER_BASE_URL%/}}"
       token_response="$(
         curl -sS \
           -X POST \
@@ -212,6 +214,7 @@ writeShellApplication {
           --data-urlencode "client_id=$R2_EXPLORER_OAUTH_CLIENT_ID" \
           --data-urlencode "client_secret=$R2_EXPLORER_OAUTH_CLIENT_SECRET" \
           --data-urlencode "scope=$scope" \
+          --data-urlencode "resource=$resource" \
           --max-time 60 \
           --connect-timeout 10 \
           "$R2_EXPLORER_OAUTH_TOKEN_URL"
@@ -221,6 +224,11 @@ writeShellApplication {
       if [[ -z "$access_token" ]]; then
         echo "$token_response" >&2
         fail "failed to obtain OAuth access token from R2_EXPLORER_OAUTH_TOKEN_URL"
+      fi
+      token_segments="$(awk -F. '{ print NF }' <<<"$access_token")"
+      if [[ "$token_segments" -ne 3 ]]; then
+        echo "$token_response" >&2
+        fail "token endpoint returned a non-JWT access token; set R2_EXPLORER_OAUTH_RESOURCE to the expected audience URL."
       fi
       expires_in="$(printf '%s' "$token_response" | jq -r '.expires_in // 300')"
       if [[ ! "$expires_in" =~ ^[0-9]+$ ]] || [[ "$expires_in" -le 0 ]]; then

@@ -23,6 +23,7 @@ without interrupting share management operations.
 - `R2_EXPLORER_OAUTH_CLIENT_ID`
 - `R2_EXPLORER_OAUTH_CLIENT_SECRET`
 - `R2_EXPLORER_OAUTH_TOKEN_URL`
+- `R2_EXPLORER_OAUTH_RESOURCE`
 
 ## Procedure (CLI-first)
 
@@ -34,7 +35,7 @@ export OLD_CLIENT_SECRET="${R2_EXPLORER_OAUTH_CLIENT_SECRET}"
 ```
 
 2. Create a new OAuth client in Better Auth IdP with required scopes for worker
-   operations (`r2.read`, `r2.write`, `r2.share.manage`).
+   operations (`r2e.read`, `r2e.write`, `r2e.admin`).
 
 3. Update automation environment/secrets with the new credentials.
 
@@ -47,7 +48,8 @@ token="$(
     --data-urlencode 'grant_type=client_credentials' \
     --data-urlencode "client_id=${R2_EXPLORER_OAUTH_CLIENT_ID}" \
     --data-urlencode "client_secret=${R2_EXPLORER_OAUTH_CLIENT_SECRET}" \
-    --data-urlencode 'scope=r2.read r2.write r2.share.manage' \
+    --data-urlencode 'scope=r2e.read r2e.write r2e.admin' \
+    --data-urlencode "resource=${R2_EXPLORER_OAUTH_RESOURCE}" \
     "${R2_EXPLORER_OAUTH_TOKEN_URL}" | jq -r '.access_token // empty'
 )"
 
