@@ -118,6 +118,24 @@ type ApiErrorPayload = {
   };
 };
 
+type RetryOptions = {
+  maxRetries?: number;
+  baseDelayMs?: number;
+  retryableStatuses?: ReadonlySet<number>;
+};
+
+const TRANSIENT_HTTP_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504, 522, 524]);
+const READ_RETRY_OPTIONS: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  retryableStatuses: TRANSIENT_HTTP_STATUSES,
+};
+const UPLOAD_PART_RETRY_OPTIONS: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  retryableStatuses: TRANSIENT_HTTP_STATUSES,
+};
+
 function isJsonResponse(response: Response): boolean {
   const header = response.headers.get("content-type");
   return Boolean(header && header.includes("application/json"));
@@ -138,7 +156,38 @@ async function decodeResponse<T>(response: Response): Promise<T | ApiErrorPayloa
   }
 }
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+function shouldRetryError(error: unknown, retryableStatuses: ReadonlySet<number>): boolean {
+  if (error instanceof ApiError) {
+    return retryableStatuses.has(error.status);
+  }
+  return error instanceof TypeError;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(operation: () => Promise<T>, options: RetryOptions): Promise<T> {
+  const maxRetries = Math.max(0, options.maxRetries ?? 0);
+  const baseDelayMs = Math.max(0, options.baseDelayMs ?? 1000);
+  const retryableStatuses = options.retryableStatuses ?? TRANSIENT_HTTP_STATUSES;
+
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= maxRetries || !shouldRetryError(error, retryableStatuses)) {
+        throw error;
+      }
+      const delayMs = baseDelayMs * 2 ** attempt;
+      attempt += 1;
+      await sleep(delayMs);
+    }
+  }
+}
+
+async function apiOnce<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   const decoded = await decodeResponse<T>(response);
 
@@ -154,6 +203,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return decoded as T;
 }
 
+export async function api<T>(path: string, init?: RequestInit, retryOptions?: RetryOptions): Promise<T> {
+  if (!retryOptions) {
+    return apiOnce<T>(path, init);
+  }
+  return withRetry(() => apiOnce<T>(path, init), retryOptions);
+}
+
 function uploadJsonHeaders(): HeadersInit {
   return {
     "content-type": "application/json",
@@ -162,7 +218,7 @@ function uploadJsonHeaders(): HeadersInit {
 }
 
 export async function fetchSessionInfo(): Promise<SessionInfoResponse> {
-  return api<SessionInfoResponse>("/api/v2/session/info");
+  return api<SessionInfoResponse>("/api/v2/session/info", undefined, READ_RETRY_OPTIONS);
 }
 
 export async function listObjects(prefix: string, cursor?: string, limit = 200): Promise<ListResponse> {
@@ -172,7 +228,7 @@ export async function listObjects(prefix: string, cursor?: string, limit = 200):
   if (cursor) {
     query.set("cursor", cursor);
   }
-  return api<ListResponse>(`/api/v2/list?${query.toString()}`);
+  return api<ListResponse>(`/api/v2/list?${query.toString()}`, undefined, READ_RETRY_OPTIONS);
 }
 
 export async function createShare(key: string, ttl: string, maxDownloads: number): Promise<ShareCreateResponse> {
@@ -194,7 +250,7 @@ export async function listShares(key: string): Promise<ShareListResponse> {
     key,
     limit: "100",
   });
-  return api<ShareListResponse>(`/api/v2/share/list?${query.toString()}`);
+  return api<ShareListResponse>(`/api/v2/share/list?${query.toString()}`, undefined, READ_RETRY_OPTIONS);
 }
 
 export async function revokeShare(tokenId: string): Promise<void> {
@@ -260,32 +316,39 @@ export async function multipartUpload(
 
   async function uploadPart(partNumber: number, blob: Blob, contentLength: number): Promise<void> {
     onProgress?.({ phase: "sign", uploadedParts, totalParts });
-    const signed = await api<UploadSignPartResponse>("/api/v2/upload/sign-part", {
-      method: "POST",
-      headers: uploadJsonHeaders(),
-      body: JSON.stringify({
-        sessionId: initPayload.sessionId,
-        uploadId: initPayload.uploadId,
-        partNumber,
-        contentLength,
-      }),
-    });
+    const signed = await api<UploadSignPartResponse>(
+      "/api/v2/upload/sign-part",
+      {
+        method: "POST",
+        headers: uploadJsonHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          partNumber,
+          contentLength,
+        }),
+      },
+      UPLOAD_PART_RETRY_OPTIONS,
+    );
 
-    const uploadHeaders = new Headers(signed.headers || {});
-    const response = await fetch(signed.url, {
-      method: signed.method,
-      headers: uploadHeaders,
-      body: blob,
-    });
+    const response = await withRetry(async () => {
+      const uploadHeaders = new Headers(signed.headers || {});
+      const partResponse = await fetch(signed.url, {
+        method: signed.method,
+        headers: uploadHeaders,
+        body: blob,
+      });
 
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new ApiError(
-        response.status,
-        "upload_part_failed",
-        `Part upload failed for ${partNumber}/${totalParts}${detail ? `: ${detail.slice(0, 180)}` : ""}`,
-      );
-    }
+      if (!partResponse.ok) {
+        const detail = await partResponse.text().catch(() => "");
+        throw new ApiError(
+          partResponse.status,
+          "upload_part_failed",
+          `Part upload failed for ${partNumber}/${totalParts}${detail ? `: ${detail.slice(0, 180)}` : ""}`,
+        );
+      }
+      return partResponse;
+    }, UPLOAD_PART_RETRY_OPTIONS);
 
     const etag = response.headers.get("etag");
     if (!etag) {
