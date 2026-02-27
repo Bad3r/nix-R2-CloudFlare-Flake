@@ -78,6 +78,7 @@ jobs:
       R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW: ${{ vars.R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW }}
       R2E_UPLOAD_S3_BUCKET: ${{ vars.R2E_UPLOAD_S3_BUCKET }}
       R2E_UPLOAD_S3_BUCKET_PREVIEW: ${{ vars.R2E_UPLOAD_S3_BUCKET_PREVIEW }}
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -140,6 +141,40 @@ jobs:
             "${R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW:-${R2E_UPLOAD_ALLOWED_ORIGINS}}" \
             "${R2E_SMOKE_BASE_URL}"
 
+      - name: Sync web CSP transform rule (preview, conditional)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          zone_name="$(printf '%s' "${R2E_CF_ZONE_NAME:-}" | tr '[:upper:]' '[:lower:]')"
+          preview_host="$(
+            printf '%s' "${R2E_SMOKE_BASE_URL:-}" |
+              sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##' |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          if [[ -z "${zone_name}" ]]; then
+            echo "::notice::Skipping preview CSP sync: R2E_CF_ZONE_NAME is empty."
+            exit 0
+          fi
+
+          if [[ -z "${preview_host}" ]]; then
+            echo "::notice::Skipping preview CSP sync: preview host could not be derived from R2E_SMOKE_BASE_URL."
+            exit 0
+          fi
+
+          if [[ "${preview_host}" == "${zone_name}" || "${preview_host}" == *".${zone_name}" ]]; then
+            echo "Preview host '${preview_host}' is in zone '${zone_name}'; syncing web CSP rule."
+            ./scripts/ci/sync-r2-web-csp.sh \
+              "${preview_host}" \
+              "r2-explorer/web/config/csp.analytics.production.txt"
+            exit 0
+          fi
+
+          echo "::notice::Skipping preview CSP sync: preview host '${preview_host}' is outside configured zone '${zone_name}'."
+
       - name: Deploy preview
         working-directory: r2-explorer
         env:
@@ -176,6 +211,7 @@ jobs:
     env:
       R2E_SMOKE_RETRIES: "1"
       R2E_SMOKE_RETRY_DELAY_SEC: "2"
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -208,6 +244,41 @@ jobs:
       - name: Install dependencies for live tests
         working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
+
+      - name: Verify preview web CSP and analytics markers (conditional)
+        env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+          R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          zone_name="$(printf '%s' "${R2E_CF_ZONE_NAME:-}" | tr '[:upper:]' '[:lower:]')"
+          preview_host="$(
+            printf '%s' "${R2E_SMOKE_BASE_URL:-}" |
+              sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##' |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          if [[ -z "${zone_name}" ]]; then
+            echo "::notice::Skipping preview CSP/analytics verification: R2E_CF_ZONE_NAME is empty."
+            exit 0
+          fi
+
+          if [[ -z "${preview_host}" ]]; then
+            echo "::notice::Skipping preview CSP/analytics verification: preview host could not be derived from R2E_SMOKE_BASE_URL."
+            exit 0
+          fi
+
+          if [[ "${preview_host}" == "${zone_name}" || "${preview_host}" == *".${zone_name}" ]]; then
+            echo "Preview host '${preview_host}' is in zone '${zone_name}'; running web CSP/analytics verification."
+            ./scripts/ci/check-r2-web-security.sh \
+              "${R2E_SMOKE_BASE_URL}" \
+              "r2-explorer/web/config/csp.analytics.production.txt"
+            exit 0
+          fi
+
+          echo "::notice::Skipping preview CSP/analytics verification: preview host '${preview_host}' is outside configured zone '${zone_name}'."
 
       - name: Run Worker smoke checks
         env:
