@@ -27,10 +27,12 @@ type AuthJwk = JsonWebKey & {
   kid?: string;
 };
 
+type SupportedJwtAlg = "RS256" | "EdDSA";
+
 type CachedAuthSigningKeys = {
   fetchedAtMs: number;
-  keysByKid: Map<string, CryptoKey>;
-  fallbackKey: CryptoKey | null;
+  keysByKidAndAlg: Map<string, CryptoKey>;
+  fallbackByAlg: Map<SupportedJwtAlg, CryptoKey>;
 };
 
 const authSigningKeyCache = new Map<string, CachedAuthSigningKeys>();
@@ -415,44 +417,59 @@ async function fetchIdpSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKe
     throw new HttpError(401, "token_invalid_signature", "OAuth signing keys response is missing keys.");
   }
 
-  const keysByKid = new Map<string, CryptoKey>();
-  let fallbackKey: CryptoKey | null = null;
+  const keysByKidAndAlg = new Map<string, CryptoKey>();
+  const fallbackByAlg = new Map<SupportedJwtAlg, CryptoKey>();
   for (const candidate of keysRaw) {
     if (!candidate || typeof candidate !== "object") {
       continue;
     }
     const jwk = candidate as AuthJwk;
-    if (jwk.kty !== "RSA") {
-      continue;
+
+    const importConfigs: Array<{
+      alg: SupportedJwtAlg;
+      importAlgorithm: EcKeyImportParams | RsaHashedImportParams | AlgorithmIdentifier;
+    }> = [];
+
+    if (jwk.kty === "RSA" && (!jwk.alg || jwk.alg === "RS256")) {
+      importConfigs.push({
+        alg: "RS256",
+        importAlgorithm: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      });
     }
-    let key: CryptoKey;
-    try {
-      key = await crypto.subtle.importKey(
-        "jwk",
-        jwk,
-        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-        false,
-        ["verify"],
-      );
-    } catch {
-      continue;
+
+    if (jwk.kty === "OKP" && jwk.crv === "Ed25519" && (!jwk.alg || jwk.alg === "EdDSA")) {
+      importConfigs.push({
+        alg: "EdDSA",
+        importAlgorithm: "Ed25519",
+      });
     }
-    if (!fallbackKey) {
-      fallbackKey = key;
-    }
-    if (typeof jwk.kid === "string" && jwk.kid.length > 0) {
-      keysByKid.set(jwk.kid, key);
+
+    for (const config of importConfigs) {
+      let key: CryptoKey;
+      try {
+        key = await crypto.subtle.importKey("jwk", jwk, config.importAlgorithm, false, ["verify"]);
+      } catch {
+        continue;
+      }
+
+      if (!fallbackByAlg.has(config.alg)) {
+        fallbackByAlg.set(config.alg, key);
+      }
+
+      if (typeof jwk.kid === "string" && jwk.kid.length > 0) {
+        keysByKidAndAlg.set(`${config.alg}:${jwk.kid}`, key);
+      }
     }
   }
 
-  if (!fallbackKey) {
+  if (fallbackByAlg.size === 0) {
     throw new HttpError(401, "token_invalid_signature", "No usable OAuth signing keys were found.");
   }
 
   return {
     fetchedAtMs: Date.now(),
-    keysByKid,
-    fallbackKey,
+    keysByKidAndAlg,
+    fallbackByAlg,
   };
 }
 
@@ -472,26 +489,36 @@ async function idpSigningKeys(
   return fresh;
 }
 
-function keyForJwt(header: AuthJwtHeader, keys: CachedAuthSigningKeys): CryptoKey | null {
+function parseSupportedJwtAlg(raw: unknown): SupportedJwtAlg {
+  if (raw === "RS256" || raw === "EdDSA") {
+    return raw;
+  }
+  throw new HttpError(401, "token_invalid_signature", "Bearer JWT uses unsupported signing algorithm.");
+}
+
+function keyForJwt(header: AuthJwtHeader, keys: CachedAuthSigningKeys, alg: SupportedJwtAlg): CryptoKey | null {
   const kid = claimString(header.kid);
   if (kid) {
-    return keys.keysByKid.get(kid) ?? null;
+    return keys.keysByKidAndAlg.get(`${alg}:${kid}`) ?? null;
   }
-  return keys.fallbackKey;
+  return keys.fallbackByAlg.get(alg) ?? null;
 }
 
 async function verifyJwtSignature(
   signingInput: string,
   encodedSignature: string,
   key: CryptoKey,
+  alg: SupportedJwtAlg,
 ): Promise<boolean> {
   const signature = decodeBase64Url(encodedSignature);
   const signatureBuffer = new Uint8Array(signature.byteLength);
   signatureBuffer.set(signature);
+  const verifyAlgorithm: AlgorithmIdentifier | RsaPssParams | EcdsaParams =
+    alg === "RS256" ? { name: "RSASSA-PKCS1-v1_5" } : "Ed25519";
   return crypto.subtle.verify(
-    { name: "RSASSA-PKCS1-v1_5" },
+    verifyAlgorithm,
     key,
-    signatureBuffer.buffer,
+    signatureBuffer,
     new TextEncoder().encode(signingInput),
   );
 }
@@ -505,35 +532,41 @@ async function validateIdpJwt(jwt: string, env: Env): Promise<AuthJwtPayload> {
   const cacheKey = `${issuer}|${jwksUrl}`;
 
   const parsed = parseAuthJwt(jwt);
-  if (parsed.header.alg !== "RS256") {
-    throw new HttpError(401, "token_invalid_signature", "Bearer JWT must use RS256.");
-  }
+  const jwtAlg = parseSupportedJwtAlg(parsed.header.alg);
 
   const signingInput = `${parsed.encodedHeader}.${parsed.encodedPayload}`;
   let keys = await idpSigningKeys(cacheKey, jwksUrl, cacheTtlSec);
-  let key = keyForJwt(parsed.header, keys);
+  let key = keyForJwt(parsed.header, keys, jwtAlg);
   if (!key) {
     keys = await idpSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
-    key = keyForJwt(parsed.header, keys);
+    key = keyForJwt(parsed.header, keys, jwtAlg);
   }
   if (!key) {
-    throw new HttpError(401, "token_invalid_signature", "Bearer JWT key id was not found in current JWKS set.");
+    throw new HttpError(
+      401,
+      "token_invalid_signature",
+      `Bearer JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
+    );
   }
 
   let verified = false;
   try {
-    verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, key);
+    verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, key, jwtAlg);
   } catch {
     verified = false;
   }
   if (!verified) {
     const refreshed = await idpSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
-    const refreshedKey = keyForJwt(parsed.header, refreshed);
+    const refreshedKey = keyForJwt(parsed.header, refreshed, jwtAlg);
     if (!refreshedKey) {
-      throw new HttpError(401, "token_invalid_signature", "Bearer JWT key id was not found in current JWKS set.");
+      throw new HttpError(
+        401,
+        "token_invalid_signature",
+        `Bearer JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
+      );
     }
     try {
-      verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey);
+      verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey, jwtAlg);
     } catch {
       verified = false;
     }

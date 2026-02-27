@@ -1,4 +1,4 @@
-import { createHash, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync, randomBytes, sign as nodeSign } from "node:crypto";
 import { afterEach, beforeEach } from "vitest";
 import { resetAuthSigningKeyCache, sessionCookieName } from "../../src/auth";
 import type { Env } from "../../src/types";
@@ -603,15 +603,25 @@ export const AUTH_TEST_ISSUER = "https://auth.example.com/api/auth";
 export const AUTH_TEST_AUD = "r2-explorer-test";
 
 const ACCESS_TEST_KID = "access-kid-test";
+const ACCESS_EDDSA_TEST_KID = "access-kid-test-eddsa";
 
 const ACCESS_PRIMARY_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const ACCESS_ALTERNATE_KEYPAIR = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const ACCESS_EDDSA_PRIMARY_KEYPAIR = generateKeyPairSync("ed25519");
+const ACCESS_EDDSA_ALTERNATE_KEYPAIR = generateKeyPairSync("ed25519");
 
-const ACCESS_PUBLIC_JWK: JsonWebKey = {
+const ACCESS_RS_PUBLIC_JWK: JsonWebKey = {
   ...(ACCESS_PRIMARY_KEYPAIR.publicKey.export({ format: "jwk" }) as JsonWebKey),
   kid: ACCESS_TEST_KID,
   use: "sig",
   alg: "RS256",
+};
+
+const ACCESS_EDDSA_PUBLIC_JWK: JsonWebKey = {
+  ...(ACCESS_EDDSA_PRIMARY_KEYPAIR.publicKey.export({ format: "jwk" }) as JsonWebKey),
+  kid: ACCESS_EDDSA_TEST_KID,
+  use: "sig",
+  alg: "EdDSA",
 };
 
 function base64UrlEncode(value: string | Uint8Array): string {
@@ -624,6 +634,7 @@ function base64UrlEncode(value: string | Uint8Array): string {
 }
 
 type AccessJwtOptions = {
+  alg?: "RS256" | "EdDSA";
   email?: string | null;
   sub?: string | null;
   commonName?: string;
@@ -641,10 +652,11 @@ type AccessJwtOptions = {
 
 export function createAccessJwt(options: AccessJwtOptions = {}): string {
   const now = Math.floor(Date.now() / 1000);
+  const alg = options.alg ?? "RS256";
   const header = {
-    alg: "RS256",
+    alg,
     typ: "JWT",
-    kid: options.headerKid ?? ACCESS_TEST_KID,
+    kid: options.headerKid ?? (alg === "EdDSA" ? ACCESS_EDDSA_TEST_KID : ACCESS_TEST_KID),
   };
   const payload: Record<string, unknown> = {
     iss: options.iss ?? AUTH_TEST_ISSUER,
@@ -676,13 +688,24 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
 
-  const signer = createSign("RSA-SHA256");
-  signer.update(signingInput);
-  signer.end();
-  const signature = signer.sign(
-    options.signWithAlternateKey ? ACCESS_ALTERNATE_KEYPAIR.privateKey : ACCESS_PRIMARY_KEYPAIR.privateKey,
-  );
-  const encodedSignature = base64UrlEncode(new Uint8Array(signature));
+  let signature: Uint8Array;
+  if (alg === "EdDSA") {
+    const signed = nodeSign(
+      null,
+      Buffer.from(signingInput),
+      options.signWithAlternateKey ? ACCESS_EDDSA_ALTERNATE_KEYPAIR.privateKey : ACCESS_EDDSA_PRIMARY_KEYPAIR.privateKey,
+    );
+    signature = new Uint8Array(signed);
+  } else {
+    const signer = createSign("RSA-SHA256");
+    signer.update(signingInput);
+    signer.end();
+    const signed = signer.sign(
+      options.signWithAlternateKey ? ACCESS_ALTERNATE_KEYPAIR.privateKey : ACCESS_PRIMARY_KEYPAIR.privateKey,
+    );
+    signature = new Uint8Array(signed);
+  }
+  const encodedSignature = base64UrlEncode(signature);
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 }
 
@@ -694,7 +717,7 @@ export function installAccessJwksFetchMock(): () => void {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     if (url === jwksUrl) {
-      return new Response(JSON.stringify({ keys: [ACCESS_PUBLIC_JWK] }), {
+      return new Response(JSON.stringify({ keys: [ACCESS_RS_PUBLIC_JWK, ACCESS_EDDSA_PUBLIC_JWK] }), {
         status: 200,
         headers: {
           "content-type": "application/json",

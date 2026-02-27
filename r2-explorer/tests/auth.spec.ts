@@ -111,6 +111,20 @@ describe("auth middleware", () => {
     expect(response.status).toBe(200);
   });
 
+  it("accepts valid EdDSA OAuth JWT on /api routes", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/list?prefix=", {
+        headers: accessHeaders("ops@example.com", {
+          alg: "EdDSA",
+        }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+  });
+
   it("accepts valid OAuth JWT from the browser session cookie", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
