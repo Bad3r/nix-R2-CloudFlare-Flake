@@ -81,7 +81,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 require_command "curl"
-require_command "rg"
+require_command "grep"
 
 base_url="$1"
 expected_csp_file="$2"
@@ -140,11 +140,11 @@ if [[ ${actual_csp} != "${expected_csp}" ]]; then
   fail "effective CSP does not match expected policy"
 fi
 
-if ! rg -q "/cdn-cgi/zaraz/" "${body_file}" && ! rg -q 'static\.cloudflareinsights\.com/beacon\.min\.js' "${body_file}"; then
+if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflareinsights\.com/beacon\.min\.js' "${body_file}"; then
   fail "analytics markers not found in HTML (expected Zaraz/Web Analytics loader)"
 fi
 
-if rg -F -q "${EMPTY_BODY_SHA512_B64}" "${body_file}"; then
+if grep -F -q "${EMPTY_BODY_SHA512_B64}" "${body_file}"; then
   fail "detected empty-content sha512 marker associated with broken SRI fetches"
 fi
 
