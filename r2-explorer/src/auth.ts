@@ -3,6 +3,7 @@ import type { AuthIdentity, Env } from "./types";
 
 const DEFAULT_IDP_CLOCK_SKEW_SEC = 60;
 const DEFAULT_IDP_JWKS_CACHE_TTL_SEC = 300;
+const DEFAULT_WEB_SESSION_COOKIE_NAME = "r2e_session";
 
 type AuthJwtHeader = {
   alg?: unknown;
@@ -114,15 +115,75 @@ function extractBearerJwt(authorizationHeader: string | null): string | null {
   return match[1] ?? "";
 }
 
-export function extractAuthIdentity(request: Request): AuthIdentity | null {
-  const jwt = extractBearerJwt(request.headers.get("authorization"));
-  if (jwt === null) {
+export function sessionCookieName(env: Env | undefined): string {
+  const configured = env?.R2E_WEB_COOKIE_NAME?.trim();
+  if (!configured) {
+    return DEFAULT_WEB_SESSION_COOKIE_NAME;
+  }
+  if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u.test(configured)) {
+    throw new HttpError(500, "oauth_web_config_invalid", "R2E_WEB_COOKIE_NAME contains unsupported characters.");
+  }
+  return configured;
+}
+
+function parseCookies(cookieHeader: string | null): Map<string, string> {
+  const parsed = new Map<string, string>();
+  if (!cookieHeader) {
+    return parsed;
+  }
+  for (const rawPart of cookieHeader.split(";")) {
+    const part = rawPart.trim();
+    if (!part) {
+      continue;
+    }
+    const separator = part.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+    const name = part.slice(0, separator).trim();
+    if (!name) {
+      continue;
+    }
+    parsed.set(name, part.slice(separator + 1));
+  }
+  return parsed;
+}
+
+function extractSessionJwt(request: Request, env: Env | undefined): string | null {
+  const cookieName = sessionCookieName(env);
+  const cookies = parseCookies(request.headers.get("cookie"));
+  const encodedToken = cookies.get(cookieName);
+  if (encodedToken === undefined) {
     return null;
   }
+  try {
+    return decodeURIComponent(encodedToken).trim();
+  } catch {
+    return "";
+  }
+}
+
+export function extractAuthIdentity(request: Request, env?: Env): AuthIdentity | null {
+  const jwt = extractBearerJwt(request.headers.get("authorization"));
+  if (jwt !== null) {
+    return {
+      email: null,
+      userId: null,
+      jwt,
+      source: "bearer_header",
+    };
+  }
+
+  const sessionJwt = extractSessionJwt(request, env);
+  if (sessionJwt === null) {
+    return null;
+  }
+
   return {
     email: null,
     userId: null,
-    jwt,
+    jwt: sessionJwt,
+    source: "session_cookie",
   };
 }
 
@@ -503,12 +564,15 @@ export async function requireApiIdentity(
   env: Env,
   requiredScopes: string[] = [],
 ): Promise<AuthIdentity> {
-  const identity = extractAuthIdentity(request);
+  const identity = extractAuthIdentity(request, env);
   if (!identity) {
-    throw new HttpError(401, "token_missing", "Authorization bearer token is required for protected API routes.");
+    throw new HttpError(401, "token_missing", "OAuth bearer token or session cookie is required for protected API routes.");
   }
   if (!identity.jwt) {
-    throw new HttpError(401, "token_invalid", "Authorization header must use Bearer authentication.");
+    if (identity.source === "bearer_header") {
+      throw new HttpError(401, "token_invalid", "Authorization header must use Bearer authentication.");
+    }
+    throw new HttpError(401, "token_invalid", "Session cookie does not contain a valid OAuth access token.");
   }
 
   const jwtPayload = await validateIdpJwt(identity.jwt, env);
@@ -523,12 +587,13 @@ export async function requireApiIdentity(
     throw new HttpError(
       401,
       "token_invalid",
-      "Bearer JWT is missing usable principal claims (email or sub).",
+      "OAuth JWT is missing usable principal claims (email or sub).",
     );
   }
   return {
     email: jwtEmail,
     userId: jwtUserId,
     jwt: identity.jwt,
+    source: identity.source,
   };
 }

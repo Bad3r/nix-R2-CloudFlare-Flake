@@ -3,6 +3,7 @@ import { createApp } from "../src/app";
 import {
   accessHeaders,
   accessHeadersWithoutJwt,
+  accessSessionCookie,
   createAccessJwt,
   createTestEnv,
   useAccessJwksFetchMock,
@@ -110,6 +111,95 @@ describe("auth middleware", () => {
     expect(response.status).toBe(200);
   });
 
+  it("accepts valid OAuth JWT from the browser session cookie", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/list?prefix=", {
+        headers: {
+          cookie: accessSessionCookie(env, "ops@example.com"),
+        },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("starts OAuth web login with state + PKCE transaction cookie", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/auth/login?return_to=%2Fworkspace%2Fdemo"),
+      env,
+    );
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toBeTruthy();
+    const authorizeUrl = new URL(location ?? "https://invalid.example.com");
+    expect(authorizeUrl.origin).toBe("https://auth.unsigned.sh");
+    expect(authorizeUrl.searchParams.get("response_type")).toBe("code");
+    expect(authorizeUrl.searchParams.get("client_id")).toBe("r2-explorer-web");
+    expect(authorizeUrl.searchParams.get("state")).toBeTruthy();
+    expect(authorizeUrl.searchParams.get("code_challenge")).toBeTruthy();
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("r2e_oauth_tx=");
+    expect(setCookie).toContain("HttpOnly");
+  });
+
+  it("exchanges OAuth callback code and sets browser session cookie", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const loginResponse = await app.fetch(new Request("https://files.example.com/api/v2/auth/login"), env);
+    expect(loginResponse.status).toBe(302);
+    const authorizeUrl = new URL(loginResponse.headers.get("location") ?? "https://invalid.example.com");
+    const state = authorizeUrl.searchParams.get("state");
+    expect(state).toBeTruthy();
+    const transactionCookie = (loginResponse.headers.get("set-cookie") ?? "").split(";")[0];
+    expect(transactionCookie).toContain("r2e_oauth_tx=");
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === env.R2E_WEB_OAUTH_TOKEN_URL) {
+        return new Response(
+          JSON.stringify({
+            access_token: createAccessJwt({
+              email: "ops@example.com",
+              scope: "r2.read r2.write r2.share.manage",
+            }),
+            token_type: "Bearer",
+            expires_in: 1800,
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }
+      return originalFetch(input, init);
+    };
+
+    try {
+      const callbackResponse = await app.fetch(
+        new Request(`https://files.example.com/api/v2/auth/callback?code=auth-code&state=${encodeURIComponent(state ?? "")}`, {
+          headers: {
+            cookie: transactionCookie,
+          },
+        }),
+        env,
+      );
+      expect(callbackResponse.status).toBe(302);
+      expect(callbackResponse.headers.get("location")).toBe("/");
+      const setCookie = callbackResponse.headers.get("set-cookie") ?? "";
+      expect(setCookie).toContain("r2e_session=");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("enforces required read scope on /api/v2/list", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
@@ -125,6 +215,49 @@ describe("auth middleware", () => {
     const payload = (await response.json()) as { error: { code: string } };
     expect(response.status).toBe(403);
     expect(payload.error.code).toBe("insufficient_scope");
+  });
+
+  it("enforces Origin/CSRF on cookie-authenticated mutating routes", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/delete-me.txt", "delete me");
+    const app = createApp();
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/object/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://files.example.com",
+          cookie: accessSessionCookie(env, "ops@example.com"),
+        },
+        body: JSON.stringify({
+          key: "docs/delete-me.txt",
+        }),
+      }),
+      env,
+    );
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(response.status).toBe(403);
+    expect(payload.error.code).toBe("csrf_required");
+  });
+
+  it("allows bearer-auth mutating routes without Origin/CSRF", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/delete-me-too.txt", "delete me");
+    const app = createApp();
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/object/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...accessHeaders("ops@example.com", { scope: "r2.write" }),
+        },
+        body: JSON.stringify({
+          key: "docs/delete-me-too.txt",
+        }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
   });
 
   it("allows share create with bearer token only", async () => {

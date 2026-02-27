@@ -30,16 +30,27 @@ export interface Env {
   R2E_UPLOAD_PREFIX_ALLOWLIST?: string;
   R2E_UPLOAD_ALLOWED_ORIGINS?: string;
   R2E_UPLOAD_S3_BUCKET?: string;
+  R2E_WEB_OAUTH_AUTHORIZE_URL?: string;
+  R2E_WEB_OAUTH_TOKEN_URL?: string;
+  R2E_WEB_OAUTH_CLIENT_ID?: string;
+  R2E_WEB_OAUTH_SCOPE?: string;
+  R2E_WEB_OAUTH_RESOURCE?: string;
+  R2E_WEB_OAUTH_REDIRECT_URI?: string;
+  R2E_WEB_COOKIE_NAME?: string;
+  R2E_WEB_COOKIE_MAX_AGE_SEC?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   S3_ACCESS_KEY_ID?: string;
   S3_SECRET_ACCESS_KEY?: string;
   [key: string]: unknown;
 }
 
+export type AuthSource = "bearer_header" | "session_cookie";
+
 export interface AuthIdentity {
   email: string | null;
   userId: string | null;
   jwt: string | null;
+  source: AuthSource;
 }
 
 export interface ShareRecord {

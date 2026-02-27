@@ -1,6 +1,6 @@
 import { createHash, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, beforeEach } from "vitest";
-import { resetAuthSigningKeyCache } from "../../src/auth";
+import { resetAuthSigningKeyCache, sessionCookieName } from "../../src/auth";
 import type { Env } from "../../src/types";
 
 type KVEntry = {
@@ -747,6 +747,17 @@ export function accessHeadersWithoutJwt(email = "engineer@example.com", userId =
   };
 }
 
+export function accessSessionCookie(env: Env, email = "engineer@example.com", options: AccessJwtOptions = {}): string {
+  const userId = options.sub === undefined ? "oauth-user-id" : options.sub;
+  const resolvedEmail = options.email === undefined ? email : options.email;
+  const jwt = createAccessJwt({
+    ...options,
+    email: resolvedEmail,
+    sub: userId,
+  });
+  return `${sessionCookieName(env)}=${encodeURIComponent(jwt)}`;
+}
+
 export async function createTestEnv(): Promise<{
   env: Env;
   bucket: MemoryR2Bucket;
@@ -780,6 +791,14 @@ export async function createTestEnv(): Promise<{
     R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE: "r2.share.manage",
     R2E_IDP_CLOCK_SKEW_SEC: "60",
     R2E_IDP_JWKS_CACHE_TTL_SEC: "300",
+    R2E_WEB_OAUTH_AUTHORIZE_URL: "https://auth.unsigned.sh/api/auth/oauth2/authorize",
+    R2E_WEB_OAUTH_TOKEN_URL: "https://auth.unsigned.sh/api/auth/oauth2/token",
+    R2E_WEB_OAUTH_CLIENT_ID: "r2-explorer-web",
+    R2E_WEB_OAUTH_SCOPE: "r2.read r2.write r2.share.manage",
+    R2E_WEB_OAUTH_RESOURCE: "https://files.example.com",
+    R2E_WEB_OAUTH_REDIRECT_URI: "https://files.example.com/api/v2/auth/callback",
+    R2E_WEB_COOKIE_NAME: "r2e_session",
+    R2E_WEB_COOKIE_MAX_AGE_SEC: "3600",
     R2E_UPLOAD_MAX_FILE_BYTES: "0",
     R2E_UPLOAD_MAX_PARTS: "0",
     R2E_UPLOAD_MAX_CONCURRENT_PER_USER: "0",

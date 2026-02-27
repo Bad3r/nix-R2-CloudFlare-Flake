@@ -187,8 +187,15 @@ async function withRetry<T>(operation: () => Promise<T>, options: RetryOptions):
   }
 }
 
+function withDefaultCredentials(init?: RequestInit): RequestInit {
+  return {
+    credentials: "same-origin",
+    ...init,
+  };
+}
+
 async function apiOnce<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await fetch(path, withDefaultCredentials(init));
   const decoded = await decodeResponse<T>(response);
 
   if (!response.ok) {
@@ -258,6 +265,12 @@ export async function revokeShare(tokenId: string): Promise<void> {
     method: "POST",
     headers: uploadJsonHeaders(),
     body: JSON.stringify({ tokenId }),
+  });
+}
+
+export async function logoutSession(): Promise<void> {
+  await api<{ ok: boolean }>("/api/v2/auth/logout", {
+    method: "POST",
   });
 }
 

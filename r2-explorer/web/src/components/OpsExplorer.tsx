@@ -7,6 +7,7 @@ import {
   fetchSessionInfo,
   listObjects,
   listShares,
+  logoutSession,
   moveObject,
   multipartUpload,
   revokeShare,
@@ -83,12 +84,26 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function isAuthRequired(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    error.status === 401 &&
+    (error.code === "oauth_required" || error.code === "token_missing" || error.code === "token_invalid")
+  );
+}
+
+function loginUrl(): string {
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return `/api/v2/auth/login?return_to=${encodeURIComponent(returnTo)}`;
+}
+
 function readEtag(object: ObjectMetadata): string {
   return object.etag.replace(/^"|"$/g, "");
 }
 
 export function OpsExplorer(): JSX.Element {
   const [session, setSession] = useState<SessionInfoResponse | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [listComplete, setListComplete] = useState(true);
@@ -143,6 +158,7 @@ export function OpsExplorer(): JSX.Element {
       setFatalError("");
       try {
         const payload: ListResponse = await listObjects(prefix, nextCursor, 200);
+        setAuthRequired(false);
         setFolders(payload.delimitedPrefixes);
         setObjects(payload.objects);
         setCursor(payload.cursor);
@@ -157,6 +173,12 @@ export function OpsExplorer(): JSX.Element {
           "success",
         );
       } catch (error) {
+        if (isAuthRequired(error)) {
+          setAuthRequired(true);
+          setFatalError("Sign in required to access R2 Explorer.");
+          appendActivity("Authentication required. Use Sign in to continue.", "error");
+          return;
+        }
         const message = errorMessage(error);
         setFatalError(message);
         appendActivity(`List failed: ${message}`, "error");
@@ -172,8 +194,14 @@ export function OpsExplorer(): JSX.Element {
       setLoadingShares(true);
       try {
         const payload = await listShares(objectKey);
+        setAuthRequired(false);
         setShares(payload.shares);
       } catch (error) {
+        if (isAuthRequired(error)) {
+          setAuthRequired(true);
+          setFatalError("Sign in required to manage shares.");
+          return;
+        }
         setShares([]);
         appendActivity(`Share listing failed: ${errorMessage(error)}`, "error");
       } finally {
@@ -190,13 +218,47 @@ export function OpsExplorer(): JSX.Element {
     await loadShares(selectedObject.key);
   }, [loadShares, selectedObject]);
 
-  const openPreview = useCallback((key: string) => {
-    window.open(`/api/v2/preview?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+  const startLogin = useCallback(() => {
+    window.location.assign(loginUrl());
   }, []);
 
-  const openDownload = useCallback((key: string) => {
-    window.open(`/api/v2/download?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
-  }, []);
+  const openPreview = useCallback(
+    (key: string) => {
+      if (authRequired) {
+        startLogin();
+        return;
+      }
+      window.open(`/api/v2/preview?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+    },
+    [authRequired, startLogin],
+  );
+
+  const openDownload = useCallback(
+    (key: string) => {
+      if (authRequired) {
+        startLogin();
+        return;
+      }
+      window.open(`/api/v2/download?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+    },
+    [authRequired, startLogin],
+  );
+
+  const signOut = useCallback(async () => {
+    try {
+      await logoutSession();
+      setSession(null);
+      setAuthRequired(true);
+      setFolders([]);
+      setObjects([]);
+      setSelectedKey(null);
+      setShares([]);
+      setFatalError("Signed out. Sign in to continue.");
+      appendActivity("Signed out from browser session.", "success");
+    } catch (error) {
+      appendActivity(`Sign out failed: ${errorMessage(error)}`, "error");
+    }
+  }, [appendActivity]);
 
   const moveSelection = useCallback(
     (delta: number) => {
@@ -334,16 +396,28 @@ export function OpsExplorer(): JSX.Element {
 
   useEffect(() => {
     const bootstrap = async (): Promise<void> => {
+      let sessionLoaded = false;
       try {
         const payload = await fetchSessionInfo();
         setSession(payload);
+        setAuthRequired(false);
+        sessionLoaded = true;
         appendActivity(`Connected to Worker version ${payload.version}`, "success");
       } catch (error) {
+        if (isAuthRequired(error)) {
+          setSession(null);
+          setAuthRequired(true);
+          setFatalError("Sign in required to use the Explorer.");
+          appendActivity("Authentication required. Click Sign in to start OAuth login.", "error");
+          return;
+        }
         const message = errorMessage(error);
         setFatalError(message);
         appendActivity(`Failed to load session info: ${message}`, "error");
       }
-      await refreshList();
+      if (sessionLoaded) {
+        await refreshList();
+      }
     };
 
     void bootstrap();
@@ -435,6 +509,17 @@ export function OpsExplorer(): JSX.Element {
             <div className="row" style={{ justifyContent: "space-between" }}>
               <span className="subtle">Auth mode</span>
               <span className="badge">{session?.actor.mode ?? "unknown"}</span>
+            </div>
+            <div className="row">
+              {authRequired ? (
+                <button className="primary" onClick={startLogin}>
+                  Sign in
+                </button>
+              ) : (
+                <button className="ghost" onClick={() => void signOut()} disabled={!session}>
+                  Sign out
+                </button>
+              )}
             </div>
           </div>
 
