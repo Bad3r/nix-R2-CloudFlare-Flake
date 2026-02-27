@@ -8,6 +8,8 @@ on:
       - ".github/workflows/r2-explorer-deploy.yml"
       - "scripts/ci/render-r2-explorer-wrangler-config.sh"
       - "scripts/ci/sync-r2-upload-cors.sh"
+      - "scripts/ci/sync-r2-web-csp.sh"
+      - "scripts/ci/check-r2-web-security.sh"
       - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
     inputs:
@@ -357,6 +359,7 @@ jobs:
       R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW: ${{ vars.R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW }}
       R2E_UPLOAD_S3_BUCKET: ${{ vars.R2E_UPLOAD_S3_BUCKET }}
       R2E_UPLOAD_S3_BUCKET_PREVIEW: ${{ vars.R2E_UPLOAD_S3_BUCKET_PREVIEW }}
+      R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Reject non-main production deploy ref
         run: |
@@ -413,6 +416,15 @@ jobs:
       - name: Build web bundle
         working-directory: r2-explorer
         run: pnpm run build:web
+
+      - name: Sync web CSP transform rule (production)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ./scripts/ci/sync-r2-web-csp.sh \
+            "files.unsigned.sh" \
+            "r2-explorer/web/config/csp.analytics.production.txt"
 
       - name: Sync runtime upload signing secrets (production)
         working-directory: r2-explorer
@@ -494,6 +506,13 @@ jobs:
       - name: Install dependencies for live tests
         working-directory: r2-explorer
         run: pnpm install --frozen-lockfile
+
+      - name: Verify web CSP and analytics markers
+        run: |
+          set -euo pipefail
+          ./scripts/ci/check-r2-web-security.sh \
+            "${R2E_SMOKE_BASE_URL}" \
+            "r2-explorer/web/config/csp.analytics.production.txt"
 
       - name: Run Worker smoke checks
         env:

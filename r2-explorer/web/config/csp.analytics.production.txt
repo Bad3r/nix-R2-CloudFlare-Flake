@@ -1,0 +1,13 @@
+default-src 'self';
+base-uri 'self';
+frame-ancestors 'none';
+object-src 'none';
+form-action 'self';
+manifest-src 'self';
+script-src 'self' 'unsafe-inline' static.cloudflareinsights.com;
+style-src 'self' 'unsafe-inline';
+connect-src 'self' cloudflareinsights.com;
+img-src 'self' data: blob: static.cloudflareinsights.com cloudflareinsights.com;
+font-src 'self' data:;
+worker-src 'self' blob:;
+upgrade-insecure-requests;
