@@ -7,7 +7,7 @@ Provide a repeatable response workflow for R2-Explorer sharing incidents.
 ## When to Use
 
 - Suspected token abuse or leak.
-- Suspected OAuth client credential compromise.
+- Suspected Access service-token compromise.
 - Unexpected public/private route exposure.
 - Worker share API outage or elevated auth failures.
 
@@ -15,7 +15,7 @@ Provide a repeatable response workflow for R2-Explorer sharing incidents.
 
 - On-call operator access to Worker deploy/config controls.
 - Ability to toggle readonly mode.
-- Ability to rotate OAuth client credentials and IdP config.
+- Ability to rotate Access service tokens and Access app config.
 - Access to runtime logs and deployment history.
 
 ## Inputs / Environment Variables
@@ -23,8 +23,8 @@ Provide a repeatable response workflow for R2-Explorer sharing incidents.
 - `R2_EXPLORER_BASE_URL`
 - `R2E_READONLY`
 - `R2E_SHARES_KV`
-- `R2E_IDP_ISSUER`
-- `R2E_IDP_AUDIENCE`
+- `R2E_ACCESS_TEAM_DOMAIN`
+- `R2E_ACCESS_AUD`
 
 ## Procedure (CLI-first)
 
@@ -34,7 +34,7 @@ Provide a repeatable response workflow for R2-Explorer sharing incidents.
 2. Immediate containment (choose minimum required controls):
    - Enable readonly mode (`R2E_READONLY=true`) and redeploy.
    - Revoke affected share tokens.
-   - Rotate OAuth client credentials and revoke compromised clients.
+   - Rotate Access service tokens and revoke compromised tokens.
    - Tighten route policy if exposure is route-based.
 3. Validate containment:
 
@@ -46,7 +46,7 @@ r2 share worker list files documents/test.txt
 
 4. Investigate:
    - Check recent deploy/config changes.
-   - Review IdP issuer/JWKS availability and audience scope contracts.
+   - Review Access domain/JWKS availability and audience scope contracts.
    - Review share token state in `R2E_SHARES_KV`.
 5. Recover:
    - Restore expected policy/config state.
@@ -71,7 +71,7 @@ r2 share worker list files documents/test.txt
 ## Rollback / Recovery
 
 1. Revert to last known-good Worker deployment + env snapshot.
-2. Restore known-good IdP issuer/audience/JWKS configuration.
+2. Restore known-good Access team-domain/audience/JWKS configuration.
 3. Recheck protected/public route behavior.
 4. Re-run share create/list/revoke smoke tests.
 

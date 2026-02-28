@@ -48,11 +48,8 @@ r2 share worker revoke <token-id>
 Required environment variables for Worker-mode CLI calls:
 
 - `R2_EXPLORER_BASE_URL` (for example `https://files.unsigned.sh`)
-- `R2_EXPLORER_OAUTH_CLIENT_ID`
-- `R2_EXPLORER_OAUTH_CLIENT_SECRET`
-- `R2_EXPLORER_OAUTH_TOKEN_URL`
-- optional `R2_EXPLORER_OAUTH_SCOPE` (default: `r2e.read r2e.write r2e.admin`)
-- optional `R2_EXPLORER_OAUTH_RESOURCE` (default: `R2_EXPLORER_BASE_URL`)
+- `R2_EXPLORER_ACCESS_CLIENT_ID`
+- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
 Multi-bucket aliases:
 
@@ -71,37 +68,39 @@ Behavior and constraints:
 - Share URL format: `https://files.unsigned.sh/share/<token-id>`
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
 - `/share/<token-id>` validates expiry/revocation/download limits.
-- `/api/v2/*` routes accept either:
-  - `Authorization: Bearer <token>` (CLI/machine/API clients)
-  - browser session cookie from `/api/v2/auth/login` + `/api/v2/auth/callback`
-- JWT validation is performed in-worker using IdP issuer/audience/JWKS.
+- `/api/v2/*` is gated by Cloudflare Access and validated in-worker from:
+  - `Cf-Access-Jwt-Assertion` request header.
+  - `CF_Authorization` (or `CF_Authorization_*`) cookie.
+- CLI/machine callers authenticate with Access service-token headers:
+  - `CF-Access-Client-Id`
+  - `CF-Access-Client-Secret`
 
 Failure semantics:
 
-- Missing bearer token for `/api/v2/*`: `401 token_missing`
+- Missing Access identity for `/api/v2/*`: `401 access_required` (or Access login redirect at edge)
 - Invalid signature/JWKS/key selection: `401 token_invalid_signature`
 - Issuer/audience mismatch: `401 token_claim_mismatch`
 - Missing required scope: `403 insufficient_scope`
-- Missing verifier config (`R2E_IDP_ISSUER` / `R2E_IDP_AUDIENCE`): `500 idp_config_invalid`
+- Missing verifier config (`R2E_ACCESS_TEAM_DOMAIN` / `R2E_ACCESS_AUD`): `500 access_config_invalid`
 
 ## Edge routing model
 
-Cloudflare edge config should only route paths; auth is enforced in-worker:
+Cloudflare edge config should route paths and keep Access policy split aligned:
 
 1. API routes:
 
 - Domain/path: `files.unsigned.sh/api/v2/*`
-- No Cloudflare Access gate requirement
-- Worker enforces IdP JWT verification (bearer header or session cookie)
+- Cloudflare Access app required (`allow` + `Service Auth`, no `bypass`)
+- Worker enforces Access JWT verification (`Cf-Access-Jwt-Assertion`/`CF_Authorization`)
 
 2. Public share routes:
 
 - Domain/path: `files.unsigned.sh/share/*`
-- Public by token design
+- Public by token design (Access app should use `bypass` policy only)
 
 3. Preview should mirror production semantics:
 
-- `preview.files.unsigned.sh/api/v2/*` authenticated in-worker (bearer or session cookie)
+- `preview.files.unsigned.sh/api/v2/*` Access protected and validated in-worker
 - `preview.files.unsigned.sh/share/*` public by token
 
 Important: `/api/v2/share/*` is protected API surface and requires bearer scope.

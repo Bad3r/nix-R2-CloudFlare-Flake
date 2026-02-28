@@ -8,15 +8,15 @@ export interface Env {
   R2E_PUBLIC_BASE_URL?: string;
   R2E_READONLY?: string;
   R2E_BUCKET_MAP?: string;
-  R2E_IDP_ISSUER?: string;
-  R2E_IDP_AUDIENCE?: string;
-  R2E_IDP_JWKS_URL?: string;
-  R2E_IDP_REQUIRED_SCOPES?: string;
-  R2E_IDP_REQUIRED_SCOPES_READ?: string;
-  R2E_IDP_REQUIRED_SCOPES_WRITE?: string;
-  R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE?: string;
-  R2E_IDP_CLOCK_SKEW_SEC?: string;
-  R2E_IDP_JWKS_CACHE_TTL_SEC?: string;
+  R2E_ACCESS_TEAM_DOMAIN?: string;
+  R2E_ACCESS_AUD?: string;
+  R2E_ACCESS_JWKS_URL?: string;
+  R2E_ACCESS_REQUIRED_SCOPES?: string;
+  R2E_ACCESS_REQUIRED_SCOPES_READ?: string;
+  R2E_ACCESS_REQUIRED_SCOPES_WRITE?: string;
+  R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE?: string;
+  R2E_ACCESS_CLOCK_SKEW_SEC?: string;
+  R2E_ACCESS_JWKS_CACHE_TTL_SEC?: string;
   R2E_UPLOAD_MAX_FILE_BYTES?: string;
   R2E_UPLOAD_MAX_PARTS?: string;
   R2E_UPLOAD_MAX_CONCURRENT_PER_USER?: string;
@@ -30,21 +30,13 @@ export interface Env {
   R2E_UPLOAD_PREFIX_ALLOWLIST?: string;
   R2E_UPLOAD_ALLOWED_ORIGINS?: string;
   R2E_UPLOAD_S3_BUCKET?: string;
-  R2E_WEB_OAUTH_AUTHORIZE_URL?: string;
-  R2E_WEB_OAUTH_TOKEN_URL?: string;
-  R2E_WEB_OAUTH_CLIENT_ID?: string;
-  R2E_WEB_OAUTH_SCOPE?: string;
-  R2E_WEB_OAUTH_RESOURCE?: string;
-  R2E_WEB_OAUTH_REDIRECT_URI?: string;
-  R2E_WEB_COOKIE_NAME?: string;
-  R2E_WEB_COOKIE_MAX_AGE_SEC?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   S3_ACCESS_KEY_ID?: string;
   S3_SECRET_ACCESS_KEY?: string;
   [key: string]: unknown;
 }
 
-export type AuthSource = "bearer_header" | "session_cookie";
+export type AuthSource = "access_header" | "access_cookie";
 
 export interface AuthIdentity {
   email: string | null;
@@ -75,6 +67,6 @@ export interface ApiErrorPayload {
 }
 
 export interface RequestActor {
-  mode: "oauth";
+  mode: "access";
   actor: string;
 }

@@ -5,7 +5,6 @@ import {
   requiredShareManageScopes,
   requiredWriteScopes,
   requireApiIdentity,
-  sessionCookieName,
 } from "./auth";
 import { listBucketBindings, resolveBucket } from "./buckets";
 import { apiError, contentDisposition, HttpError, json, notFound } from "./http";
@@ -84,38 +83,7 @@ type UploadPolicy = {
   prefixAllowlist: string[];
 };
 
-type CookieSameSite = "Lax" | "Strict" | "None";
-
-type CookieOptions = {
-  path: string;
-  maxAgeSec?: number;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: CookieSameSite;
-};
-
-type WebOauthConfig = {
-  authorizeUrl: string;
-  tokenUrl: string;
-  clientId: string;
-  scope: string;
-  resource: string | null;
-  redirectUri: string;
-  sessionCookie: string;
-  sessionCookieMaxAgeSec: number;
-};
-
-type WebOauthTransaction = {
-  state: string;
-  codeVerifier: string;
-  returnTo: string;
-  createdAtSec: number;
-};
-
 const BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const DEFAULT_WEB_COOKIE_MAX_AGE_SEC = 3600;
-const WEB_OAUTH_TRANSACTION_COOKIE_NAME = "r2e_oauth_tx";
-const WEB_OAUTH_TRANSACTION_MAX_AGE_SEC = 600;
 const JSON_BODY_PATHS = new Set([
   "/api/v2/upload/init",
   "/api/v2/upload/sign-part",
@@ -209,311 +177,6 @@ function parseList(value: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-}
-
-function requiredEnvString(name: string, value: string | undefined, errorCode: string): string {
-  const resolved = value?.trim() ?? "";
-  if (!resolved) {
-    throw new HttpError(500, errorCode, `Missing required Worker variable ${name}.`);
-  }
-  return resolved;
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized.endsWith(".localhost");
-}
-
-function parseAbsoluteWebUrl(name: string, raw: string, errorCode: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new HttpError(500, errorCode, `${name} must be an absolute URL.`);
-  }
-  const isHttps = parsed.protocol === "https:";
-  const isLocalHttp = parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname);
-  if (!isHttps && !isLocalHttp) {
-    throw new HttpError(500, errorCode, `${name} must use https (http is allowed for localhost only).`);
-  }
-  if (parsed.username || parsed.password) {
-    throw new HttpError(500, errorCode, `${name} must not include URL credentials.`);
-  }
-  return parsed.toString();
-}
-
-function normalizeReturnTo(raw: string | undefined): string {
-  if (!raw || raw.trim().length === 0) {
-    return "/";
-  }
-  try {
-    const parsed = new URL(raw, "https://r2e.local");
-    if (parsed.origin !== "https://r2e.local") {
-      return "/";
-    }
-    const target = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    if (!target.startsWith("/") || target.startsWith("/api/v2/auth/callback")) {
-      return "/";
-    }
-    return target;
-  } catch {
-    return "/";
-  }
-}
-
-function requestIsHttps(request: Request): boolean {
-  return new URL(request.url).protocol === "https:";
-}
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
-}
-
-function base64UrlDecode(input: string): Uint8Array {
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
-  const remainder = normalized.length % 4;
-  if (remainder === 1) {
-    throw new HttpError(400, "oauth_callback_invalid", "OAuth transaction cookie is malformed.");
-  }
-  const padded = remainder === 0 ? normalized : `${normalized}${"=".repeat(4 - remainder)}`;
-  let decoded = "";
-  try {
-    decoded = atob(padded);
-  } catch {
-    throw new HttpError(400, "oauth_callback_invalid", "OAuth transaction cookie is malformed.");
-  }
-  const bytes = new Uint8Array(decoded.length);
-  for (let index = 0; index < decoded.length; index += 1) {
-    bytes[index] = decoded.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function parseCookieHeader(cookieHeader: string | null): Map<string, string> {
-  const parsed = new Map<string, string>();
-  if (!cookieHeader) {
-    return parsed;
-  }
-  for (const rawPart of cookieHeader.split(";")) {
-    const part = rawPart.trim();
-    if (!part) {
-      continue;
-    }
-    const separator = part.indexOf("=");
-    if (separator <= 0) {
-      continue;
-    }
-    parsed.set(part.slice(0, separator).trim(), part.slice(separator + 1));
-  }
-  return parsed;
-}
-
-function readCookie(request: Request, cookieName: string): string | null {
-  const cookies = parseCookieHeader(request.headers.get("cookie"));
-  const encoded = cookies.get(cookieName);
-  if (encoded === undefined) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(encoded);
-  } catch {
-    return null;
-  }
-}
-
-function serializeCookie(name: string, value: string, options: CookieOptions): string {
-  const parts = [`${name}=${encodeURIComponent(value)}`];
-  parts.push(`Path=${options.path}`);
-  if (typeof options.maxAgeSec === "number") {
-    const maxAge = Math.max(0, Math.floor(options.maxAgeSec));
-    parts.push(`Max-Age=${maxAge}`);
-    if (maxAge === 0) {
-      parts.push("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
-    }
-  }
-  if (options.httpOnly) {
-    parts.push("HttpOnly");
-  }
-  if (options.secure) {
-    parts.push("Secure");
-  }
-  if (options.sameSite) {
-    parts.push(`SameSite=${options.sameSite}`);
-  }
-  return parts.join("; ");
-}
-
-function clearCookie(response: Response, cookieName: string, path: string, secure: boolean): void {
-  response.headers.append(
-    "set-cookie",
-    serializeCookie(cookieName, "", {
-      path,
-      maxAgeSec: 0,
-      httpOnly: true,
-      secure,
-      sameSite: "Lax",
-    }),
-  );
-}
-
-function parseWebOauthTransaction(rawCookie: string): WebOauthTransaction {
-  const decodedJson = new TextDecoder().decode(base64UrlDecode(rawCookie));
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(decodedJson);
-  } catch {
-    throw new HttpError(400, "oauth_callback_invalid", "OAuth transaction cookie is malformed.");
-  }
-  const state = typeof (parsed as { state?: unknown }).state === "string" ? (parsed as { state: string }).state : "";
-  const codeVerifier =
-    typeof (parsed as { codeVerifier?: unknown }).codeVerifier === "string"
-      ? (parsed as { codeVerifier: string }).codeVerifier
-      : "";
-  const createdAtSec =
-    typeof (parsed as { createdAtSec?: unknown }).createdAtSec === "number" &&
-    Number.isFinite((parsed as { createdAtSec: number }).createdAtSec)
-      ? Math.floor((parsed as { createdAtSec: number }).createdAtSec)
-      : 0;
-  const returnTo = normalizeReturnTo(
-    typeof (parsed as { returnTo?: unknown }).returnTo === "string"
-      ? ((parsed as { returnTo: string }).returnTo ?? "/")
-      : "/",
-  );
-  if (!state || !codeVerifier || createdAtSec <= 0) {
-    throw new HttpError(400, "oauth_callback_invalid", "OAuth transaction cookie is malformed.");
-  }
-  return {
-    state,
-    codeVerifier,
-    createdAtSec,
-    returnTo,
-  };
-}
-
-async function pkceCodeChallenge(codeVerifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
-  return base64UrlEncode(new Uint8Array(digest));
-}
-
-function webOauthConfig(request: Request, env: Env): WebOauthConfig {
-  const errorCode = "oauth_web_config_invalid";
-  const authorizeUrl = parseAbsoluteWebUrl(
-    "R2E_WEB_OAUTH_AUTHORIZE_URL",
-    requiredEnvString("R2E_WEB_OAUTH_AUTHORIZE_URL", env.R2E_WEB_OAUTH_AUTHORIZE_URL, errorCode),
-    errorCode,
-  );
-  const tokenUrl = parseAbsoluteWebUrl(
-    "R2E_WEB_OAUTH_TOKEN_URL",
-    requiredEnvString("R2E_WEB_OAUTH_TOKEN_URL", env.R2E_WEB_OAUTH_TOKEN_URL, errorCode),
-    errorCode,
-  );
-  const clientId = requiredEnvString("R2E_WEB_OAUTH_CLIENT_ID", env.R2E_WEB_OAUTH_CLIENT_ID, errorCode);
-  const configuredScope = env.R2E_WEB_OAUTH_SCOPE?.trim();
-  const scope =
-    configuredScope && configuredScope.length > 0
-      ? configuredScope
-      : Array.from(new Set([...requiredReadScopes(env), ...requiredWriteScopes(env), ...requiredShareManageScopes(env)])).join(
-          " ",
-        );
-  const resource = env.R2E_WEB_OAUTH_RESOURCE?.trim() || null;
-  const redirectUri = parseAbsoluteWebUrl(
-    "R2E_WEB_OAUTH_REDIRECT_URI",
-    env.R2E_WEB_OAUTH_REDIRECT_URI?.trim() && env.R2E_WEB_OAUTH_REDIRECT_URI.trim().length > 0
-      ? env.R2E_WEB_OAUTH_REDIRECT_URI.trim()
-      : new URL("/api/v2/auth/callback", request.url).toString(),
-    errorCode,
-  );
-  const sessionCookieMaxAgeSec = envInt(
-    "R2E_WEB_COOKIE_MAX_AGE_SEC",
-    env.R2E_WEB_COOKIE_MAX_AGE_SEC,
-    DEFAULT_WEB_COOKIE_MAX_AGE_SEC,
-    errorCode,
-  );
-  return {
-    authorizeUrl,
-    tokenUrl,
-    clientId,
-    scope,
-    resource,
-    redirectUri,
-    sessionCookie: sessionCookieName(env),
-    sessionCookieMaxAgeSec,
-  };
-}
-
-async function exchangeAuthorizationCode(
-  config: WebOauthConfig,
-  code: string,
-  codeVerifier: string,
-): Promise<{ accessToken: string; expiresInSec: number | null }> {
-  const form = new URLSearchParams();
-  form.set("grant_type", "authorization_code");
-  form.set("client_id", config.clientId);
-  form.set("redirect_uri", config.redirectUri);
-  form.set("code", code);
-  form.set("code_verifier", codeVerifier);
-  if (config.scope) {
-    form.set("scope", config.scope);
-  }
-  if (config.resource) {
-    form.set("resource", config.resource);
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(config.tokenUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        accept: "application/json",
-      },
-      body: form.toString(),
-    });
-  } catch (error) {
-    throw new HttpError(502, "oauth_exchange_failed", "OAuth token exchange request failed.", {
-      cause: String(error),
-    });
-  }
-
-  const rawBody = await response.text();
-  let parsed: unknown = {};
-  if (rawBody) {
-    try {
-      parsed = JSON.parse(rawBody);
-    } catch {
-      throw new HttpError(502, "oauth_exchange_failed", "OAuth token endpoint returned malformed JSON.", {
-        status: response.status,
-      });
-    }
-  }
-
-  if (!response.ok) {
-    throw new HttpError(502, "oauth_exchange_failed", "OAuth token exchange was rejected.", {
-      status: response.status,
-    });
-  }
-
-  const accessToken =
-    typeof (parsed as { access_token?: unknown }).access_token === "string"
-      ? (parsed as { access_token: string }).access_token.trim()
-      : "";
-  if (!accessToken) {
-    throw new HttpError(502, "oauth_exchange_failed", "OAuth token endpoint response is missing access_token.");
-  }
-  const expiresInSec =
-    typeof (parsed as { expires_in?: unknown }).expires_in === "number" &&
-    Number.isFinite((parsed as { expires_in: number }).expires_in) &&
-    (parsed as { expires_in: number }).expires_in > 0
-      ? Math.floor((parsed as { expires_in: number }).expires_in)
-      : null;
-  return {
-    accessToken,
-    expiresInSec,
-  };
 }
 
 function normalizeObjectKey(key: string): string {
@@ -818,7 +481,7 @@ async function incrementShareDownload(env: Env, tokenId: string): Promise<ShareR
 function requestActor(c: { get: (key: "actor") => string }): RequestActor {
   const actor = c.get("actor");
   const payload = {
-    mode: "oauth" as const,
+    mode: "access" as const,
     actor: actor || "unknown",
   };
   return requestActorSchema.parse(payload);
@@ -869,7 +532,7 @@ function jsonValidated<T extends ZodTypeAny>(schema: T, payload: unknown, init?:
 function requireUploadActor(c: { get: (key: "actor") => string }): string {
   const actor = c.get("actor");
   if (!actor || actor.trim().length === 0) {
-    throw new HttpError(401, "token_missing", "Authenticated upload actor is required.");
+    throw new HttpError(401, "access_required", "Authenticated upload actor is required.");
   }
   return actor;
 }
@@ -1030,14 +693,14 @@ async function responseFromObject(
   return new Response(object.body, { status: 200, headers });
 }
 
-const oauthReadMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
+const accessReadMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
   const identity = await requireApiIdentity(c.req.raw, c.env, requiredReadScopes(c.env));
   c.set("actor", identity.email ?? identity.userId ?? "");
   c.set("authSource", identity.source);
   await next();
 };
 
-const oauthWriteMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
+const accessWriteMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
   const identity = await requireApiIdentity(c.req.raw, c.env, requiredWriteScopes(c.env));
   c.set("actor", identity.email ?? identity.userId ?? "");
   c.set("authSource", identity.source);
@@ -1053,7 +716,7 @@ const shareManageMiddleware: MiddlewareHandler<AppContext> = async (c, next) => 
 
 const cookieMutationGuardMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
   const method = c.req.method.toUpperCase();
-  if (method === "POST" && POST_MUTATION_PATHS.has(c.req.path) && c.get("authSource") === "session_cookie") {
+  if (method === "POST" && POST_MUTATION_PATHS.has(c.req.path) && c.get("authSource") === "access_cookie") {
     assertUploadMutationGuards(c.req.raw, c.env);
   }
   await next();
@@ -1074,8 +737,7 @@ export function createApp(): Hono<AppContext> {
     if (
       envBool(c.env.R2E_READONLY, false) &&
       method !== "GET" &&
-      method !== "HEAD" &&
-      !c.req.path.startsWith("/api/v2/auth/")
+      method !== "HEAD"
     ) {
       throw new HttpError(403, "readonly_mode", "This explorer is in readonly mode.");
     }
@@ -1089,107 +751,6 @@ export function createApp(): Hono<AppContext> {
     await next();
   });
 
-  const clearWebAuthCookies = (response: Response, request: Request, env: Env): void => {
-    const secure = requestIsHttps(request);
-    clearCookie(response, sessionCookieName(env), "/", secure);
-    clearCookie(response, WEB_OAUTH_TRANSACTION_COOKIE_NAME, "/api/v2/auth", secure);
-  };
-
-  app.get("/api/v2/auth/login", async (c) => {
-    const config = webOauthConfig(c.req.raw, c.env);
-    const returnTo = normalizeReturnTo(new URL(c.req.raw.url).searchParams.get("return_to") ?? undefined);
-    const state = randomTokenId(32);
-    const codeVerifier = randomTokenId(64);
-    const codeChallenge = await pkceCodeChallenge(codeVerifier);
-    const transaction: WebOauthTransaction = {
-      state,
-      codeVerifier,
-      returnTo,
-      createdAtSec: Math.floor(Date.now() / 1000),
-    };
-    const transactionCookie = base64UrlEncode(new TextEncoder().encode(JSON.stringify(transaction)));
-
-    const authorizeUrl = new URL(config.authorizeUrl);
-    authorizeUrl.searchParams.set("response_type", "code");
-    authorizeUrl.searchParams.set("client_id", config.clientId);
-    authorizeUrl.searchParams.set("redirect_uri", config.redirectUri);
-    authorizeUrl.searchParams.set("state", state);
-    authorizeUrl.searchParams.set("code_challenge", codeChallenge);
-    authorizeUrl.searchParams.set("code_challenge_method", "S256");
-    if (config.scope) {
-      authorizeUrl.searchParams.set("scope", config.scope);
-    }
-    if (config.resource) {
-      authorizeUrl.searchParams.set("resource", config.resource);
-    }
-
-    const response = c.redirect(authorizeUrl.toString(), 302);
-    response.headers.append(
-      "set-cookie",
-      serializeCookie(WEB_OAUTH_TRANSACTION_COOKIE_NAME, transactionCookie, {
-        path: "/api/v2/auth",
-        maxAgeSec: WEB_OAUTH_TRANSACTION_MAX_AGE_SEC,
-        httpOnly: true,
-        secure: requestIsHttps(c.req.raw),
-        sameSite: "Lax",
-      }),
-    );
-    return response;
-  });
-
-  app.get("/api/v2/auth/callback", async (c) => {
-    const config = webOauthConfig(c.req.raw, c.env);
-    const callbackUrl = new URL(c.req.raw.url);
-    const code = callbackUrl.searchParams.get("code")?.trim() ?? "";
-    const state = callbackUrl.searchParams.get("state")?.trim() ?? "";
-    if (!code || !state) {
-      throw new HttpError(400, "oauth_callback_invalid", "OAuth callback is missing required code or state.");
-    }
-
-    const transactionCookie = readCookie(c.req.raw, WEB_OAUTH_TRANSACTION_COOKIE_NAME);
-    if (!transactionCookie) {
-      throw new HttpError(400, "oauth_callback_invalid", "OAuth login transaction cookie is missing.");
-    }
-    const transaction = parseWebOauthTransaction(transactionCookie);
-    if (transaction.state !== state) {
-      throw new HttpError(400, "oauth_callback_invalid", "OAuth callback state does not match login transaction.");
-    }
-    if (Math.floor(Date.now() / 1000) - transaction.createdAtSec > WEB_OAUTH_TRANSACTION_MAX_AGE_SEC) {
-      throw new HttpError(400, "oauth_callback_invalid", "OAuth login transaction has expired. Start sign-in again.");
-    }
-
-    const tokenExchange = await exchangeAuthorizationCode(config, code, transaction.codeVerifier);
-    const sessionMaxAgeSec = tokenExchange.expiresInSec
-      ? Math.max(1, Math.min(config.sessionCookieMaxAgeSec, tokenExchange.expiresInSec))
-      : config.sessionCookieMaxAgeSec;
-    const response = c.redirect(transaction.returnTo, 302);
-    response.headers.append(
-      "set-cookie",
-      serializeCookie(config.sessionCookie, tokenExchange.accessToken, {
-        path: "/",
-        maxAgeSec: sessionMaxAgeSec,
-        httpOnly: true,
-        secure: requestIsHttps(c.req.raw),
-        sameSite: "Lax",
-      }),
-    );
-    clearCookie(response, WEB_OAUTH_TRANSACTION_COOKIE_NAME, "/api/v2/auth", requestIsHttps(c.req.raw));
-    return response;
-  });
-
-  app.post("/api/v2/auth/logout", (c) => {
-    const response = jsonValidated(simpleOkResponseSchema, { ok: true });
-    clearWebAuthCookies(response, c.req.raw, c.env);
-    return response;
-  });
-
-  app.get("/api/v2/auth/logout", (c) => {
-    const returnTo = normalizeReturnTo(new URL(c.req.raw.url).searchParams.get("return_to") ?? undefined);
-    const response = c.redirect(returnTo, 302);
-    clearWebAuthCookies(response, c.req.raw, c.env);
-    return response;
-  });
-
   for (const path of [
     "/api/v2/list",
     "/api/v2/meta",
@@ -1198,7 +759,7 @@ export function createApp(): Hono<AppContext> {
     "/api/v2/server/info",
     "/api/v2/session/info",
   ]) {
-    app.use(path, oauthReadMiddleware);
+    app.use(path, accessReadMiddleware);
   }
 
   for (const path of [
@@ -1209,7 +770,7 @@ export function createApp(): Hono<AppContext> {
     "/api/v2/object/delete",
     "/api/v2/object/move",
   ]) {
-    app.use(path, oauthWriteMiddleware);
+    app.use(path, accessWriteMiddleware);
   }
 
   for (const path of ["/api/v2/share/create", "/api/v2/share/revoke", "/api/v2/share/list"]) {
@@ -1753,7 +1314,7 @@ export function createApp(): Hono<AppContext> {
     const payload = {
       version: WORKER_VERSION,
       auth: {
-        oauthEnabled: true,
+        accessEnabled: true,
       },
       limits: {
         maxShareTtlSec: envInt("R2E_MAX_SHARE_TTL_SEC", c.env.R2E_MAX_SHARE_TTL_SEC, 2592000),

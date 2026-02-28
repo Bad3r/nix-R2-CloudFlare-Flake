@@ -79,10 +79,10 @@ Escalate:
 Failure signature:
 
 - `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
-- `/api/v2/*` calls fail with `token_missing`, `token_invalid_signature`,
+- `/api/v2/*` calls fail with `access_required`, `token_invalid_signature`,
   `token_claim_mismatch`, or `insufficient_scope`.
-- Browser preview/download (`/api/v2/preview`, `/api/v2/download`) returns `401`
-  in a new tab after clicking from the web UI.
+- Browser preview/download (`/api/v2/preview`, `/api/v2/download`) opens an
+  Access login redirect or returns `401` in a new tab.
 
 Confirm:
 
@@ -90,24 +90,21 @@ Confirm:
 # Managed deployments often provide Worker API credentials via a system env
 # file (so your interactive shell may NOT have these exported).
 test -r /run/secrets/r2/explorer.env
-grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_OAUTH_CLIENT_ID|R2_EXPLORER_OAUTH_TOKEN_URL|R2_EXPLORER_OAUTH_RESOURCE)=' /run/secrets/r2/explorer.env
-grep -q '^R2_EXPLORER_OAUTH_CLIENT_SECRET=' /run/secrets/r2/explorer.env
+grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_ACCESS_CLIENT_ID)=' /run/secrets/r2/explorer.env
+grep -q '^R2_EXPLORER_ACCESS_CLIENT_SECRET=' /run/secrets/r2/explorer.env
 
 r2 share worker list files workspace/demo.txt
 ```
 
 Likely root causes:
 
-- Missing/incorrect OAuth client credentials in `R2_EXPLORER_OAUTH_CLIENT_ID`
-  / `R2_EXPLORER_OAUTH_CLIENT_SECRET`.
-- Wrong token endpoint in `R2_EXPLORER_OAUTH_TOKEN_URL`.
-- Missing/wrong `R2_EXPLORER_OAUTH_RESOURCE` causing opaque (non-JWT) tokens.
-- IdP token `aud` claim does not match `R2E_IDP_AUDIENCE`.
-- Token lacks required route scope (`r2.read`, `r2.write`,
-  `r2.share.manage`, or configured equivalents). For current direct-IdP
-  production, defaults are `r2e.read`, `r2e.write`, `r2e.admin`.
-- Browser session cookie missing/expired (web UI must complete
-  `/api/v2/auth/login` -> `/api/v2/auth/callback` before opening preview/download).
+- Missing/incorrect Access service-token credentials in
+  `R2_EXPLORER_ACCESS_CLIENT_ID` / `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
+- Access policy drift on `/api/v2/*` (missing Service Auth policy, unexpected
+  bypass policy, or wrong app host).
+- Access JWT `aud` claim does not match `R2E_ACCESS_AUD`.
+- Token lacks required route scope when `R2E_ACCESS_REQUIRED_SCOPES*` is set.
+- Browser has no valid Access session and needs `/cdn-cgi/access/login`.
 
 Repair:
 
@@ -115,24 +112,13 @@ Repair:
 # For managed NixOS, prefer updating the SOPS-managed source of truth and
 # rebuilding so `/run/secrets/r2/explorer.env` is updated persistently.
 export R2_EXPLORER_BASE_URL="https://files.unsigned.sh"
-export R2_EXPLORER_OAUTH_CLIENT_ID="<oauth-client-id>"
-export R2_EXPLORER_OAUTH_CLIENT_SECRET="<oauth-client-secret>"
-export R2_EXPLORER_OAUTH_TOKEN_URL="https://auth.unsigned.sh/api/auth/oauth2/token"
-export R2_EXPLORER_OAUTH_RESOURCE="https://files.unsigned.sh"
+export R2_EXPLORER_ACCESS_CLIENT_ID="<service-token-client-id>"
+export R2_EXPLORER_ACCESS_CLIENT_SECRET="<service-token-client-secret>"
 
-# Fast bearer-token probe:
-token="$(
-  curl -sS -X POST \
-    -H 'content-type: application/x-www-form-urlencoded' \
-    --data-urlencode 'grant_type=client_credentials' \
-    --data-urlencode "client_id=${R2_EXPLORER_OAUTH_CLIENT_ID}" \
-    --data-urlencode "client_secret=${R2_EXPLORER_OAUTH_CLIENT_SECRET}" \
-    --data-urlencode 'scope=r2e.read r2e.write r2e.admin' \
-    --data-urlencode "resource=${R2_EXPLORER_OAUTH_RESOURCE}" \
-    "${R2_EXPLORER_OAUTH_TOKEN_URL}" | jq -r '.access_token // empty'
-)"
+# Fast Access service-token probe:
 curl -i \
-  -H "authorization: Bearer ${token}" \
+  -H "CF-Access-Client-Id: ${R2_EXPLORER_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${R2_EXPLORER_ACCESS_CLIENT_SECRET}" \
   "${R2_EXPLORER_BASE_URL%/}/api/v2/session/info"
 ```
 
@@ -157,13 +143,19 @@ Failure signature:
 Confirm:
 
 ```bash
-curl -sS "https://auth.unsigned.sh/api/auth/jwks" | jq '.keys | length'
+team_domain="${R2E_ACCESS_TEAM_DOMAIN:-repo.cloudflareaccess.com}"
+team_origin="${team_domain%/}"
+if [[ ${team_origin} != https://* ]]; then
+  team_origin="https://${team_origin#http://}"
+fi
+curl -sS "${team_origin}/cdn-cgi/access/certs" | jq '.keys | length'
 ```
 
 Likely root causes:
 
-- Better Auth IdP JWKS endpoint unavailable or returning invalid payload.
-- DNS/TLS failures reaching the configured `R2E_IDP_JWKS_URL`.
+- Cloudflare Access cert endpoint unavailable or returning invalid payload.
+- DNS/TLS failures reaching the configured `R2E_ACCESS_JWKS_URL` (or team domain
+  default cert endpoint).
 
 Note: The Worker returns `401` (not `502`/`503`) for JWKS fetch failures as a
 fail-closed security posture. All infrastructure errors during JWT validation
@@ -171,9 +163,10 @@ surface as `token_invalid_signature` to avoid leaking internal state.
 
 Repair:
 
-- Check IdP and Cloudflare status for upstream incidents.
+- Check Cloudflare Access status for upstream incidents.
 - Verify JWKS endpoint reachable from a separate network.
-- If IdP URL changed, update `R2E_IDP_ISSUER` / `R2E_IDP_JWKS_URL` and redeploy.
+- If Access domain/endpoint changed, update `R2E_ACCESS_TEAM_DOMAIN` /
+  `R2E_ACCESS_JWKS_URL` and redeploy.
 
 Verify:
 

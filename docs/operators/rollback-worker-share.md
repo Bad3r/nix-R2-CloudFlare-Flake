@@ -23,7 +23,7 @@ regression.
 - Last known-good Worker revision identifier.
 - Last known-good values for:
   - `R2E_READONLY`
-  - IdP verification variables (`R2E_IDP_ISSUER`, `R2E_IDP_AUDIENCE`,
+  - Access verification variables (`R2E_ACCESS_TEAM_DOMAIN`, `R2E_ACCESS_AUD`,
     optional JWKS/scope overrides)
   - bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
     `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
@@ -56,13 +56,13 @@ curl -I https://files.unsigned.sh/share/<token-id>
 ## Verification
 
 - Share lifecycle endpoints return expected status.
-- `/api/v2/*` remains bearer-protected in-worker.
+- `/api/v2/*` remains Access-protected and validated in-worker.
 - `/share/*` remains public-token accessible and token-constrained.
 
 ## Failure Signatures and Triage
 
 - Code rollback succeeded but auth still fails:
-  - stale OAuth client credentials or stale IdP env values.
+  - stale Access service-token credentials or stale Access env values.
 - Public links fail while API works:
   - share token state or route mapping regression.
 - KV-driven behavior inconsistent:

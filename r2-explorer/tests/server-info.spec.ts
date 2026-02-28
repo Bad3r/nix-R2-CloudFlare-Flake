@@ -27,7 +27,7 @@ describe("server info endpoint", () => {
     expect(payload.version).toBeTruthy();
     expect(payload.readonly).toBe(false);
     expect(payload.actor.actor).toBe("ops@example.com");
-    expect(payload.actor.mode).toBe("oauth");
+    expect(payload.actor.mode).toBe("access");
     expect(payload.share.mode).toBe("kv-random-token");
     expect(payload.limits.maxShareTtlSec).toBe(2592000);
   });

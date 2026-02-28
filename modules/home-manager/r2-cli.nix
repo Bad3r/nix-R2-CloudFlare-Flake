@@ -131,9 +131,8 @@ in
         share commands.
 
         Intended for `R2_EXPLORER_BASE_URL`,
-        `R2_EXPLORER_OAUTH_CLIENT_ID`,
-        `R2_EXPLORER_OAUTH_CLIENT_SECRET`, and
-        `R2_EXPLORER_OAUTH_TOKEN_URL`. Use a runtime path (for example
+        `R2_EXPLORER_ACCESS_CLIENT_ID`, and
+        `R2_EXPLORER_ACCESS_CLIENT_SECRET`. Use a runtime path (for example
         `/run/secrets/r2/explorer.env`) to avoid embedding secrets in the Nix store.
       '';
       example = "/run/secrets/r2/explorer.env";

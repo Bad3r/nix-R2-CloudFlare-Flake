@@ -21,11 +21,9 @@ read/list behavior.
 
 - `R2E_READONLY`
 - `R2_EXPLORER_BASE_URL`
-- OAuth env for CLI calls:
-  - `R2_EXPLORER_OAUTH_CLIENT_ID`
-  - `R2_EXPLORER_OAUTH_CLIENT_SECRET`
-  - `R2_EXPLORER_OAUTH_TOKEN_URL`
-  - `R2_EXPLORER_OAUTH_RESOURCE`
+- Access service-token env for CLI calls:
+  - `R2_EXPLORER_ACCESS_CLIENT_ID`
+  - `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
 ## Procedure (CLI-first)
 

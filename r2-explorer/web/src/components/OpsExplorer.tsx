@@ -7,7 +7,6 @@ import {
   fetchSessionInfo,
   listObjects,
   listShares,
-  logoutSession,
   moveObject,
   multipartUpload,
   revokeShare,
@@ -88,13 +87,8 @@ function isAuthRequired(error: unknown): error is ApiError {
   return (
     error instanceof ApiError &&
     error.status === 401 &&
-    (error.code === "oauth_required" || error.code === "token_missing" || error.code === "token_invalid")
+    (error.code === "access_required" || error.code === "token_invalid")
   );
-}
-
-function loginUrl(): string {
-  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  return `/api/v2/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
 function readEtag(object: ObjectMetadata): string {
@@ -219,7 +213,7 @@ export function OpsExplorer(): JSX.Element {
   }, [loadShares, selectedObject]);
 
   const startLogin = useCallback(() => {
-    window.location.assign(loginUrl());
+    window.location.assign("/cdn-cgi/access/login");
   }, []);
 
   const openPreview = useCallback(
@@ -244,21 +238,9 @@ export function OpsExplorer(): JSX.Element {
     [authRequired, startLogin],
   );
 
-  const signOut = useCallback(async () => {
-    try {
-      await logoutSession();
-      setSession(null);
-      setAuthRequired(true);
-      setFolders([]);
-      setObjects([]);
-      setSelectedKey(null);
-      setShares([]);
-      setFatalError("Signed out. Sign in to continue.");
-      appendActivity("Signed out from browser session.", "success");
-    } catch (error) {
-      appendActivity(`Sign out failed: ${errorMessage(error)}`, "error");
-    }
-  }, [appendActivity]);
+  const signOut = useCallback(() => {
+    window.location.assign("/cdn-cgi/access/logout");
+  }, []);
 
   const moveSelection = useCallback(
     (delta: number) => {
@@ -408,7 +390,7 @@ export function OpsExplorer(): JSX.Element {
           setSession(null);
           setAuthRequired(true);
           setFatalError("Sign in required to use the Explorer.");
-          appendActivity("Authentication required. Click Sign in to start OAuth login.", "error");
+          appendActivity("Authentication required. Click Sign in to start Cloudflare Access login.", "error");
           return;
         }
         const message = errorMessage(error);
@@ -516,7 +498,7 @@ export function OpsExplorer(): JSX.Element {
                   Sign in
                 </button>
               ) : (
-                <button className="ghost" onClick={() => void signOut()} disabled={!session}>
+                <button className="ghost" onClick={signOut} disabled={!session}>
                   Sign out
                 </button>
               )}

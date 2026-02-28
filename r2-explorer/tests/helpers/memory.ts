@@ -1,6 +1,6 @@
 import { createHash, createSign, generateKeyPairSync, randomBytes, sign as nodeSign } from "node:crypto";
 import { afterEach, beforeEach } from "vitest";
-import { resetAuthSigningKeyCache, sessionCookieName } from "../../src/auth";
+import { resetAuthSigningKeyCache } from "../../src/auth";
 import type { Env } from "../../src/types";
 
 type KVEntry = {
@@ -599,8 +599,9 @@ export class MemoryUploadSessionNamespace {
   }
 }
 
-export const AUTH_TEST_ISSUER = "https://auth.example.com/api/auth";
-export const AUTH_TEST_AUD = "r2-explorer-test";
+export const AUTH_TEST_TEAM_DOMAIN = "repo.cloudflareaccess.com";
+export const AUTH_TEST_ISSUER = `https://${AUTH_TEST_TEAM_DOMAIN}`;
+export const AUTH_TEST_AUD = "4e6af42fbb5a5c49daa17742abca157c30bac4f734855b695f02e1c4ae849769";
 
 const ACCESS_TEST_KID = "access-kid-test";
 const ACCESS_EDDSA_TEST_KID = "access-kid-test-eddsa";
@@ -670,7 +671,7 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
     payload.scp = options.scp;
   }
   const email = options.email === undefined ? "engineer@example.com" : options.email;
-  const sub = options.sub === undefined ? "oauth-user-id" : options.sub;
+  const sub = options.sub === undefined ? "access-user-id" : options.sub;
   if (email !== null) {
     payload.email = email;
   }
@@ -711,7 +712,7 @@ export function createAccessJwt(options: AccessJwtOptions = {}): string {
 
 export function installAccessJwksFetchMock(): () => void {
   const originalFetch = globalThis.fetch;
-  const jwksUrl = `${AUTH_TEST_ISSUER}/jwks`;
+  const jwksUrl = `${AUTH_TEST_ISSUER}/cdn-cgi/access/certs`;
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url =
@@ -752,7 +753,7 @@ export function useAccessJwksFetchMock(): void {
 }
 
 export function accessHeaders(email = "engineer@example.com", options: AccessJwtOptions = {}): HeadersInit {
-  const userId = options.sub === undefined ? "oauth-user-id" : options.sub;
+  const userId = options.sub === undefined ? "access-user-id" : options.sub;
   const resolvedEmail = options.email === undefined ? email : options.email;
   const jwt = createAccessJwt({
     ...options,
@@ -760,25 +761,25 @@ export function accessHeaders(email = "engineer@example.com", options: AccessJwt
     sub: userId,
   });
   return {
-    authorization: `Bearer ${jwt}`,
+    "cf-access-jwt-assertion": jwt,
   };
 }
 
-export function accessHeadersWithoutJwt(email = "engineer@example.com", userId = "oauth-user-id"): HeadersInit {
+export function accessHeadersWithoutJwt(): HeadersInit {
   return {
-    authorization: `Basic ${Buffer.from(`${email}:${userId}`).toString("base64")}`,
+    "cf-access-jwt-assertion": "",
   };
 }
 
-export function accessSessionCookie(env: Env, email = "engineer@example.com", options: AccessJwtOptions = {}): string {
-  const userId = options.sub === undefined ? "oauth-user-id" : options.sub;
+export function accessSessionCookie(email = "engineer@example.com", options: AccessJwtOptions = {}): string {
+  const userId = options.sub === undefined ? "access-user-id" : options.sub;
   const resolvedEmail = options.email === undefined ? email : options.email;
   const jwt = createAccessJwt({
     ...options,
     email: resolvedEmail,
     sub: userId,
   });
-  return `${sessionCookieName(env)}=${encodeURIComponent(jwt)}`;
+  return `CF_Authorization=${encodeURIComponent(jwt)}`;
 }
 
 export async function createTestEnv(): Promise<{
@@ -806,22 +807,14 @@ export async function createTestEnv(): Promise<{
       files: "FILES_BUCKET",
       photos: "PHOTOS_BUCKET",
     }),
-    R2E_IDP_ISSUER: AUTH_TEST_ISSUER,
-    R2E_IDP_AUDIENCE: AUTH_TEST_AUD,
-    R2E_IDP_JWKS_URL: `${AUTH_TEST_ISSUER}/jwks`,
-    R2E_IDP_REQUIRED_SCOPES_READ: "r2.read",
-    R2E_IDP_REQUIRED_SCOPES_WRITE: "r2.write",
-    R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE: "r2.share.manage",
-    R2E_IDP_CLOCK_SKEW_SEC: "60",
-    R2E_IDP_JWKS_CACHE_TTL_SEC: "300",
-    R2E_WEB_OAUTH_AUTHORIZE_URL: "https://auth.unsigned.sh/api/auth/oauth2/authorize",
-    R2E_WEB_OAUTH_TOKEN_URL: "https://auth.unsigned.sh/api/auth/oauth2/token",
-    R2E_WEB_OAUTH_CLIENT_ID: "r2-explorer-web",
-    R2E_WEB_OAUTH_SCOPE: "r2.read r2.write r2.share.manage",
-    R2E_WEB_OAUTH_RESOURCE: "https://files.example.com",
-    R2E_WEB_OAUTH_REDIRECT_URI: "https://files.example.com/api/v2/auth/callback",
-    R2E_WEB_COOKIE_NAME: "r2e_session",
-    R2E_WEB_COOKIE_MAX_AGE_SEC: "3600",
+    R2E_ACCESS_TEAM_DOMAIN: AUTH_TEST_TEAM_DOMAIN,
+    R2E_ACCESS_AUD: AUTH_TEST_AUD,
+    R2E_ACCESS_JWKS_URL: `${AUTH_TEST_ISSUER}/cdn-cgi/access/certs`,
+    R2E_ACCESS_REQUIRED_SCOPES_READ: "",
+    R2E_ACCESS_REQUIRED_SCOPES_WRITE: "",
+    R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE: "",
+    R2E_ACCESS_CLOCK_SKEW_SEC: "60",
+    R2E_ACCESS_JWKS_CACHE_TTL_SEC: "300",
     R2E_UPLOAD_MAX_FILE_BYTES: "0",
     R2E_UPLOAD_MAX_PARTS: "0",
     R2E_UPLOAD_MAX_CONCURRENT_PER_USER: "0",

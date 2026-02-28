@@ -40,7 +40,7 @@ function uploadHeaders(options?: {
 }
 
 function uploadCookieHeaders(
-  env: Awaited<ReturnType<typeof createTestEnv>>["env"],
+  _env: Awaited<ReturnType<typeof createTestEnv>>["env"],
   options?: {
     email?: string;
     sub?: string;
@@ -52,7 +52,7 @@ function uploadCookieHeaders(
   const email = options?.email ?? "engineer@example.com";
   const sub = options?.sub ?? "user-a";
   const headers: Record<string, string> = {
-    cookie: accessSessionCookie(env, email, { sub }),
+    cookie: accessSessionCookie(email, { sub }),
     "content-type": options?.contentType ?? "application/json",
   };
   if (options?.origin !== null) {
@@ -553,7 +553,7 @@ describe("multipart upload flow", () => {
     expect(((await nonCanonicalCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
   });
 
-  it("does not require Origin/CSRF for bearer-auth upload mutation routes", async () => {
+  it("does not require Origin/CSRF for Access-header upload mutation routes", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
     const response = await initUpload(app, env, {
@@ -565,7 +565,7 @@ describe("multipart upload flow", () => {
     expect(response.status).toBe(200);
   });
 
-  it("accepts OAuth service-token principals on upload mutation routes", async () => {
+  it("accepts Access service-token principals on upload mutation routes", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
     const jwt = createAccessJwt({
@@ -581,7 +581,7 @@ describe("multipart upload flow", () => {
           "content-type": "application/json",
           origin: "https://files.example.com",
           "x-r2e-csrf": "1",
-          authorization: `Bearer ${jwt}`,
+          "cf-access-jwt-assertion": jwt,
         },
         body: JSON.stringify({
           filename: "service-token.bin",

@@ -32,12 +32,8 @@ pnpm dev:web
 
 ## Runtime routes
 
-API routes (OAuth2 bearer-protected except `/share/*` public token URLs):
+API routes (Cloudflare Access protected):
 
-- `GET /api/v2/auth/login`
-- `GET /api/v2/auth/callback`
-- `GET /api/v2/auth/logout`
-- `POST /api/v2/auth/logout`
 - `GET /api/v2/list`
 - `GET /api/v2/meta`
 - `GET /api/v2/download`
@@ -66,22 +62,15 @@ Set these in `wrangler.toml` (or CI-rendered config):
 - `R2E_UPLOAD_SESSIONS` (Durable Object session state for multipart uploads)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/v2/*`)
 - `R2E_BUCKET_MAP` (optional JSON alias map; must include `{"files":"FILES_BUCKET"}`)
-- `R2E_IDP_ISSUER` (required OAuth issuer URL for JWT verification)
-- `R2E_IDP_AUDIENCE` (required audience claim(s), comma-separated)
-- `R2E_IDP_JWKS_URL` (optional; defaults to `${R2E_IDP_ISSUER}/jwks`)
-- `R2E_IDP_REQUIRED_SCOPES_READ` (optional; defaults to `r2.read`)
-- `R2E_IDP_REQUIRED_SCOPES_WRITE` (optional; defaults to `r2.write`)
-- `R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE` (optional; defaults to `r2.share.manage`)
-- `R2E_IDP_CLOCK_SKEW_SEC` (optional; defaults to `60`)
-- `R2E_IDP_JWKS_CACHE_TTL_SEC` (optional; defaults to `300`)
-- `R2E_WEB_OAUTH_AUTHORIZE_URL` (required for browser sign-in redirect)
-- `R2E_WEB_OAUTH_TOKEN_URL` (required for OAuth code exchange on callback)
-- `R2E_WEB_OAUTH_CLIENT_ID` (required for browser OAuth client)
-- `R2E_WEB_OAUTH_SCOPE` (optional; defaults to required API scopes)
-- `R2E_WEB_OAUTH_RESOURCE` (optional; Better Auth token resource)
-- `R2E_WEB_OAUTH_REDIRECT_URI` (optional; defaults to `<base>/api/v2/auth/callback`)
-- `R2E_WEB_COOKIE_NAME` (optional; defaults to `r2e_session`)
-- `R2E_WEB_COOKIE_MAX_AGE_SEC` (optional; defaults to `3600`)
+- `R2E_ACCESS_TEAM_DOMAIN` (required Access team domain, for example `repo.cloudflareaccess.com`)
+- `R2E_ACCESS_AUD` (required Access audience claim(s), comma-separated)
+- `R2E_ACCESS_JWKS_URL` (optional; defaults to `https://<team-domain>/cdn-cgi/access/certs`)
+- `R2E_ACCESS_REQUIRED_SCOPES` (optional generic scope set)
+- `R2E_ACCESS_REQUIRED_SCOPES_READ` (optional read-route scope set; default empty)
+- `R2E_ACCESS_REQUIRED_SCOPES_WRITE` (optional write-route scope set; default empty)
+- `R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE` (optional share-admin scope set; default empty)
+- `R2E_ACCESS_CLOCK_SKEW_SEC` (optional; defaults to `60`)
+- `R2E_ACCESS_JWKS_CACHE_TTL_SEC` (optional; defaults to `300`)
 - `R2E_UPLOAD_S3_BUCKET` (bucket name used when signing direct multipart part uploads)
 
 Upload policy vars (all optional):
@@ -105,34 +94,31 @@ Required API Worker secrets:
 - `S3_ACCESS_KEY_ID`
 - `S3_SECRET_ACCESS_KEY`
 
-## Direct IdP auth model
+## Cloudflare Access auth model
 
-`/api/v2/*` is authenticated directly in-worker with either:
+`/api/v2/*` is authenticated in-worker using Cloudflare Access JWTs from either:
 
-- `Authorization: Bearer <jwt>` for CLI/machine/API clients
-- HttpOnly same-origin session cookie for browser UI flows
+- `Cf-Access-Jwt-Assertion` request header
+- `CF_Authorization` (or `CF_Authorization_*`) cookie for browser requests
 
-Browser sessions are created by `/api/v2/auth/login` (OAuth2 Authorization Code
-with PKCE) and `/api/v2/auth/callback`, so web actions that use `window.open`
-(`preview`/`download`) stay authenticated without exposing tokens to JS.
+Browser sign-in/sign-out is handled by Access directly:
 
-Cloudflare Access is not used as an edge gate for these API routes.
+- Sign in: `/cdn-cgi/access/login`
+- Sign out: `/cdn-cgi/access/logout`
 
-`/share/*` remains public and token-constrained. `/api/v2/share/*` remains in the
-protected API surface and requires bearer scope `r2.share.manage` (or your
-configured equivalent).
+`/share/*` remains public and token-constrained. `/api/v2/share/*` stays in the
+protected API surface and can require `R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE`
+when configured.
 
-CLI machine auth uses OAuth2 client credentials:
+CLI machine auth uses Access service-token headers:
 
-- `R2_EXPLORER_OAUTH_CLIENT_ID`
-- `R2_EXPLORER_OAUTH_CLIENT_SECRET`
-- `R2_EXPLORER_OAUTH_TOKEN_URL`
-- optional `R2_EXPLORER_OAUTH_SCOPE` (default: `r2e.read r2e.write r2e.admin`)
-- optional `R2_EXPLORER_OAUTH_RESOURCE` (default: `R2_EXPLORER_BASE_URL`)
+- `R2_EXPLORER_ACCESS_CLIENT_ID`
+- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
-For Better Auth IdP, include `resource` in client-credentials token requests so
-the access token is a JWT (opaque tokens without `resource` are rejected by the
-Worker verifier).
+Access policy contract expected by CI and smoke checks:
+
+- `files.unsigned.sh/api/v2/*`: Access app with `allow` + `Service Auth`, no `bypass`
+- `files.unsigned.sh/share/*`: Access app with `bypass`
 
 ## Deploy
 
@@ -198,5 +184,5 @@ Route split:
 - API Worker: `preview.files.unsigned.sh/api/v2/*` and
   `preview.files.unsigned.sh/share/*`
 - Auth model:
-  - API auth is enforced in-worker via Better Auth IdP bearer JWT validation
+  - API auth is enforced in-worker via Cloudflare Access JWT validation
   - `preview.files.unsigned.sh/share/*` remains publicly reachable by token

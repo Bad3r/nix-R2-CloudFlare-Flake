@@ -238,9 +238,8 @@ assert_share_exhaustion() {
 require_env "R2E_SMOKE_BASE_URL"
 require_env "R2E_SMOKE_BUCKET"
 require_env "R2E_SMOKE_KEY"
-require_env "R2E_SMOKE_OAUTH_CLIENT_ID"
-require_env "R2E_SMOKE_OAUTH_CLIENT_SECRET"
-require_env "R2E_SMOKE_OAUTH_TOKEN_URL"
+require_env "R2E_SMOKE_ACCESS_CLIENT_ID"
+require_env "R2E_SMOKE_ACCESS_CLIENT_SECRET"
 
 require_command "jq"
 require_command "curl"
@@ -257,10 +256,8 @@ else
 fi
 
 export R2_EXPLORER_BASE_URL="${R2E_SMOKE_BASE_URL}"
-export R2_EXPLORER_OAUTH_CLIENT_ID="${R2E_SMOKE_OAUTH_CLIENT_ID}"
-export R2_EXPLORER_OAUTH_CLIENT_SECRET="${R2E_SMOKE_OAUTH_CLIENT_SECRET}"
-export R2_EXPLORER_OAUTH_TOKEN_URL="${R2E_SMOKE_OAUTH_TOKEN_URL}"
-export R2_EXPLORER_OAUTH_RESOURCE="${R2E_SMOKE_OAUTH_RESOURCE:-${R2E_SMOKE_BASE_URL%/}}"
+export R2_EXPLORER_ACCESS_CLIENT_ID="${R2E_SMOKE_ACCESS_CLIENT_ID}"
+export R2_EXPLORER_ACCESS_CLIENT_SECRET="${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
 
 ttl="${R2E_SMOKE_TTL:-10m}"
 SMOKE_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_TIMEOUT:-60}" "R2E_SMOKE_TIMEOUT" "60")"
@@ -271,30 +268,6 @@ SMOKE_SHARE_EXHAUSTION_RETRIES="$(
   parse_non_negative_int "${R2E_SMOKE_SHARE_EXHAUSTION_RETRIES:-5}" "R2E_SMOKE_SHARE_EXHAUSTION_RETRIES" "5"
 )"
 
-oauth_response="$(
-  curl -sS \
-    -X POST \
-    -H "content-type: application/x-www-form-urlencoded" \
-    --data-urlencode "grant_type=client_credentials" \
-    --data-urlencode "client_id=${R2E_SMOKE_OAUTH_CLIENT_ID}" \
-    --data-urlencode "client_secret=${R2E_SMOKE_OAUTH_CLIENT_SECRET}" \
-    --data-urlencode "scope=${R2E_SMOKE_OAUTH_SCOPE:-r2e.read r2e.write r2e.admin}" \
-    --data-urlencode "resource=${R2E_SMOKE_OAUTH_RESOURCE:-${R2E_SMOKE_BASE_URL%/}}" \
-    --max-time "${SMOKE_TIMEOUT_SEC}" \
-    --connect-timeout "${SMOKE_CONNECT_TIMEOUT_SEC}" \
-    "${R2E_SMOKE_OAUTH_TOKEN_URL}"
-)"
-oauth_access_token="$(jq -r '.access_token // empty' <<<"${oauth_response}")"
-if [[ -z ${oauth_access_token} ]]; then
-  echo "${oauth_response}" >&2
-  fail "failed to obtain OAuth bearer token from ${R2E_SMOKE_OAUTH_TOKEN_URL}"
-fi
-oauth_token_segments="$(awk -F. '{ print NF }' <<<"${oauth_access_token}")"
-if [[ ${oauth_token_segments} -ne 3 ]]; then
-  echo "${oauth_response}" >&2
-  fail "token endpoint returned non-JWT access token; set R2E_SMOKE_OAUTH_RESOURCE to the expected audience URL."
-fi
-
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
 echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
 preflight_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke-preflight.XXXXXX")"
@@ -303,11 +276,22 @@ preflight_cleanup() {
 }
 trap preflight_cleanup EXIT
 
-assert_no_cloudflare_access_redirect \
-  "API preflight" \
-  "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" \
-  "${preflight_tmp_dir}/api-preflight.body" \
-  "${preflight_tmp_dir}/api-preflight.headers"
+assert_http_status "401,302" "unauthenticated API preflight" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${preflight_tmp_dir}/api-preflight.body" "false" \
+  -D "${preflight_tmp_dir}/api-preflight.headers"
+
+if [[ ${LAST_HTTP_STATUS} == "302" ]]; then
+  preflight_location="$(
+    awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2; exit }' "${preflight_tmp_dir}/api-preflight.headers"
+  )"
+  if [[ ${preflight_location} != *"/cdn-cgi/access/login"* ]]; then
+    fail "unauthenticated API preflight redirected to unexpected location: ${preflight_location}"
+  fi
+else
+  preflight_error_code="$(jq -r '.error.code // empty' "${preflight_tmp_dir}/api-preflight.body" 2>/dev/null || true)"
+  if [[ -n ${preflight_error_code} && ${preflight_error_code} != "access_required" ]]; then
+    fail "unauthenticated API preflight returned unexpected error code: ${preflight_error_code}"
+  fi
+fi
 
 create_json="$(
   "${R2_BIN}" share worker create \
@@ -346,21 +330,14 @@ assert_http_status "200" "first download" "${share_url}" "${first_download_body}
 second_download_body="${tmp_dir}/second-download.body"
 assert_share_exhaustion "${share_url}" "${second_download_body}"
 
-api_probe_body="${tmp_dir}/api-probe.body"
-assert_http_status "401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_probe_body}" "false"
-
-api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
-if [[ -n ${api_error_code} && ${api_error_code} != "token_missing" ]]; then
-  fail "unauthenticated /api/v2/session/info returned unexpected error code: ${api_error_code}"
-fi
-
 api_authed_probe_body="${tmp_dir}/api-authed-probe.body"
 assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_authed_probe_body}" "false" \
-  -H "authorization: Bearer ${oauth_access_token}"
+  -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
 
 api_authed_mode="$(jq -r '.actor.mode // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
-if [[ ${api_authed_mode} != "oauth" ]]; then
-  fail "authenticated /api/v2/session/info did not return actor.mode=oauth (got '${api_authed_mode}')"
+if [[ ${api_authed_mode} != "access" ]]; then
+  fail "authenticated /api/v2/session/info did not return actor.mode=access (got '${api_authed_mode}')"
 fi
 
 api_authed_version="$(jq -r '.version // empty' "${api_authed_probe_body}" 2>/dev/null || true)"

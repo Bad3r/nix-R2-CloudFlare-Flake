@@ -12,7 +12,7 @@ const md5String = z
 
 export const requestActorSchema = z
   .object({
-    mode: z.literal("oauth"),
+    mode: z.literal("access"),
     actor: z.string().min(1),
   })
   .strict();
@@ -250,7 +250,7 @@ export const serverInfoResponseSchema = z
     version: z.string(),
     auth: z
       .object({
-        oauthEnabled: z.boolean(),
+        accessEnabled: z.boolean(),
       })
       .strict(),
     limits: z

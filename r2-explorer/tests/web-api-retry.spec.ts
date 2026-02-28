@@ -46,7 +46,7 @@ describe("web api retry behavior", () => {
         jsonResponse({
           version: "test-version",
           readonly: false,
-          actor: { mode: "oauth", actor: "ops@example.com" },
+          actor: { mode: "access", actor: "ops@example.com" },
           limits: {
             uiMaxListLimit: 200,
             upload: {

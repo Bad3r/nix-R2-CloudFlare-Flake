@@ -1,9 +1,8 @@
 import { HttpError } from "./http";
 import type { AuthIdentity, Env } from "./types";
 
-const DEFAULT_IDP_CLOCK_SKEW_SEC = 60;
-const DEFAULT_IDP_JWKS_CACHE_TTL_SEC = 300;
-const DEFAULT_WEB_SESSION_COOKIE_NAME = "r2e_session";
+const DEFAULT_ACCESS_CLOCK_SKEW_SEC = 60;
+const DEFAULT_ACCESS_JWKS_CACHE_TTL_SEC = 300;
 
 type AuthJwtHeader = {
   alg?: unknown;
@@ -87,45 +86,33 @@ function requiredScopes(
   if (fromGeneric.length > 0) {
     return fromGeneric;
   }
+  if (!fallback.trim()) {
+    return [];
+  }
   return [fallback];
 }
 
 export function requiredReadScopes(env: Env): string[] {
-  return requiredScopes(env.R2E_IDP_REQUIRED_SCOPES_READ, env.R2E_IDP_REQUIRED_SCOPES, "r2.read");
+  return requiredScopes(env.R2E_ACCESS_REQUIRED_SCOPES_READ, env.R2E_ACCESS_REQUIRED_SCOPES, "");
 }
 
 export function requiredWriteScopes(env: Env): string[] {
-  return requiredScopes(env.R2E_IDP_REQUIRED_SCOPES_WRITE, env.R2E_IDP_REQUIRED_SCOPES, "r2.write");
+  return requiredScopes(env.R2E_ACCESS_REQUIRED_SCOPES_WRITE, env.R2E_ACCESS_REQUIRED_SCOPES, "");
 }
 
 export function requiredShareManageScopes(env: Env): string[] {
   return requiredScopes(
-    env.R2E_IDP_REQUIRED_SCOPES_SHARE_MANAGE,
-    env.R2E_IDP_REQUIRED_SCOPES,
-    "r2.share.manage",
+    env.R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE,
+    env.R2E_ACCESS_REQUIRED_SCOPES,
+    "",
   );
 }
 
-function extractBearerJwt(authorizationHeader: string | null): string | null {
-  if (!authorizationHeader) {
+function extractAccessHeaderJwt(accessHeader: string | null): string | null {
+  if (accessHeader === null) {
     return null;
   }
-  const match = /^\s*Bearer\s+(.+?)\s*$/iu.exec(authorizationHeader);
-  if (!match) {
-    return "";
-  }
-  return match[1] ?? "";
-}
-
-export function sessionCookieName(env: Env | undefined): string {
-  const configured = env?.R2E_WEB_COOKIE_NAME?.trim();
-  if (!configured) {
-    return DEFAULT_WEB_SESSION_COOKIE_NAME;
-  }
-  if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u.test(configured)) {
-    throw new HttpError(500, "oauth_web_config_invalid", "R2E_WEB_COOKIE_NAME contains unsupported characters.");
-  }
-  return configured;
+  return accessHeader.trim();
 }
 
 function parseCookies(cookieHeader: string | null): Map<string, string> {
@@ -151,10 +138,17 @@ function parseCookies(cookieHeader: string | null): Map<string, string> {
   return parsed;
 }
 
-function extractSessionJwt(request: Request, env: Env | undefined): string | null {
-  const cookieName = sessionCookieName(env);
+function extractAccessCookieJwt(request: Request): string | null {
   const cookies = parseCookies(request.headers.get("cookie"));
-  const encodedToken = cookies.get(cookieName);
+  let encodedToken = cookies.get("CF_Authorization");
+  if (encodedToken === undefined) {
+    for (const [name, value] of cookies.entries()) {
+      if (name.startsWith("CF_Authorization_")) {
+        encodedToken = value;
+        break;
+      }
+    }
+  }
   if (encodedToken === undefined) {
     return null;
   }
@@ -165,88 +159,99 @@ function extractSessionJwt(request: Request, env: Env | undefined): string | nul
   }
 }
 
-export function extractAuthIdentity(request: Request, env?: Env): AuthIdentity | null {
-  const jwt = extractBearerJwt(request.headers.get("authorization"));
+export function extractAuthIdentity(request: Request): AuthIdentity | null {
+  const jwt = extractAccessHeaderJwt(request.headers.get("cf-access-jwt-assertion"));
   if (jwt !== null) {
     return {
       email: null,
       userId: null,
       jwt,
-      source: "bearer_header",
+      source: "access_header",
     };
   }
 
-  const sessionJwt = extractSessionJwt(request, env);
-  if (sessionJwt === null) {
+  const cookieJwt = extractAccessCookieJwt(request);
+  if (cookieJwt === null) {
     return null;
   }
 
   return {
     email: null,
     userId: null,
-    jwt: sessionJwt,
-    source: "session_cookie",
+    jwt: cookieJwt,
+    source: "access_cookie",
   };
 }
 
-function normalizeIdpIssuer(env: Env): string {
-  const raw = env.R2E_IDP_ISSUER?.trim() ?? "";
+function normalizeAccessTeamDomain(env: Env): string {
+  const raw = env.R2E_ACCESS_TEAM_DOMAIN?.trim() ?? "";
   if (raw.length === 0) {
-    throw new HttpError(500, "idp_config_invalid", "Missing required Worker variable R2E_IDP_ISSUER.");
+    throw new HttpError(500, "access_config_invalid", "Missing required Worker variable R2E_ACCESS_TEAM_DOMAIN.");
   }
 
   let parsed: URL;
   try {
-    parsed = new URL(raw);
+    parsed = new URL(/^https?:\/\//iu.test(raw) ? raw : `https://${raw}`);
   } catch {
-    throw new HttpError(500, "idp_config_invalid", "R2E_IDP_ISSUER must be an absolute https URL.");
+    throw new HttpError(
+      500,
+      "access_config_invalid",
+      "R2E_ACCESS_TEAM_DOMAIN must be a hostname or absolute https URL.",
+    );
   }
   if (parsed.protocol !== "https:") {
-    throw new HttpError(500, "idp_config_invalid", "R2E_IDP_ISSUER must use https.");
+    throw new HttpError(500, "access_config_invalid", "R2E_ACCESS_TEAM_DOMAIN must use https.");
   }
   if (parsed.search || parsed.hash) {
-    throw new HttpError(500, "idp_config_invalid", "R2E_IDP_ISSUER must not include query or hash.");
+    throw new HttpError(500, "access_config_invalid", "R2E_ACCESS_TEAM_DOMAIN must not include query or hash.");
+  }
+  if (parsed.pathname && parsed.pathname !== "/") {
+    throw new HttpError(
+      500,
+      "access_config_invalid",
+      "R2E_ACCESS_TEAM_DOMAIN must not include a path. Use R2E_ACCESS_JWKS_URL to override cert endpoint.",
+    );
   }
 
-  return parsed.toString().replace(/\/+$/u, "");
+  return `${parsed.protocol}//${parsed.host}`;
 }
 
-function requiredIdpAudiences(env: Env): string[] {
-  const raw = env.R2E_IDP_AUDIENCE?.trim() ?? "";
+function requiredAccessAudiences(env: Env): string[] {
+  const raw = env.R2E_ACCESS_AUD?.trim() ?? "";
   if (raw.length === 0) {
-    throw new HttpError(500, "idp_config_invalid", "Missing required Worker variable R2E_IDP_AUDIENCE.");
+    throw new HttpError(500, "access_config_invalid", "Missing required Worker variable R2E_ACCESS_AUD.");
   }
   const audiences = raw
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
   if (audiences.length === 0) {
-    throw new HttpError(500, "idp_config_invalid", "R2E_IDP_AUDIENCE must contain at least one value.");
+    throw new HttpError(500, "access_config_invalid", "R2E_ACCESS_AUD must contain at least one value.");
   }
   return audiences;
 }
 
-function normalizeIdpJwksUrl(env: Env, issuer: string): string {
-  const raw = env.R2E_IDP_JWKS_URL?.trim();
-  const candidate = raw && raw.length > 0 ? raw : `${issuer}/jwks`;
+function normalizeAccessJwksUrl(env: Env, teamDomain: string): string {
+  const raw = env.R2E_ACCESS_JWKS_URL?.trim();
+  const candidate = raw && raw.length > 0 ? raw : `${teamDomain}/cdn-cgi/access/certs`;
   let parsed: URL;
   try {
     parsed = new URL(candidate);
   } catch {
-    throw new HttpError(500, "idp_config_invalid", "R2E_IDP_JWKS_URL must be an absolute https URL.");
+    throw new HttpError(500, "access_config_invalid", "R2E_ACCESS_JWKS_URL must be an absolute https URL.");
   }
   if (parsed.protocol !== "https:") {
-    throw new HttpError(500, "idp_config_invalid", "R2E_IDP_JWKS_URL must use https.");
+    throw new HttpError(500, "access_config_invalid", "R2E_ACCESS_JWKS_URL must use https.");
   }
   return parsed.toString();
 }
 
-function idpClockSkewSeconds(env: Env): number {
-  return parseNonNegativeInt(env.R2E_IDP_CLOCK_SKEW_SEC, DEFAULT_IDP_CLOCK_SKEW_SEC);
+function accessClockSkewSeconds(env: Env): number {
+  return parseNonNegativeInt(env.R2E_ACCESS_CLOCK_SKEW_SEC, DEFAULT_ACCESS_CLOCK_SKEW_SEC);
 }
 
-function idpJwksCacheTtlSeconds(env: Env): number {
-  return parsePositiveInt(env.R2E_IDP_JWKS_CACHE_TTL_SEC, DEFAULT_IDP_JWKS_CACHE_TTL_SEC);
+function accessJwksCacheTtlSeconds(env: Env): number {
+  return parsePositiveInt(env.R2E_ACCESS_JWKS_CACHE_TTL_SEC, DEFAULT_ACCESS_JWKS_CACHE_TTL_SEC);
 }
 
 function decodeBase64Url(input: string): Uint8Array {
@@ -349,54 +354,54 @@ function tokenScopes(payload: AuthJwtPayload): Set<string> {
   return scopes;
 }
 
-function validateIdpClaims(payload: AuthJwtPayload, issuer: string, expectedAudiences: string[], clockSkewSec: number): void {
+function validateAccessClaims(payload: AuthJwtPayload, issuer: string, expectedAudiences: string[], clockSkewSec: number): void {
   const tokenIssuer = normalizeIssuerClaim(claimString(payload.iss));
   if (!tokenIssuer || tokenIssuer !== issuer) {
-    throw new HttpError(401, "token_claim_mismatch", "Bearer JWT issuer does not match expected issuer.");
+    throw new HttpError(401, "token_claim_mismatch", "Access JWT issuer does not match expected team domain.");
   }
 
   const aud = payload.aud;
   if (typeof aud === "string") {
     if (!expectedAudiences.includes(aud)) {
-      throw new HttpError(401, "token_claim_mismatch", "Bearer JWT audience does not match expected value.");
+      throw new HttpError(401, "token_claim_mismatch", "Access JWT audience does not match expected value.");
     }
   } else if (Array.isArray(aud)) {
     const audValues = aud.filter((value): value is string => typeof value === "string");
     const matches = expectedAudiences.some((expected) => audValues.includes(expected));
     if (!matches) {
-      throw new HttpError(401, "token_claim_mismatch", "Bearer JWT audience does not match expected value.");
+      throw new HttpError(401, "token_claim_mismatch", "Access JWT audience does not match expected value.");
     }
   } else {
-    throw new HttpError(401, "token_claim_mismatch", "Bearer JWT audience claim is missing or invalid.");
+    throw new HttpError(401, "token_claim_mismatch", "Access JWT audience claim is missing or invalid.");
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
   const exp = parseNumericClaim(payload.exp, "exp");
   if (exp + clockSkewSec <= nowSec) {
-    throw new HttpError(401, "token_invalid", "Bearer JWT is expired.");
+    throw new HttpError(401, "token_invalid", "Access JWT is expired.");
   }
 
   if (payload.nbf !== undefined) {
     const nbf = parseNumericClaim(payload.nbf, "nbf");
     if (nbf > nowSec + clockSkewSec) {
-      throw new HttpError(401, "token_invalid", "Bearer JWT is not valid yet.");
+      throw new HttpError(401, "token_invalid", "Access JWT is not valid yet.");
     }
   }
 }
 
-async function fetchIdpSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKeys> {
+async function fetchAccessSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKeys> {
   let response: Response;
   try {
     response = await fetch(jwksUrl, { method: "GET" });
   } catch (error) {
-    throw new HttpError(401, "token_invalid_signature", "Failed to fetch OAuth signing keys.", {
+    throw new HttpError(401, "token_invalid_signature", "Failed to fetch Cloudflare Access signing keys.", {
       cause: String(error),
       jwksUrl,
     });
   }
 
   if (!response.ok) {
-    throw new HttpError(401, "token_invalid_signature", "Failed to fetch OAuth signing keys.", {
+    throw new HttpError(401, "token_invalid_signature", "Failed to fetch Cloudflare Access signing keys.", {
       jwksUrl,
       status: response.status,
     });
@@ -406,7 +411,7 @@ async function fetchIdpSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKe
   try {
     payload = await response.json();
   } catch (error) {
-    throw new HttpError(401, "token_invalid_signature", "OAuth signing keys response is not valid JSON.", {
+    throw new HttpError(401, "token_invalid_signature", "Access certs response is not valid JSON.", {
       cause: String(error),
       jwksUrl,
     });
@@ -414,7 +419,7 @@ async function fetchIdpSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKe
 
   const keysRaw = (payload as { keys?: unknown })?.keys;
   if (!Array.isArray(keysRaw) || keysRaw.length === 0) {
-    throw new HttpError(401, "token_invalid_signature", "OAuth signing keys response is missing keys.");
+    throw new HttpError(401, "token_invalid_signature", "Access certs response is missing keys.");
   }
 
   const keysByKidAndAlg = new Map<string, CryptoKey>();
@@ -463,7 +468,7 @@ async function fetchIdpSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKe
   }
 
   if (fallbackByAlg.size === 0) {
-    throw new HttpError(401, "token_invalid_signature", "No usable OAuth signing keys were found.");
+    throw new HttpError(401, "token_invalid_signature", "No usable Access signing keys were found.");
   }
 
   return {
@@ -473,7 +478,7 @@ async function fetchIdpSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKe
   };
 }
 
-async function idpSigningKeys(
+async function accessSigningKeys(
   cacheKey: string,
   jwksUrl: string,
   ttlSec: number,
@@ -484,7 +489,7 @@ async function idpSigningKeys(
   if (!forceRefresh && cached && nowMs - cached.fetchedAtMs < ttlSec * 1000) {
     return cached;
   }
-  const fresh = await fetchIdpSigningKeys(jwksUrl);
+  const fresh = await fetchAccessSigningKeys(jwksUrl);
   authSigningKeyCache.set(cacheKey, fresh);
   return fresh;
 }
@@ -493,7 +498,7 @@ function parseSupportedJwtAlg(raw: unknown): SupportedJwtAlg {
   if (raw === "RS256" || raw === "EdDSA") {
     return raw;
   }
-  throw new HttpError(401, "token_invalid_signature", "Bearer JWT uses unsupported signing algorithm.");
+  throw new HttpError(401, "token_invalid_signature", "Access JWT uses unsupported signing algorithm.");
 }
 
 function keyForJwt(header: AuthJwtHeader, keys: CachedAuthSigningKeys, alg: SupportedJwtAlg): CryptoKey | null {
@@ -523,29 +528,29 @@ async function verifyJwtSignature(
   );
 }
 
-async function validateIdpJwt(jwt: string, env: Env): Promise<AuthJwtPayload> {
-  const issuer = normalizeIdpIssuer(env);
-  const expectedAudiences = requiredIdpAudiences(env);
-  const jwksUrl = normalizeIdpJwksUrl(env, issuer);
-  const clockSkewSec = idpClockSkewSeconds(env);
-  const cacheTtlSec = idpJwksCacheTtlSeconds(env);
+async function validateAccessJwt(jwt: string, env: Env): Promise<AuthJwtPayload> {
+  const issuer = normalizeAccessTeamDomain(env);
+  const expectedAudiences = requiredAccessAudiences(env);
+  const jwksUrl = normalizeAccessJwksUrl(env, issuer);
+  const clockSkewSec = accessClockSkewSeconds(env);
+  const cacheTtlSec = accessJwksCacheTtlSeconds(env);
   const cacheKey = `${issuer}|${jwksUrl}`;
 
   const parsed = parseAuthJwt(jwt);
   const jwtAlg = parseSupportedJwtAlg(parsed.header.alg);
 
   const signingInput = `${parsed.encodedHeader}.${parsed.encodedPayload}`;
-  let keys = await idpSigningKeys(cacheKey, jwksUrl, cacheTtlSec);
+  let keys = await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec);
   let key = keyForJwt(parsed.header, keys, jwtAlg);
   if (!key) {
-    keys = await idpSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
+    keys = await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
     key = keyForJwt(parsed.header, keys, jwtAlg);
   }
   if (!key) {
     throw new HttpError(
       401,
       "token_invalid_signature",
-      `Bearer JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
+      `Access JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
     );
   }
 
@@ -556,13 +561,13 @@ async function validateIdpJwt(jwt: string, env: Env): Promise<AuthJwtPayload> {
     verified = false;
   }
   if (!verified) {
-    const refreshed = await idpSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
+    const refreshed = await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
     const refreshedKey = keyForJwt(parsed.header, refreshed, jwtAlg);
     if (!refreshedKey) {
       throw new HttpError(
         401,
         "token_invalid_signature",
-        `Bearer JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
+        `Access JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
       );
     }
     try {
@@ -572,10 +577,10 @@ async function validateIdpJwt(jwt: string, env: Env): Promise<AuthJwtPayload> {
     }
   }
   if (!verified) {
-    throw new HttpError(401, "token_invalid_signature", "Bearer JWT signature validation failed.");
+    throw new HttpError(401, "token_invalid_signature", "Access JWT signature validation failed.");
   }
 
-  validateIdpClaims(parsed.payload, issuer, expectedAudiences, clockSkewSec);
+  validateAccessClaims(parsed.payload, issuer, expectedAudiences, clockSkewSec);
   return parsed.payload;
 }
 
@@ -586,7 +591,7 @@ function requireScopes(payload: AuthJwtPayload, requiredScopes: string[]): void 
   const tokenScopeSet = tokenScopes(payload);
   const missing = requiredScopes.filter((scope) => !tokenScopeSet.has(scope));
   if (missing.length > 0) {
-    throw new HttpError(403, "insufficient_scope", "Bearer token is missing required scopes.", {
+    throw new HttpError(403, "insufficient_scope", "Access JWT is missing required scopes.", {
       missing,
     });
   }
@@ -597,18 +602,18 @@ export async function requireApiIdentity(
   env: Env,
   requiredScopes: string[] = [],
 ): Promise<AuthIdentity> {
-  const identity = extractAuthIdentity(request, env);
+  const identity = extractAuthIdentity(request);
   if (!identity) {
-    throw new HttpError(401, "token_missing", "OAuth bearer token or session cookie is required for protected API routes.");
+    throw new HttpError(401, "access_required", "Cloudflare Access authentication is required for protected API routes.");
   }
   if (!identity.jwt) {
-    if (identity.source === "bearer_header") {
-      throw new HttpError(401, "token_invalid", "Authorization header must use Bearer authentication.");
+    if (identity.source === "access_header") {
+      throw new HttpError(401, "token_invalid", "cf-access-jwt-assertion header is present but empty.");
     }
-    throw new HttpError(401, "token_invalid", "Session cookie does not contain a valid OAuth access token.");
+    throw new HttpError(401, "token_invalid", "CF_Authorization cookie does not contain a valid Access JWT.");
   }
 
-  const jwtPayload = await validateIdpJwt(identity.jwt, env);
+  const jwtPayload = await validateAccessJwt(identity.jwt, env);
   requireScopes(jwtPayload, requiredScopes);
 
   const jwtEmail = claimString(jwtPayload.email);
@@ -620,7 +625,7 @@ export async function requireApiIdentity(
     throw new HttpError(
       401,
       "token_invalid",
-      "OAuth JWT is missing usable principal claims (email or sub).",
+      "Access JWT is missing usable principal claims (email, sub, common_name, or service_token_id).",
     );
   }
   return {
