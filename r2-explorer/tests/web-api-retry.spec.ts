@@ -150,7 +150,10 @@ describe("web api retry behavior", () => {
           partNumber: 1,
           url: "https://upload.example.test/part-1",
           method: "PUT",
-          headers: {},
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-length": "4",
+          },
           expiresAt: "2099-01-01T00:00:00.000Z",
         });
       }
@@ -192,5 +195,15 @@ describe("web api retry behavior", () => {
 
     expect(completed.key).toBe("uploads/archive.bin");
     expect(partUploadAttempts).toBe(2);
+    const uploadPartCall = fetchMock.mock.calls.find((call) => {
+      const input = call[0];
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      return url === "https://upload.example.test/part-1";
+    });
+    expect(uploadPartCall).toBeTruthy();
+    const uploadHeaders = uploadPartCall?.[1]?.headers;
+    const normalizedHeaders = new Headers(uploadHeaders as HeadersInit);
+    expect(normalizedHeaders.get("content-type")).toBe("application/octet-stream");
+    expect(normalizedHeaders.has("content-length")).toBe(false);
   });
 });
