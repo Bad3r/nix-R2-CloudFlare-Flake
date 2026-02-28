@@ -6,8 +6,6 @@ const execFileAsync = promisify(execFile);
 
 const REQUIRED_ENV = [
   "R2E_SMOKE_BASE_URL",
-  "R2E_SMOKE_ADMIN_KID",
-  "R2E_SMOKE_ADMIN_SECRET",
   "R2E_SMOKE_BUCKET",
   "R2E_SMOKE_KEY",
   "R2E_SMOKE_ACCESS_CLIENT_ID",
@@ -70,8 +68,6 @@ describeLive("live worker integration", () => {
       const baseOrigin = new URL(baseUrl).origin;
       const bucket = requiredEnv("R2E_SMOKE_BUCKET");
       const key = requiredEnv("R2E_SMOKE_KEY");
-      const adminKid = requiredEnv("R2E_SMOKE_ADMIN_KID");
-      const adminSecret = requiredEnv("R2E_SMOKE_ADMIN_SECRET");
       const accessClientId = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_ID");
       const accessClientSecret = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_SECRET");
       const r2Bin = process.env.R2E_SMOKE_R2_BIN || "r2";
@@ -82,11 +78,14 @@ describeLive("live worker integration", () => {
       const cliEnv = {
         ...process.env,
         R2_EXPLORER_BASE_URL: baseUrl,
-        R2_EXPLORER_ADMIN_KID: adminKid,
-        R2_EXPLORER_ADMIN_SECRET: adminSecret,
         R2_EXPLORER_ACCESS_CLIENT_ID: accessClientId,
         R2_EXPLORER_ACCESS_CLIENT_SECRET: accessClientSecret,
       } as NodeJS.ProcessEnv;
+
+      const accessHeaders = {
+        "CF-Access-Client-Id": accessClientId,
+        "CF-Access-Client-Secret": accessClientSecret,
+      };
 
       let createdTokenId: string | null = null;
       try {
@@ -124,24 +123,21 @@ describeLive("live worker integration", () => {
           },
           attempts,
         );
-        expect([302, 401]).toContain(unauthenticated.status);
         if (unauthenticated.status === 302) {
-          const location = unauthenticated.headers.get("location") || "";
-          expect(location).toContain("/cdn-cgi/access/login/");
+          const redirectLocation = unauthenticated.headers.get("location") ?? "";
+          expect(redirectLocation).toContain("/cdn-cgi/access/login");
         } else {
-          const payload = JSON.parse(unauthenticated.body) as { error?: { code?: string } };
-          expect(payload.error?.code).toBe("access_required");
+          expect(unauthenticated.status).toBe(401);
+          const unauthenticatedPayload = JSON.parse(unauthenticated.body) as { error?: { code?: string } };
+          expect(unauthenticatedPayload.error?.code).toBe("access_required");
         }
 
         const authenticated = await fetchWithRetry(
           apiInfoUrl,
           {
             method: "GET",
-            redirect: "manual",
-            headers: {
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
-            },
+            redirect: "follow",
+            headers: accessHeaders,
           },
           attempts,
         );
@@ -166,8 +162,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              ...accessHeaders,
             },
             body: JSON.stringify({
               filename: "live-multipart.bin",
@@ -199,8 +194,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              ...accessHeaders,
             },
             body: JSON.stringify({
               sessionId: initPayload.sessionId,
@@ -236,8 +230,7 @@ describeLive("live worker integration", () => {
               "content-type": "application/json",
               origin: baseOrigin,
               "x-r2e-csrf": "1",
-              "CF-Access-Client-Id": accessClientId,
-              "CF-Access-Client-Secret": accessClientSecret,
+              ...accessHeaders,
             },
             body: JSON.stringify({
               sessionId: initPayload.sessionId,

@@ -32,7 +32,7 @@ pnpm dev:web
 
 ## Runtime routes
 
-API routes (Access-protected except `/share/*` public token URLs):
+API routes (Cloudflare Access protected):
 
 - `GET /api/v2/list`
 - `GET /api/v2/meta`
@@ -59,12 +59,18 @@ Set these in `wrangler.toml` (or CI-rendered config):
 
 - `FILES_BUCKET` (R2 bucket binding)
 - `R2E_SHARES_KV` (share token state)
-- `R2E_KEYS_KV` (admin keyset + nonce replay keys)
 - `R2E_UPLOAD_SESSIONS` (Durable Object session state for multipart uploads)
 - `R2E_READONLY` (`true` blocks non-GET/HEAD `/api/v2/*`)
 - `R2E_BUCKET_MAP` (optional JSON alias map; must include `{"files":"FILES_BUCKET"}`)
-- `R2E_ACCESS_TEAM_DOMAIN` (required for Access JWT verification on `/api/v2/*`)
-- `R2E_ACCESS_AUD` (required Access app audience claim for `/api/v2/*`)
+- `R2E_ACCESS_TEAM_DOMAIN` (required Access team domain, for example `repo.cloudflareaccess.com`)
+- `R2E_ACCESS_AUD` (required Access audience claim(s), comma-separated)
+- `R2E_ACCESS_JWKS_URL` (optional; defaults to `https://<team-domain>/cdn-cgi/access/certs`)
+- `R2E_ACCESS_REQUIRED_SCOPES` (optional generic scope set)
+- `R2E_ACCESS_REQUIRED_SCOPES_READ` (optional read-route scope set; default empty)
+- `R2E_ACCESS_REQUIRED_SCOPES_WRITE` (optional write-route scope set; default empty)
+- `R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE` (optional share-admin scope set; default empty)
+- `R2E_ACCESS_CLOCK_SKEW_SEC` (optional; defaults to `60`)
+- `R2E_ACCESS_JWKS_CACHE_TTL_SEC` (optional; defaults to `300`)
 - `R2E_UPLOAD_S3_BUCKET` (bucket name used when signing direct multipart part uploads)
 
 Upload policy vars (all optional):
@@ -88,26 +94,31 @@ Required API Worker secrets:
 - `S3_ACCESS_KEY_ID`
 - `S3_SECRET_ACCESS_KEY`
 
-## Access policy model
+## Cloudflare Access auth model
 
-Recommended policy setup on `files.unsigned.sh`:
+`/api/v2/*` is authenticated in-worker using Cloudflare Access JWTs from either:
 
-1. Protected API app:
+- `Cf-Access-Jwt-Assertion` request header
+- `CF_Authorization` (or `CF_Authorization_*`) cookie for browser requests
 
-- Path: `/api/v2/*`
-- Policies:
-  - `Allow` for authorized identities
-  - `Service Auth` for machine callers (CI/service tokens)
+Browser sign-in/sign-out is handled by Access directly:
 
-2. Public share links:
+- Sign in: `/cdn-cgi/access/login`
+- Sign out: `/cdn-cgi/access/logout`
 
-- Path: `/share/*`
-- Action: `Bypass`
+`/share/*` remains public and token-constrained. `/api/v2/share/*` stays in the
+protected API surface and can require `R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE`
+when configured.
 
-`/api/v2/share/*` stays inside the protected API surface. CLI requests should set
-`R2_EXPLORER_ACCESS_CLIENT_ID` and `R2_EXPLORER_ACCESS_CLIENT_SECRET` when no
-browser Access session is present. The Worker still validates HMAC signatures
-and Access JWTs in-app.
+CLI machine auth uses Access service-token headers:
+
+- `R2_EXPLORER_ACCESS_CLIENT_ID`
+- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
+
+Access policy contract expected by CI and smoke checks:
+
+- `files.unsigned.sh/api/v2/*`: Access app with `allow` + `Service Auth`, no `bypass`
+- `files.unsigned.sh/share/*`: Access app with `bypass`
 
 ## Deploy
 
@@ -172,6 +183,6 @@ Route split:
 - Web Worker: `preview.files.unsigned.sh/*`
 - API Worker: `preview.files.unsigned.sh/api/v2/*` and
   `preview.files.unsigned.sh/share/*`
-- Access app paths:
-  - API protected app: `preview.files.unsigned.sh/api/v2/*`
-  - Public share bypass app: `preview.files.unsigned.sh/share/*`
+- Auth model:
+  - API auth is enforced in-worker via Cloudflare Access JWT validation
+  - `preview.files.unsigned.sh/share/*` remains publicly reachable by token

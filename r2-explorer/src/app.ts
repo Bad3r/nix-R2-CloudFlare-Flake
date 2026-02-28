@@ -1,10 +1,10 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import type { ZodTypeAny } from "zod";
 import {
-  extractAccessIdentity,
-  getAdminAuthWindowSeconds,
+  requiredReadScopes,
+  requiredShareManageScopes,
+  requiredWriteScopes,
   requireApiIdentity,
-  verifyAdminSignature,
 } from "./auth";
 import { listBucketBindings, resolveBucket } from "./buckets";
 import { apiError, contentDisposition, HttpError, json, notFound } from "./http";
@@ -54,14 +54,13 @@ import {
   requireUploadSession,
   type UploadSessionRecord,
 } from "./upload-sessions";
-import type { AccessIdentity, Env, RequestActor, ShareRecord } from "./types";
+import type { AuthSource, Env, RequestActor, ShareRecord } from "./types";
 import { WORKER_VERSION } from "./version";
 
 type AppVariables = {
-  accessIdentity: AccessIdentity | null;
   rawBody: string;
   actor: string;
-  authMode: "access" | "hmac";
+  authSource: AuthSource | null;
 };
 
 type AppContext = {
@@ -95,11 +94,15 @@ const JSON_BODY_PATHS = new Set([
   "/api/v2/share/create",
   "/api/v2/share/revoke",
 ]);
-const UPLOAD_MUTATION_PATHS = new Set([
+const POST_MUTATION_PATHS = new Set([
   "/api/v2/upload/init",
   "/api/v2/upload/sign-part",
   "/api/v2/upload/complete",
   "/api/v2/upload/abort",
+  "/api/v2/object/delete",
+  "/api/v2/object/move",
+  "/api/v2/share/create",
+  "/api/v2/share/revoke",
 ]);
 const R2_MAX_UPLOAD_PARTS = 10_000;
 const R2_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
@@ -475,11 +478,10 @@ async function incrementShareDownload(env: Env, tokenId: string): Promise<ShareR
   throw new HttpError(409, "share_conflict", "Unable to update share download count.");
 }
 
-function requestActor(c: { get: (key: "authMode" | "actor") => "access" | "hmac" | string }): RequestActor {
+function requestActor(c: { get: (key: "actor") => string }): RequestActor {
   const actor = c.get("actor");
-  const mode = c.get("authMode");
   const payload = {
-    mode: mode === "hmac" ? "hmac" : "access",
+    mode: "access" as const,
     actor: actor || "unknown",
   };
   return requestActorSchema.parse(payload);
@@ -592,7 +594,7 @@ function validateCompleteParts(
 
 function parseOrigin(origin: string | null): string {
   if (!origin || origin.trim().length === 0) {
-    throw new HttpError(403, "origin_required", "Origin header is required for upload mutation routes.");
+    throw new HttpError(403, "origin_required", "Origin header is required for cookie-authenticated mutation routes.");
   }
   try {
     const parsed = new URL(origin);
@@ -613,7 +615,7 @@ function assertUploadMutationGuards(request: Request, env: Env): void {
   const origin = parseOrigin(request.headers.get("origin"));
   const allowedOrigins = parseAllowedOrigins(env, requestOrigin);
   if (!allowedOrigins.has(origin)) {
-    throw new HttpError(403, "origin_not_allowed", "Origin is not allowed for upload mutation route.", {
+    throw new HttpError(403, "origin_not_allowed", "Origin is not allowed for cookie-authenticated mutation route.", {
       origin,
       allowedOrigins: [...allowedOrigins],
     });
@@ -621,7 +623,7 @@ function assertUploadMutationGuards(request: Request, env: Env): void {
 
   const csrf = request.headers.get("x-r2e-csrf");
   if (!csrf || csrf.trim() !== "1") {
-    throw new HttpError(403, "csrf_required", "Missing required x-r2e-csrf header for upload mutation route.");
+    throw new HttpError(403, "csrf_required", "Missing required x-r2e-csrf header for cookie-authenticated mutation route.");
   }
 }
 
@@ -691,28 +693,32 @@ async function responseFromObject(
   return new Response(object.body, { status: 200, headers });
 }
 
-const accessMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
-  const identity = await requireApiIdentity(c.req.raw, c.env);
-  c.set("accessIdentity", identity);
+const accessReadMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
+  const identity = await requireApiIdentity(c.req.raw, c.env, requiredReadScopes(c.env));
   c.set("actor", identity.email ?? identity.userId ?? "");
-  c.set("authMode", "access");
+  c.set("authSource", identity.source);
   await next();
 };
 
-const accessOrHmacMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
-  if (c.get("accessIdentity")) {
-    const identity = await requireApiIdentity(c.req.raw, c.env);
-    c.set("accessIdentity", identity);
-    c.set("actor", identity.email ?? identity.userId ?? "");
-    c.set("authMode", "access");
-    await next();
-    return;
-  }
+const accessWriteMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
+  const identity = await requireApiIdentity(c.req.raw, c.env, requiredWriteScopes(c.env));
+  c.set("actor", identity.email ?? identity.userId ?? "");
+  c.set("authSource", identity.source);
+  await next();
+};
 
-  const rawBody = c.get("rawBody");
-  const kid = await verifyAdminSignature(c.req.raw, c.env, rawBody ?? "");
-  c.set("actor", `hmac:${kid}`);
-  c.set("authMode", "hmac");
+const shareManageMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
+  const identity = await requireApiIdentity(c.req.raw, c.env, requiredShareManageScopes(c.env));
+  c.set("actor", identity.email ?? identity.userId ?? "");
+  c.set("authSource", identity.source);
+  await next();
+};
+
+const cookieMutationGuardMiddleware: MiddlewareHandler<AppContext> = async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  if (method === "POST" && POST_MUTATION_PATHS.has(c.req.path) && c.get("authSource") === "access_cookie") {
+    assertUploadMutationGuards(c.req.raw, c.env);
+  }
   await next();
 };
 
@@ -720,25 +726,20 @@ export function createApp(): Hono<AppContext> {
   const app = new Hono<AppContext>();
 
   app.use("/api/v2/*", async (c, next) => {
-    c.set("accessIdentity", extractAccessIdentity(c.req.raw));
-    c.set("rawBody", "");
     c.set("actor", "");
-    c.set("authMode", "access");
+    c.set("rawBody", "");
+    c.set("authSource", null);
     await next();
   });
 
   app.use("/api/v2/*", async (c, next) => {
     const method = c.req.method.toUpperCase();
-    if (envBool(c.env.R2E_READONLY, false) && method !== "GET" && method !== "HEAD") {
+    if (
+      envBool(c.env.R2E_READONLY, false) &&
+      method !== "GET" &&
+      method !== "HEAD"
+    ) {
       throw new HttpError(403, "readonly_mode", "This explorer is in readonly mode.");
-    }
-    await next();
-  });
-
-  app.use("/api/v2/*", async (c, next) => {
-    const method = c.req.method.toUpperCase();
-    if (method === "POST" && UPLOAD_MUTATION_PATHS.has(c.req.path)) {
-      assertUploadMutationGuards(c.req.raw, c.env);
     }
     await next();
   });
@@ -755,20 +756,30 @@ export function createApp(): Hono<AppContext> {
     "/api/v2/meta",
     "/api/v2/download",
     "/api/v2/preview",
+    "/api/v2/auth/bootstrap",
+    "/api/v2/server/info",
+    "/api/v2/session/info",
+  ]) {
+    app.use(path, accessReadMiddleware);
+  }
+
+  for (const path of [
     "/api/v2/upload/init",
     "/api/v2/upload/sign-part",
     "/api/v2/upload/complete",
     "/api/v2/upload/abort",
     "/api/v2/object/delete",
     "/api/v2/object/move",
-    "/api/v2/server/info",
-    "/api/v2/session/info",
   ]) {
-    app.use(path, accessMiddleware);
+    app.use(path, accessWriteMiddleware);
   }
 
   for (const path of ["/api/v2/share/create", "/api/v2/share/revoke", "/api/v2/share/list"]) {
-    app.use(path, accessOrHmacMiddleware);
+    app.use(path, shareManageMiddleware);
+  }
+
+  for (const path of POST_MUTATION_PATHS) {
+    app.use(path, cookieMutationGuardMiddleware);
   }
 
   app.get("/api/v2/list", async (c) => {
@@ -1298,17 +1309,15 @@ export function createApp(): Hono<AppContext> {
 
   const serverInfoHandler = async (c: {
     env: Env;
-    get: (key: "authMode" | "actor") => "access" | "hmac" | string;
+    get: (key: "actor") => string;
   }) => {
     const uploadPolicy = parseUploadPolicy(c.env);
     const payload = {
       version: WORKER_VERSION,
       auth: {
         accessEnabled: true,
-        hmacAdminEnabled: true,
       },
       limits: {
-        adminAuthWindowSec: getAdminAuthWindowSeconds(c.env),
         maxShareTtlSec: envInt("R2E_MAX_SHARE_TTL_SEC", c.env.R2E_MAX_SHARE_TTL_SEC, 2592000),
         defaultShareTtlSec: envInt("R2E_DEFAULT_SHARE_TTL_SEC", c.env.R2E_DEFAULT_SHARE_TTL_SEC, 86400),
         uiMaxListLimit: envInt("R2E_UI_MAX_LIST_LIMIT", c.env.R2E_UI_MAX_LIST_LIMIT, 1000),
@@ -1335,13 +1344,13 @@ export function createApp(): Hono<AppContext> {
       share: {
         mode: "kv-random-token" as const,
         kvNamespace: "R2E_SHARES_KV" as const,
-        keysetNamespace: "R2E_KEYS_KV" as const,
       },
       actor: requestActor(c),
     };
     return jsonValidated(serverInfoResponseSchema, payload);
   };
 
+  app.get("/api/v2/auth/bootstrap", (c) => c.redirect("/", 302));
   app.get("/api/v2/server/info", serverInfoHandler);
   app.get("/api/v2/session/info", serverInfoHandler);
 

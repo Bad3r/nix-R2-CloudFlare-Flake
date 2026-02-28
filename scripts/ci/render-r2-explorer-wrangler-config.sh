@@ -30,8 +30,6 @@ main() {
   require_env "R2E_FILES_BUCKET_PREVIEW"
   require_env "R2E_SHARES_KV_ID"
   require_env "R2E_SHARES_KV_ID_PREVIEW"
-  require_env "R2E_KEYS_KV_ID"
-  require_env "R2E_KEYS_KV_ID_PREVIEW"
   require_env "R2E_ACCESS_TEAM_DOMAIN"
   require_env "R2E_ACCESS_TEAM_DOMAIN_PREVIEW"
   require_env "R2E_ACCESS_AUD"
@@ -72,6 +70,15 @@ PY
   local upload_prefix_allowlist upload_prefix_allowlist_preview
   local upload_allowed_origins upload_allowed_origins_preview
   local upload_s3_bucket upload_s3_bucket_preview
+  local access_team_domain access_team_domain_preview
+  local access_aud access_aud_preview
+  local access_jwks_url access_jwks_url_preview
+  local access_required_scopes_read access_required_scopes_read_preview
+  local access_required_scopes_write access_required_scopes_write_preview
+  local access_required_scopes_share_manage access_required_scopes_share_manage_preview
+  local access_clock_skew access_clock_skew_preview
+  local access_jwks_cache_ttl access_jwks_cache_ttl_preview
+  local access_team_domain_origin access_team_domain_preview_origin
 
   upload_max_file_bytes="${R2E_UPLOAD_MAX_FILE_BYTES:-0}"
   upload_max_file_bytes_preview="${R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW:-${upload_max_file_bytes}}"
@@ -99,6 +106,30 @@ PY
   upload_allowed_origins_preview="${R2E_UPLOAD_ALLOWED_ORIGINS_PREVIEW:-${upload_allowed_origins}}"
   upload_s3_bucket="${R2E_UPLOAD_S3_BUCKET:-${R2E_FILES_BUCKET}}"
   upload_s3_bucket_preview="${R2E_UPLOAD_S3_BUCKET_PREVIEW:-${R2E_FILES_BUCKET_PREVIEW}}"
+  access_team_domain="${R2E_ACCESS_TEAM_DOMAIN}"
+  access_team_domain_preview="${R2E_ACCESS_TEAM_DOMAIN_PREVIEW}"
+  access_team_domain_origin="${access_team_domain%/}"
+  access_team_domain_preview_origin="${access_team_domain_preview%/}"
+  if [[ ${access_team_domain_origin} != https://* ]]; then
+    access_team_domain_origin="https://${access_team_domain_origin#http://}"
+  fi
+  if [[ ${access_team_domain_preview_origin} != https://* ]]; then
+    access_team_domain_preview_origin="https://${access_team_domain_preview_origin#http://}"
+  fi
+  access_aud="${R2E_ACCESS_AUD}"
+  access_aud_preview="${R2E_ACCESS_AUD_PREVIEW}"
+  access_jwks_url="${R2E_ACCESS_JWKS_URL:-${access_team_domain_origin}/cdn-cgi/access/certs}"
+  access_jwks_url_preview="${R2E_ACCESS_JWKS_URL_PREVIEW:-${access_team_domain_preview_origin}/cdn-cgi/access/certs}"
+  access_required_scopes_read="${R2E_ACCESS_REQUIRED_SCOPES_READ:-${R2E_ACCESS_REQUIRED_SCOPES:-}}"
+  access_required_scopes_read_preview="${R2E_ACCESS_REQUIRED_SCOPES_READ_PREVIEW:-${R2E_ACCESS_REQUIRED_SCOPES_PREVIEW:-${access_required_scopes_read}}}"
+  access_required_scopes_write="${R2E_ACCESS_REQUIRED_SCOPES_WRITE:-${R2E_ACCESS_REQUIRED_SCOPES:-}}"
+  access_required_scopes_write_preview="${R2E_ACCESS_REQUIRED_SCOPES_WRITE_PREVIEW:-${R2E_ACCESS_REQUIRED_SCOPES_PREVIEW:-${access_required_scopes_write}}}"
+  access_required_scopes_share_manage="${R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE:-${R2E_ACCESS_REQUIRED_SCOPES:-}}"
+  access_required_scopes_share_manage_preview="${R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE_PREVIEW:-${R2E_ACCESS_REQUIRED_SCOPES_PREVIEW:-${access_required_scopes_share_manage}}}"
+  access_clock_skew="${R2E_ACCESS_CLOCK_SKEW_SEC:-60}"
+  access_clock_skew_preview="${R2E_ACCESS_CLOCK_SKEW_SEC_PREVIEW:-${access_clock_skew}}"
+  access_jwks_cache_ttl="${R2E_ACCESS_JWKS_CACHE_TTL_SEC:-300}"
+  access_jwks_cache_ttl_preview="${R2E_ACCESS_JWKS_CACHE_TTL_SEC_PREVIEW:-${access_jwks_cache_ttl}}"
 
   escaped_bucket_map="$(escape_sed_replacement "${bucket_map}")"
 
@@ -107,12 +138,22 @@ PY
     -e "s|replace-with-r2-bucket|$(escape_sed_replacement "${R2E_FILES_BUCKET}")|g" \
     -e "s|replace-with-shares-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_SHARES_KV_ID_PREVIEW}")|g" \
     -e "s|replace-with-shares-kv-namespace-id|$(escape_sed_replacement "${R2E_SHARES_KV_ID}")|g" \
-    -e "s|replace-with-keys-kv-namespace-id-preview|$(escape_sed_replacement "${R2E_KEYS_KV_ID_PREVIEW}")|g" \
-    -e "s|replace-with-keys-kv-namespace-id|$(escape_sed_replacement "${R2E_KEYS_KV_ID}")|g" \
-    -e "s|replace-with-access-team-domain-preview|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN_PREVIEW}")|g" \
-    -e "s|replace-with-access-team-domain|$(escape_sed_replacement "${R2E_ACCESS_TEAM_DOMAIN}")|g" \
-    -e "s|replace-with-access-aud-preview|$(escape_sed_replacement "${R2E_ACCESS_AUD_PREVIEW}")|g" \
-    -e "s|replace-with-access-aud|$(escape_sed_replacement "${R2E_ACCESS_AUD}")|g" \
+    -e "s|replace-with-access-team-domain-preview|$(escape_sed_replacement "${access_team_domain_preview}")|g" \
+    -e "s|replace-with-access-team-domain|$(escape_sed_replacement "${access_team_domain}")|g" \
+    -e "s|replace-with-access-aud-preview|$(escape_sed_replacement "${access_aud_preview}")|g" \
+    -e "s|replace-with-access-aud|$(escape_sed_replacement "${access_aud}")|g" \
+    -e "s|replace-with-access-jwks-url-preview|$(escape_sed_replacement "${access_jwks_url_preview}")|g" \
+    -e "s|replace-with-access-jwks-url|$(escape_sed_replacement "${access_jwks_url}")|g" \
+    -e "s|replace-with-access-required-scopes-read-preview|$(escape_sed_replacement "${access_required_scopes_read_preview}")|g" \
+    -e "s|replace-with-access-required-scopes-read|$(escape_sed_replacement "${access_required_scopes_read}")|g" \
+    -e "s|replace-with-access-required-scopes-write-preview|$(escape_sed_replacement "${access_required_scopes_write_preview}")|g" \
+    -e "s|replace-with-access-required-scopes-write|$(escape_sed_replacement "${access_required_scopes_write}")|g" \
+    -e "s|replace-with-access-required-scopes-share-manage-preview|$(escape_sed_replacement "${access_required_scopes_share_manage_preview}")|g" \
+    -e "s|replace-with-access-required-scopes-share-manage|$(escape_sed_replacement "${access_required_scopes_share_manage}")|g" \
+    -e "s|replace-with-access-clock-skew-sec-preview|$(escape_sed_replacement "${access_clock_skew_preview}")|g" \
+    -e "s|replace-with-access-clock-skew-sec|$(escape_sed_replacement "${access_clock_skew}")|g" \
+    -e "s|replace-with-access-jwks-cache-ttl-sec-preview|$(escape_sed_replacement "${access_jwks_cache_ttl_preview}")|g" \
+    -e "s|replace-with-access-jwks-cache-ttl-sec|$(escape_sed_replacement "${access_jwks_cache_ttl}")|g" \
     -e "s|replace-with-upload-max-file-bytes-preview|$(escape_sed_replacement "${upload_max_file_bytes_preview}")|g" \
     -e "s|replace-with-upload-max-file-bytes|$(escape_sed_replacement "${upload_max_file_bytes}")|g" \
     -e "s|replace-with-upload-max-parts-preview|$(escape_sed_replacement "${upload_max_parts_preview}")|g" \

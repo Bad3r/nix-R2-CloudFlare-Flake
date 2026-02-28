@@ -21,9 +21,9 @@ read/list behavior.
 
 - `R2E_READONLY`
 - `R2_EXPLORER_BASE_URL`
-- Admin auth environment for CLI calls:
-  - `R2_EXPLORER_ADMIN_KID`
-  - `R2_EXPLORER_ADMIN_SECRET`
+- Access service-token env for CLI calls:
+  - `R2_EXPLORER_ACCESS_CLIENT_ID`
+  - `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
 ## Procedure (CLI-first)
 

@@ -1,2 +1,6 @@
 packages:
   - web
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - workerd

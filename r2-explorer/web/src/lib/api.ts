@@ -1,5 +1,5 @@
 export type RequestActor = {
-  mode: "access" | "hmac";
+  mode: "access";
   actor: string;
 };
 
@@ -122,9 +122,12 @@ type RetryOptions = {
   maxRetries?: number;
   baseDelayMs?: number;
   retryableStatuses?: ReadonlySet<number>;
+  retryNetworkErrors?: boolean;
 };
 
 const TRANSIENT_HTTP_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504, 522, 524]);
+const ACCESS_LOGIN_PATH = "/cdn-cgi/access/login";
+export const ACCESS_API_BOOTSTRAP_PATH = "/api/v2/auth/bootstrap";
 const READ_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
   baseDelayMs: 1000,
@@ -134,6 +137,7 @@ const UPLOAD_PART_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
   baseDelayMs: 1000,
   retryableStatuses: TRANSIENT_HTTP_STATUSES,
+  retryNetworkErrors: false,
 };
 
 function isJsonResponse(response: Response): boolean {
@@ -156,11 +160,15 @@ async function decodeResponse<T>(response: Response): Promise<T | ApiErrorPayloa
   }
 }
 
-function shouldRetryError(error: unknown, retryableStatuses: ReadonlySet<number>): boolean {
+function shouldRetryError(
+  error: unknown,
+  retryableStatuses: ReadonlySet<number>,
+  retryNetworkErrors: boolean,
+): boolean {
   if (error instanceof ApiError) {
     return retryableStatuses.has(error.status);
   }
-  return error instanceof TypeError;
+  return retryNetworkErrors && error instanceof TypeError;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -171,13 +179,14 @@ async function withRetry<T>(operation: () => Promise<T>, options: RetryOptions):
   const maxRetries = Math.max(0, options.maxRetries ?? 0);
   const baseDelayMs = Math.max(0, options.baseDelayMs ?? 1000);
   const retryableStatuses = options.retryableStatuses ?? TRANSIENT_HTTP_STATUSES;
+  const retryNetworkErrors = options.retryNetworkErrors ?? true;
 
   let attempt = 0;
   while (true) {
     try {
       return await operation();
     } catch (error) {
-      if (attempt >= maxRetries || !shouldRetryError(error, retryableStatuses)) {
+      if (attempt >= maxRetries || !shouldRetryError(error, retryableStatuses, retryNetworkErrors)) {
         throw error;
       }
       const delayMs = baseDelayMs * 2 ** attempt;
@@ -187,8 +196,36 @@ async function withRetry<T>(operation: () => Promise<T>, options: RetryOptions):
   }
 }
 
+function withDefaultCredentials(init?: RequestInit): RequestInit {
+  return {
+    credentials: "same-origin",
+    ...init,
+    redirect: "manual",
+  };
+}
+
+function isAccessLoginUrl(url: string | null): boolean {
+  return Boolean(url && url.includes(ACCESS_LOGIN_PATH));
+}
+
+function isAccessRedirectResponse(response: Response): boolean {
+  if (response.type === "opaqueredirect") {
+    return true;
+  }
+  if (response.redirected && isAccessLoginUrl(response.url)) {
+    return true;
+  }
+  if (response.status >= 300 && response.status < 400 && isAccessLoginUrl(response.headers.get("location"))) {
+    return true;
+  }
+  return false;
+}
+
 async function apiOnce<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await fetch(path, withDefaultCredentials(init));
+  if (isAccessRedirectResponse(response)) {
+    throw new ApiError(401, "access_required", "Cloudflare Access sign-in is required.");
+  }
   const decoded = await decodeResponse<T>(response);
 
   if (!response.ok) {
@@ -283,6 +320,38 @@ export type UploadProgress = {
   totalParts: number;
 };
 
+const FORBIDDEN_BROWSER_UPLOAD_HEADERS = new Set([
+  "content-length",
+  "host",
+  "origin",
+  "referer",
+  "cookie",
+  "set-cookie",
+  "set-cookie2",
+]);
+
+function isForbiddenBrowserUploadHeader(name: string): boolean {
+  if (FORBIDDEN_BROWSER_UPLOAD_HEADERS.has(name)) {
+    return true;
+  }
+  return name.startsWith("sec-") || name.startsWith("proxy-");
+}
+
+function buildUploadRequestHeaders(signedHeaders: Record<string, string> | undefined): Headers {
+  const uploadHeaders = new Headers();
+  if (!signedHeaders) {
+    return uploadHeaders;
+  }
+  for (const [rawName, rawValue] of Object.entries(signedHeaders)) {
+    const name = rawName.trim().toLowerCase();
+    if (name.length === 0 || isForbiddenBrowserUploadHeader(name)) {
+      continue;
+    }
+    uploadHeaders.set(name, rawValue);
+  }
+  return uploadHeaders;
+}
+
 export async function multipartUpload(
   file: File,
   prefix: string,
@@ -332,12 +401,22 @@ export async function multipartUpload(
     );
 
     const response = await withRetry(async () => {
-      const uploadHeaders = new Headers(signed.headers || {});
-      const partResponse = await fetch(signed.url, {
-        method: signed.method,
-        headers: uploadHeaders,
-        body: blob,
-      });
+      const uploadHeaders = buildUploadRequestHeaders(signed.headers);
+      let partResponse: Response;
+      try {
+        partResponse = await fetch(signed.url, {
+          method: signed.method,
+          headers: uploadHeaders,
+          body: blob,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new ApiError(
+          0,
+          "upload_part_request_failed",
+          `Part upload request could not be sent for ${partNumber}/${totalParts}: ${detail}`,
+        );
+      }
 
       if (!partResponse.ok) {
         const detail = await partResponse.text().catch(() => "");

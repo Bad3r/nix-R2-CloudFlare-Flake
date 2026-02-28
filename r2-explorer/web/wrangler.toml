@@ -17,10 +17,10 @@ local_protocol = "http"
 [env.preview]
 name = "r2-explorer-web-preview"
 workers_dev = true
-
-[[env.preview.routes]]
-pattern = "preview.files.unsigned.sh/*"
-zone_name = "unsigned.sh"
+# Prevent preview from inheriting production zone routes.
+routes = [
+  { pattern = "preview.files.unsigned.sh/*", zone_name = "unsigned.sh" },
+]
 
 # Example same-domain path split (production):
 # 1) Web Worker (this file) handles the host catch-all.

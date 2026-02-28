@@ -1,118 +1,108 @@
-# Access Policy Split Runbook
+# Cloudflare Access Routing Runbook
 
 ## Purpose
 
-Ensure Cloudflare Access protects interactive/admin routes while allowing public
-tokenized share downloads.
+Keep the Cloudflare Access routing split aligned with the R2-Explorer contract:
+
+- `/api/v2/*` remains Access-protected.
+- `/share/*` remains public token download.
 
 ## When to Use
 
-- Initial setup of R2-Explorer custom domain.
+- Initial setup of R2-Explorer custom domains.
 - Access policy drift correction.
 - Recovery from unexpected public/private route exposure.
 
 ## Prerequisites
 
-- Access to Cloudflare Access policy management for target domain.
+- Access to Cloudflare Access app and policy configuration.
 - Worker deployed on `files.unsigned.sh` (or equivalent domain).
 - At least one valid share token for validation.
+- Valid Access service token credentials for API validation.
 
 ## Inputs / Environment Variables
 
 - Target domain, example: `files.unsigned.sh`
-- Access policy include rules for org users/groups
+- `R2E_ACCESS_AUD`
+- Access service token client ID used by smoke probes
 - Existing share token ID for public path verification
 
 ## Procedure (CLI-first)
 
-1. Ensure Access app coverage is split by path for the same hostname:
-   - App A (production API): `files.unsigned.sh/api/v2/*` with:
-     - `Allow` policy for trusted identities.
-     - `Service Auth` policy for CI/service tokens.
-   - App B (production public download): `files.unsigned.sh/share/*` with policy
-     action `Bypass`.
-   - App C (preview API): `preview.files.unsigned.sh/api/v2/*` with:
-     - `Allow` policy for trusted identities.
-     - `Service Auth` policy for preview CI/service tokens.
-   - App D (preview public download): `preview.files.unsigned.sh/share/*` with
-     policy action `Bypass`.
+1. Confirm API and share routes are mapped to the API Worker:
+   - `files.unsigned.sh/api/v2/*`
+   - `files.unsigned.sh/share/*`
+   - `preview.files.unsigned.sh/api/v2/*`
+   - `preview.files.unsigned.sh/share/*`
 
-2. Confirm there are no stale API bypass apps:
-   - `files.unsigned.sh/api/v2/share/*`
-   - `files.unsigned.sh/api/share/*`
-   - `r2-explorer-preview.exploit.workers.dev/api/*`
+2. Validate Access apps and policies:
+   - `/api/v2/*` app has an `allow` policy and a `Service Auth` policy.
+   - `/api/v2/*` app has no `bypass` policy.
+   - `/share/*` app has a `bypass` policy.
 
-3. Validate protected API routes (should redirect to Access login when
-   unauthenticated):
+3. Run the contract checker:
 
 ```bash
-curl -I https://files.unsigned.sh/api/v2/list
-curl -I https://preview.files.unsigned.sh/api/v2/list
+export CLOUDFLARE_API_TOKEN="<api-token>"
+export CLOUDFLARE_ACCOUNT_ID="<account-id>"
+./scripts/ci/check-r2-access-policy.sh \
+  files.unsigned.sh \
+  "<expected-api-aud>" \
+  "<service-token-client-id>"
 ```
 
-4. Validate public token route (no Access redirect):
+4. Validate protected API routes without identity:
+
+```bash
+curl -i https://files.unsigned.sh/api/v2/session/info
+curl -i https://preview.files.unsigned.sh/api/v2/session/info
+```
+
+Expected: `302` to Access login or `401 access_required`.
+
+5. Validate protected API routes with service-token headers:
+
+```bash
+curl -i \
+  -H "CF-Access-Client-Id: <client-id>" \
+  -H "CF-Access-Client-Secret: <client-secret>" \
+  https://files.unsigned.sh/api/v2/session/info
+```
+
+6. Validate public token route:
 
 ```bash
 curl -I https://files.unsigned.sh/share/<token-id>
 curl -I https://preview.files.unsigned.sh/share/<token-id>
 ```
 
-5. Validate Service Auth on API route:
-
-```bash
-curl -i \
-  -H "CF-Access-Client-Id: <service-token-client-id>" \
-  -H "CF-Access-Client-Secret: <service-token-client-secret>" \
-  https://files.unsigned.sh/api/v2/session/info
-
-curl -i \
-  -H "CF-Access-Client-Id: <preview-service-token-client-id>" \
-  -H "CF-Access-Client-Secret: <preview-service-token-client-secret>" \
-  https://preview.files.unsigned.sh/api/v2/session/info
-```
-
-6. Validate Worker share-management with service-token headers:
-
-```bash
-export R2_EXPLORER_ACCESS_CLIENT_ID="<service-token-client-id>"
-export R2_EXPLORER_ACCESS_CLIENT_SECRET="<service-token-client-secret>"
-r2 share worker create files workspace/demo.txt 10m --max-downloads 1
-```
-
 ## Verification
 
-- `/api/v2/*` requires Access-authenticated session.
-- `/share/<token-id>` is reachable without Access membership and still enforces
-  token validity.
-- `/api/v2/share/*` is never an Access `Bypass` path.
-- Worker is configured with `R2E_ACCESS_TEAM_DOMAIN` and `R2E_ACCESS_AUD`, and
-  `/api/v2/*` rejects invalid or missing Access JWT assertions.
-- Preview Worker is configured with `R2E_ACCESS_AUD_PREVIEW` matching the
-  preview API app audience.
+- `/api/v2/*` denies unauthenticated requests (`302` login redirect or `401 access_required`).
+- `/api/v2/*` accepts valid Access service-token credentials.
+- `/share/<token-id>` remains reachable without API authentication and enforces token validity.
+- `/api/v2/share/*` remains Access-protected and scope-gated when configured.
 
 ## Failure Signatures and Triage
 
-- `/share/*` redirects to Access login:
-  - bypass policy missing, disabled, or shadowed by another app rule.
-- `r2 share worker create` fails with `HTTP 302` or `401`:
-  - CLI request missing `R2_EXPLORER_ACCESS_CLIENT_ID` or
-    `R2_EXPLORER_ACCESS_CLIENT_SECRET`.
-  - Service token is not included by a `Service Auth` policy on `/api/v2/*`.
-  - `R2E_ACCESS_AUD` / `R2E_ACCESS_AUD_PREVIEW` does not match app audience.
-- `/api/v2/*` is publicly reachable:
-  - API app missing, disabled, or host/path mismatch.
-- Mixed behavior across clients:
-  - stale DNS/session/cache state; retest with clean session.
+- `/share/*` unexpectedly requires auth:
+  - share Access app lost bypass policy.
+- `/api/v2/*` unexpectedly public:
+  - API Access app missing protection or has bypass policy.
+- `/api/v2/*` returns `token_invalid_signature` globally:
+  - Access JWKS/cert endpoint or verifier config outage.
+- `/api/v2/*` returns `token_claim_mismatch`:
+  - Access AUD mismatch between app and Worker config.
 
 ## Rollback / Recovery
 
-1. Reapply last known-good policy model per host:
-   - `/api/v2/*` with `Allow` + `Service Auth`.
-   - `/share/*` with `Bypass`.
-2. Re-run both curl checks for protected and public path behavior.
-3. Audit policy edits and actor history in Cloudflare account logs.
+1. Restore previous known-good Worker deployment and env snapshot.
+2. Restore previous known-good Access app/policy configuration.
+3. Re-run Access contract and protected/public path checks.
+4. Audit recent Access app/policy changes.
 
 ## Post-incident Notes
 
-- Record policy IDs, order, and change timestamp.
-- Document blast radius and any temporarily exposed paths.
+- Record changed Access apps/policies and timestamps.
+- Record env values before/after (`R2E_ACCESS_TEAM_DOMAIN`, `R2E_ACCESS_AUD`, `R2E_ACCESS_JWKS_URL`).
+- Capture failing and restored request/response evidence.

@@ -1,149 +1,84 @@
-# Key Rotation Runbook
+# Access Service Token Rotation Runbook
 
 ## Purpose
 
-Rotate Worker admin HMAC credentials used by `r2 share worker ...` automation
-without interrupting share management operations.
+Rotate Cloudflare Access service-token credentials used by `r2 share worker ...`
+automation without interrupting share-management operations.
 
 ## When to Use
 
-- Scheduled key rotation.
-- Suspected admin secret exposure.
+- Scheduled credential rotation.
+- Suspected service-token secret exposure.
 - Operator handoff or boundary changes.
 
 ## Prerequisites
 
-- `wrangler` and `r2` are installed.
-- You can deploy `r2-explorer`.
-- You can update secrets/env used by CLI automation.
-- `R2E_KEYS_KV` is bound in `wrangler.toml`.
+- Access to Cloudflare Zero Trust service-token management.
+- Ability to update secrets/env used by CLI automation.
+- Ability to run worker smoke checks.
 
 ## Inputs / Environment Variables
 
 - `R2_EXPLORER_BASE_URL`
-- `R2_EXPLORER_ADMIN_KID`
-- `R2_EXPLORER_ADMIN_SECRET`
-- Active Worker KV namespace binding for `R2E_KEYS_KV`
+- `R2_EXPLORER_ACCESS_CLIENT_ID`
+- `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
 ## Procedure (CLI-first)
 
 1. Export existing values for rollback reference:
 
 ```bash
-export OLD_KID="${R2_EXPLORER_ADMIN_KID}"
-export OLD_SECRET="${R2_EXPLORER_ADMIN_SECRET}"
+export OLD_CLIENT_ID="${R2_EXPLORER_ACCESS_CLIENT_ID}"
+export OLD_CLIENT_SECRET="${R2_EXPLORER_ACCESS_CLIENT_SECRET}"
 ```
 
-2. Generate new key material:
+2. Create a new Access service token in Cloudflare Zero Trust.
+
+3. Update automation environment/secrets with the new values.
+
+4. Validate API probe with service-token headers:
 
 ```bash
-export NEW_KID="ops-$(date -u +%Y%m%d%H%M%S)"
-export NEW_SECRET="$(openssl rand -hex 32)"
+curl -i \
+  -H "CF-Access-Client-Id: ${R2_EXPLORER_ACCESS_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${R2_EXPLORER_ACCESS_CLIENT_SECRET}" \
+  "${R2_EXPLORER_BASE_URL%/}/api/v2/session/info"
 ```
 
-3. Add the new key to the Worker keyset while keeping the old key valid during
-   overlap. Update KV state so `active` is `NEW_KID` and old key is retained as
-   previous.
-
-Concrete KV update (production):
-
-```bash
-set -euo pipefail
-
-# IMPORTANT: always use --remote for KV operations.
-# Wrangler can otherwise talk to local Miniflare storage, which does NOT affect
-# the deployed Worker.
-
-export KEYS_NS_TITLE="nix-r2-cf-r2e-keys-prod"
-keys_ns_id="$(
-  wrangler kv namespace list |
-    jq -r --arg title "$KEYS_NS_TITLE" '.[] | select(.title==$title) | .id'
-)"
-test -n "$keys_ns_id"
-
-existing="$(
-  wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active
-)"
-
-updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-payload="$(
-  jq -cn \
-    --arg newKid "$NEW_KID" \
-    --arg newSecret "$NEW_SECRET" \
-    --arg updatedAt "$updated_at" \
-    --arg existing "$existing" '
-    def base: ($existing | fromjson);
-    {
-      activeKid: $newKid,
-      previousKid: (base.activeKid // null),
-      updatedAt: $updatedAt,
-      keys: (base.keys // {}) + {($newKid): $newSecret}
-    }
-  '
-)"
-
-umask 077
-tmp="$(mktemp)"
-printf '%s' "$payload" > "$tmp"
-wrangler kv key put --remote --namespace-id "$keys_ns_id" --path "$tmp" admin:keyset:active
-rm -f "$tmp"
-
-# Verify without dumping key material
-wrangler kv key get --remote --namespace-id "$keys_ns_id" --text admin:keyset:active |
-  jq '{activeKid, previousKid, updatedAt, kids: (.keys|keys)}'
-```
-
-4. Deploy Worker config update:
-
-```bash
-cd r2-explorer
-wrangler deploy
-```
-
-5. Update automation environment to the new active key:
-
-```bash
-export R2_EXPLORER_ADMIN_KID="${NEW_KID}"
-export R2_EXPLORER_ADMIN_SECRET="${NEW_SECRET}"
-```
-
-6. Validate worker-admin share lifecycle calls:
+5. Validate share lifecycle commands:
 
 ```bash
 r2 share worker create files documents/test.txt 1h --max-downloads 1
 r2 share worker list files documents/test.txt
 ```
 
-7. End overlap window and remove old key from keyset after successful validation.
+6. Revoke/disable the old service token after validation.
 
 ## Verification
 
-- `r2 share worker create` succeeds with the new key.
+- `r2 share worker create` succeeds with new credentials.
 - `r2 share worker list` returns expected records.
-- Worker responses no longer accept the old key after overlap removal.
+- Old service token no longer works after revocation.
 
 ## Failure Signatures and Triage
 
-- `401 Unauthorized` with valid timestamp:
-  - `R2_EXPLORER_ADMIN_KID` does not match keyset.
-- `403 Forbidden` on admin routes:
-  - secret mismatch or stale secret in automation.
-- Intermittent signature failures:
-  - clock skew between caller and Worker verifier.
+- `401 access_required`:
+  - wrong client ID/secret pair or missing Service Auth policy.
+- `401 token_invalid_signature`:
+  - Access JWKS/signing issue.
+- `401 token_claim_mismatch`:
+  - Access AUD mismatch.
+- `403 insufficient_scope`:
+  - Worker scope requirements are stricter than token claims.
 
 ## Rollback / Recovery
 
-1. Restore previous key as `active` in `R2E_KEYS_KV`.
-2. Re-export previous automation credentials:
-
-```bash
-export R2_EXPLORER_ADMIN_KID="${OLD_KID}"
-export R2_EXPLORER_ADMIN_SECRET="${OLD_SECRET}"
-```
-
-3. Redeploy Worker and rerun lifecycle verification commands.
+1. Restore previous service-token credentials in automation env.
+2. Re-run API probe and share lifecycle checks.
+3. Keep old token active until new credentials are confirmed healthy.
 
 ## Post-incident Notes
 
-- Record rotation timestamp, operator, and retired key ID.
-- Document overlap duration and reason for emergency vs scheduled rotation.
+- Record rotation timestamp and operator.
+- Record old/new client IDs and revocation time.
+- Capture verification command outputs.

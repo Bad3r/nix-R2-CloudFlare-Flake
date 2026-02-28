@@ -9,8 +9,8 @@ on:
       - "scripts/ci/render-r2-explorer-wrangler-config.sh"
       - "scripts/ci/sync-r2-upload-cors.sh"
       - "scripts/ci/sync-r2-web-csp.sh"
-      - "scripts/ci/check-r2-web-security.sh"
       - "scripts/ci/check-r2-access-policy.sh"
+      - "scripts/ci/check-r2-web-security.sh"
       - "scripts/ci/worker-share-smoke.sh"
   workflow_dispatch:
     inputs:
@@ -46,13 +46,25 @@ jobs:
       R2E_FILES_BUCKET_PREVIEW: ${{ vars.R2E_FILES_BUCKET_PREVIEW }}
       R2E_SHARES_KV_ID: ${{ vars.R2E_SHARES_KV_ID }}
       R2E_SHARES_KV_ID_PREVIEW: ${{ vars.R2E_SHARES_KV_ID_PREVIEW }}
-      R2E_KEYS_KV_ID: ${{ vars.R2E_KEYS_KV_ID }}
-      R2E_KEYS_KV_ID_PREVIEW: ${{ vars.R2E_KEYS_KV_ID_PREVIEW }}
       R2E_BUCKET_MAP: ${{ vars.R2E_BUCKET_MAP }}
       R2E_ACCESS_TEAM_DOMAIN: ${{ vars.R2E_ACCESS_TEAM_DOMAIN }}
       R2E_ACCESS_TEAM_DOMAIN_PREVIEW: ${{ vars.R2E_ACCESS_TEAM_DOMAIN_PREVIEW }}
       R2E_ACCESS_AUD: ${{ vars.R2E_ACCESS_AUD }}
       R2E_ACCESS_AUD_PREVIEW: ${{ vars.R2E_ACCESS_AUD_PREVIEW }}
+      R2E_ACCESS_JWKS_URL: ${{ vars.R2E_ACCESS_JWKS_URL }}
+      R2E_ACCESS_JWKS_URL_PREVIEW: ${{ vars.R2E_ACCESS_JWKS_URL_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES }}
+      R2E_ACCESS_REQUIRED_SCOPES_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES_READ: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_READ }}
+      R2E_ACCESS_REQUIRED_SCOPES_READ_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_READ_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES_WRITE: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_WRITE }}
+      R2E_ACCESS_REQUIRED_SCOPES_WRITE_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_WRITE_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE }}
+      R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE_PREVIEW }}
+      R2E_ACCESS_CLOCK_SKEW_SEC: ${{ vars.R2E_ACCESS_CLOCK_SKEW_SEC }}
+      R2E_ACCESS_CLOCK_SKEW_SEC_PREVIEW: ${{ vars.R2E_ACCESS_CLOCK_SKEW_SEC_PREVIEW }}
+      R2E_ACCESS_JWKS_CACHE_TTL_SEC: ${{ vars.R2E_ACCESS_JWKS_CACHE_TTL_SEC }}
+      R2E_ACCESS_JWKS_CACHE_TTL_SEC_PREVIEW: ${{ vars.R2E_ACCESS_JWKS_CACHE_TTL_SEC_PREVIEW }}
       R2E_UPLOAD_MAX_FILE_BYTES: ${{ vars.R2E_UPLOAD_MAX_FILE_BYTES }}
       R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW: ${{ vars.R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW }}
       R2E_UPLOAD_MAX_PARTS: ${{ vars.R2E_UPLOAD_MAX_PARTS }}
@@ -86,19 +98,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Verify Access API policy contract (preview)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          R2E_ACCESS_AUD_PREVIEW: ${{ vars.R2E_ACCESS_AUD_PREVIEW }}
-          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
-        run: |
-          set -euo pipefail
-          ./scripts/ci/check-r2-access-policy.sh \
-            "preview.files.unsigned.sh" \
-            "${R2E_ACCESS_AUD_PREVIEW}" \
-            "${R2E_SMOKE_ACCESS_CLIENT_ID}"
-
       - name: Reject unexpected preview base URL
         env:
           R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
@@ -113,6 +112,20 @@ jobs:
 
       - name: Render Wrangler config
         run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
+
+      - name: Verify Access policy contract (preview)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
+          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          smoke_host="$(
+            printf '%s' "${R2E_SMOKE_BASE_URL}" |
+              sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##'
+          )"
+          ./scripts/ci/check-r2-access-policy.sh "${smoke_host}" "${R2E_ACCESS_AUD_PREVIEW}" "${R2E_SMOKE_ACCESS_CLIENT_ID}"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -220,7 +233,6 @@ jobs:
           set -euo pipefail
           cp web/.assetsignore web/dist/.assetsignore
           pnpm exec wrangler deploy --config web/wrangler.toml --env preview
-
   smoke-preview:
     name: Smoke preview
     if: >
@@ -240,6 +252,8 @@ jobs:
       R2E_SMOKE_RETRIES: "1"
       R2E_SMOKE_RETRY_DELAY_SEC: "2"
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
+      R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+      R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -276,8 +290,6 @@ jobs:
       - name: Verify preview web CSP and analytics markers (conditional)
         env:
           R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
-          R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
-          R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
 
@@ -311,8 +323,6 @@ jobs:
       - name: Run Worker smoke checks
         env:
           R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
-          R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
-          R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
           R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
           R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
           R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
@@ -326,8 +336,6 @@ jobs:
         working-directory: r2-explorer
         env:
           R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
-          R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
-          R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
           R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
           R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
           R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
@@ -394,7 +402,7 @@ jobs:
             echo
             echo "Required operator actions:"
             echo "1. Identify the last known-good Worker revision and matching env snapshot."
-            echo "2. Redeploy the rollback target and reapply Access API policy model (/api/v2/* Allow+Service Auth, /share/* Bypass)."
+            echo "2. Redeploy the rollback target and restore matching Access team-domain/AUD/JWKS configuration."
             echo "3. Re-run share lifecycle and API protection checks."
             echo
             echo "Command checklist:"
@@ -425,13 +433,25 @@ jobs:
       R2E_FILES_BUCKET_PREVIEW: ${{ vars.R2E_FILES_BUCKET_PREVIEW }}
       R2E_SHARES_KV_ID: ${{ vars.R2E_SHARES_KV_ID }}
       R2E_SHARES_KV_ID_PREVIEW: ${{ vars.R2E_SHARES_KV_ID_PREVIEW }}
-      R2E_KEYS_KV_ID: ${{ vars.R2E_KEYS_KV_ID }}
-      R2E_KEYS_KV_ID_PREVIEW: ${{ vars.R2E_KEYS_KV_ID_PREVIEW }}
       R2E_BUCKET_MAP: ${{ vars.R2E_BUCKET_MAP }}
       R2E_ACCESS_TEAM_DOMAIN: ${{ vars.R2E_ACCESS_TEAM_DOMAIN }}
       R2E_ACCESS_TEAM_DOMAIN_PREVIEW: ${{ vars.R2E_ACCESS_TEAM_DOMAIN_PREVIEW }}
       R2E_ACCESS_AUD: ${{ vars.R2E_ACCESS_AUD }}
       R2E_ACCESS_AUD_PREVIEW: ${{ vars.R2E_ACCESS_AUD_PREVIEW }}
+      R2E_ACCESS_JWKS_URL: ${{ vars.R2E_ACCESS_JWKS_URL }}
+      R2E_ACCESS_JWKS_URL_PREVIEW: ${{ vars.R2E_ACCESS_JWKS_URL_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES }}
+      R2E_ACCESS_REQUIRED_SCOPES_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES_READ: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_READ }}
+      R2E_ACCESS_REQUIRED_SCOPES_READ_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_READ_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES_WRITE: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_WRITE }}
+      R2E_ACCESS_REQUIRED_SCOPES_WRITE_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_WRITE_PREVIEW }}
+      R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE }}
+      R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE_PREVIEW: ${{ vars.R2E_ACCESS_REQUIRED_SCOPES_SHARE_MANAGE_PREVIEW }}
+      R2E_ACCESS_CLOCK_SKEW_SEC: ${{ vars.R2E_ACCESS_CLOCK_SKEW_SEC }}
+      R2E_ACCESS_CLOCK_SKEW_SEC_PREVIEW: ${{ vars.R2E_ACCESS_CLOCK_SKEW_SEC_PREVIEW }}
+      R2E_ACCESS_JWKS_CACHE_TTL_SEC: ${{ vars.R2E_ACCESS_JWKS_CACHE_TTL_SEC }}
+      R2E_ACCESS_JWKS_CACHE_TTL_SEC_PREVIEW: ${{ vars.R2E_ACCESS_JWKS_CACHE_TTL_SEC_PREVIEW }}
       R2E_UPLOAD_MAX_FILE_BYTES: ${{ vars.R2E_UPLOAD_MAX_FILE_BYTES }}
       R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW: ${{ vars.R2E_UPLOAD_MAX_FILE_BYTES_PREVIEW }}
       R2E_UPLOAD_MAX_PARTS: ${{ vars.R2E_UPLOAD_MAX_PARTS }}
@@ -494,18 +514,20 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref }}
 
-      - name: Verify Access API policy contract (production)
+      - name: Render Wrangler config
+        run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
+
+      - name: Verify Access policy contract (production)
         env:
+          R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
           R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
         run: |
           set -euo pipefail
-          ./scripts/ci/check-r2-access-policy.sh \
-            "files.unsigned.sh" \
-            "${R2E_ACCESS_AUD}" \
-            "${R2E_SMOKE_ACCESS_CLIENT_ID}"
-
-      - name: Render Wrangler config
-        run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
+          smoke_host="$(
+            printf '%s' "${R2E_SMOKE_BASE_URL}" |
+              sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##'
+          )"
+          ./scripts/ci/check-r2-access-policy.sh "${smoke_host}" "${R2E_ACCESS_AUD}" "${R2E_SMOKE_ACCESS_CLIENT_ID}"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -577,7 +599,6 @@ jobs:
           set -euo pipefail
           cp web/.assetsignore web/dist/.assetsignore
           pnpm exec wrangler deploy --config web/wrangler.toml
-
   smoke-production:
     name: Smoke production
     if: github.event_name == 'workflow_dispatch'
@@ -586,8 +607,6 @@ jobs:
     environment: production
     env:
       R2E_SMOKE_BASE_URL: ${{ secrets.R2E_SMOKE_BASE_URL }}
-      R2E_SMOKE_ADMIN_KID: ${{ secrets.R2E_SMOKE_ADMIN_KID }}
-      R2E_SMOKE_ADMIN_SECRET: ${{ secrets.R2E_SMOKE_ADMIN_SECRET }}
       R2E_SMOKE_BUCKET: ${{ secrets.R2E_SMOKE_BUCKET }}
       R2E_SMOKE_KEY: ${{ secrets.R2E_SMOKE_KEY }}
       R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
@@ -703,8 +722,8 @@ jobs:
             echo
             echo "Required operator actions:"
             echo "1. Roll back to the last known-good Worker revision."
-            echo "2. Restore matching environment variables and Access API policy model (/api/v2/* Allow+Service Auth, /share/* Bypass)."
-            echo "3. Verify /share token behavior and /api Access protection before leaving incident mode."
+            echo "2. Restore matching environment variables, especially Access team-domain/AUD/JWKS settings."
+            echo "3. Verify /share token behavior and /api bearer-token protection before leaving incident mode."
             echo
             echo "Command checklist:"
             echo '```bash'

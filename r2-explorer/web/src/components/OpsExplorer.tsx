@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import {
+  ACCESS_API_BOOTSTRAP_PATH,
   ApiError,
   createShare,
   deleteObject,
@@ -83,12 +84,21 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function isAuthRequired(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    error.status === 401 &&
+    (error.code === "access_required" || error.code === "token_invalid")
+  );
+}
+
 function readEtag(object: ObjectMetadata): string {
   return object.etag.replace(/^"|"$/g, "");
 }
 
 export function OpsExplorer(): JSX.Element {
   const [session, setSession] = useState<SessionInfoResponse | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [listComplete, setListComplete] = useState(true);
@@ -143,6 +153,7 @@ export function OpsExplorer(): JSX.Element {
       setFatalError("");
       try {
         const payload: ListResponse = await listObjects(prefix, nextCursor, 200);
+        setAuthRequired(false);
         setFolders(payload.delimitedPrefixes);
         setObjects(payload.objects);
         setCursor(payload.cursor);
@@ -157,6 +168,11 @@ export function OpsExplorer(): JSX.Element {
           "success",
         );
       } catch (error) {
+        if (isAuthRequired(error)) {
+          setAuthRequired(true);
+          setFatalError("Sign in required to access R2 Explorer. Redirecting to Cloudflare Access.");
+          return;
+        }
         const message = errorMessage(error);
         setFatalError(message);
         appendActivity(`List failed: ${message}`, "error");
@@ -172,8 +188,14 @@ export function OpsExplorer(): JSX.Element {
       setLoadingShares(true);
       try {
         const payload = await listShares(objectKey);
+        setAuthRequired(false);
         setShares(payload.shares);
       } catch (error) {
+        if (isAuthRequired(error)) {
+          setAuthRequired(true);
+          setFatalError("Sign in required to manage shares. Redirecting to Cloudflare Access.");
+          return;
+        }
         setShares([]);
         appendActivity(`Share listing failed: ${errorMessage(error)}`, "error");
       } finally {
@@ -190,12 +212,42 @@ export function OpsExplorer(): JSX.Element {
     await loadShares(selectedObject.key);
   }, [loadShares, selectedObject]);
 
-  const openPreview = useCallback((key: string) => {
-    window.open(`/api/v2/preview?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+  const startLogin = useCallback(() => {
+    window.location.assign(ACCESS_API_BOOTSTRAP_PATH);
   }, []);
 
-  const openDownload = useCallback((key: string) => {
-    window.open(`/api/v2/download?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+  useEffect(() => {
+    if (!authRequired) {
+      return;
+    }
+    appendActivity("Authentication required. Redirecting to Cloudflare Access.", "error");
+    startLogin();
+  }, [appendActivity, authRequired, startLogin]);
+
+  const openPreview = useCallback(
+    (key: string) => {
+      if (authRequired) {
+        startLogin();
+        return;
+      }
+      window.open(`/api/v2/preview?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+    },
+    [authRequired, startLogin],
+  );
+
+  const openDownload = useCallback(
+    (key: string) => {
+      if (authRequired) {
+        startLogin();
+        return;
+      }
+      window.open(`/api/v2/download?key=${encodeURIComponent(key)}`, "_blank", "noopener,noreferrer");
+    },
+    [authRequired, startLogin],
+  );
+
+  const signOut = useCallback(() => {
+    window.location.assign("/cdn-cgi/access/logout");
   }, []);
 
   const moveSelection = useCallback(
@@ -334,16 +386,28 @@ export function OpsExplorer(): JSX.Element {
 
   useEffect(() => {
     const bootstrap = async (): Promise<void> => {
+      let sessionLoaded = false;
       try {
         const payload = await fetchSessionInfo();
         setSession(payload);
+        setAuthRequired(false);
+        sessionLoaded = true;
         appendActivity(`Connected to Worker version ${payload.version}`, "success");
       } catch (error) {
+        if (isAuthRequired(error)) {
+          setSession(null);
+          setAuthRequired(true);
+          setFatalError("Sign in required to use the Explorer.");
+          appendActivity("Authentication required. Click Sign in to start Cloudflare Access login.", "error");
+          return;
+        }
         const message = errorMessage(error);
         setFatalError(message);
         appendActivity(`Failed to load session info: ${message}`, "error");
       }
-      await refreshList();
+      if (sessionLoaded) {
+        await refreshList();
+      }
     };
 
     void bootstrap();
@@ -435,6 +499,17 @@ export function OpsExplorer(): JSX.Element {
             <div className="row" style={{ justifyContent: "space-between" }}>
               <span className="subtle">Auth mode</span>
               <span className="badge">{session?.actor.mode ?? "unknown"}</span>
+            </div>
+            <div className="row">
+              {authRequired ? (
+                <button className="primary" onClick={startLogin}>
+                  Sign in
+                </button>
+              ) : (
+                <button className="ghost" onClick={signOut} disabled={!session}>
+                  Sign out
+                </button>
+              )}
             </div>
           </div>
 

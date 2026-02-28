@@ -130,8 +130,9 @@ in
         Optional env file to source at runtime (after `credentialsFile`) for Worker
         share commands.
 
-        Intended for `R2_EXPLORER_BASE_URL`, `R2_EXPLORER_ADMIN_KID`, and
-        `R2_EXPLORER_ADMIN_SECRET`. Use a runtime path (for example
+        Intended for `R2_EXPLORER_BASE_URL`,
+        `R2_EXPLORER_ACCESS_CLIENT_ID`, and
+        `R2_EXPLORER_ACCESS_CLIENT_SECRET`. Use a runtime path (for example
         `/run/secrets/r2/explorer.env`) to avoid embedding secrets in the Nix store.
       '';
       example = "/run/secrets/r2/explorer.env";

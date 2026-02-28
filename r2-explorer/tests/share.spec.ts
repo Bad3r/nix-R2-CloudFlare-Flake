@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import { createTestEnv, signedHeaders } from "./helpers/memory";
+import { accessHeaders, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
 
 describe("share lifecycle", () => {
+  useAccessJwksFetchMock();
+
   it("creates share, serves one download, then enforces maxDownloads", async () => {
-    const { env, bucket, kid, secret } = await createTestEnv();
+    const { env, bucket } = await createTestEnv();
     await bucket.put("docs/file.txt", "hello");
     const app = createApp();
 
@@ -15,18 +17,12 @@ describe("share lifecycle", () => {
       maxDownloads: 1,
     });
     const createUrl = "https://files.example.com/api/v2/share/create";
-    const createTemplate = new Request(createUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: rawBody,
-    });
-    const headers = signedHeaders(createTemplate, kid, secret, rawBody);
     const createResponse = await app.fetch(
       new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...headers,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: rawBody,
       }),
@@ -47,7 +43,7 @@ describe("share lifecycle", () => {
   });
 
   it("revokes share token", async () => {
-    const { env, bucket, kid, secret } = await createTestEnv();
+    const { env, bucket } = await createTestEnv();
     await bucket.put("docs/revocable.txt", "revocable");
     const app = createApp();
 
@@ -57,22 +53,12 @@ describe("share lifecycle", () => {
       ttl: "24h",
     });
     const createUrl = "https://files.example.com/api/v2/share/create";
-    const createHeaders = signedHeaders(
-      new Request(createUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: createBody,
-      }),
-      kid,
-      secret,
-      createBody,
-    );
     const createResponse = await app.fetch(
       new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...createHeaders,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: createBody,
       }),
@@ -83,22 +69,12 @@ describe("share lifecycle", () => {
 
     const revokeBody = JSON.stringify({ tokenId: createPayload.tokenId });
     const revokeUrl = "https://files.example.com/api/v2/share/revoke";
-    const revokeHeaders = signedHeaders(
-      new Request(revokeUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: revokeBody,
-      }),
-      kid,
-      secret,
-      revokeBody,
-    );
     const revokeResponse = await app.fetch(
       new Request(revokeUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...revokeHeaders,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: revokeBody,
       }),
@@ -116,7 +92,7 @@ describe("share lifecycle", () => {
   });
 
   it("serves share downloads from a non-default bucket", async () => {
-    const { env, photosBucket, kid, secret } = await createTestEnv();
+    const { env, photosBucket } = await createTestEnv();
     await photosBucket.put("images/cat.jpg", "meow");
     const app = createApp();
 
@@ -126,22 +102,12 @@ describe("share lifecycle", () => {
       ttl: "1h",
     });
     const createUrl = "https://files.example.com/api/v2/share/create";
-    const createHeaders = signedHeaders(
-      new Request(createUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: createBody,
-      }),
-      kid,
-      secret,
-      createBody,
-    );
     const createResponse = await app.fetch(
       new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...createHeaders,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: createBody,
       }),
@@ -157,7 +123,7 @@ describe("share lifecycle", () => {
   });
 
   it("rejects unknown bucket alias on share create", async () => {
-    const { env, kid, secret } = await createTestEnv();
+    const { env } = await createTestEnv();
     const app = createApp();
 
     const createBody = JSON.stringify({
@@ -166,22 +132,12 @@ describe("share lifecycle", () => {
       ttl: "1h",
     });
     const createUrl = "https://files.example.com/api/v2/share/create";
-    const createHeaders = signedHeaders(
-      new Request(createUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: createBody,
-      }),
-      kid,
-      secret,
-      createBody,
-    );
     const createResponse = await app.fetch(
       new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...createHeaders,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: createBody,
       }),
@@ -193,7 +149,7 @@ describe("share lifecycle", () => {
   });
 
   it("rejects missing bucket binding on share create", async () => {
-    const { env, kid, secret } = await createTestEnv();
+    const { env } = await createTestEnv();
     env.R2E_BUCKET_MAP = JSON.stringify({
       files: "FILES_BUCKET",
       logs: "LOGS_BUCKET",
@@ -206,22 +162,12 @@ describe("share lifecycle", () => {
       ttl: "1h",
     });
     const createUrl = "https://files.example.com/api/v2/share/create";
-    const createHeaders = signedHeaders(
-      new Request(createUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: createBody,
-      }),
-      kid,
-      secret,
-      createBody,
-    );
     const createResponse = await app.fetch(
       new Request(createUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...createHeaders,
+          ...accessHeaders("ops@example.com", { scope: "r2.share.manage" }),
         },
         body: createBody,
       }),

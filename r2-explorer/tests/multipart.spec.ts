@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import { accessHeaders, createAccessJwt, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
+import { accessHeaders, accessSessionCookie, createAccessJwt, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
 
 type InitPayload = {
   sessionId: string;
@@ -39,10 +39,36 @@ function uploadHeaders(options?: {
   return headers;
 }
 
+function uploadCookieHeaders(
+  _env: Awaited<ReturnType<typeof createTestEnv>>["env"],
+  options?: {
+    email?: string;
+    sub?: string;
+    origin?: string | null;
+    csrf?: string | null;
+    contentType?: string;
+  },
+): HeadersInit {
+  const email = options?.email ?? "engineer@example.com";
+  const sub = options?.sub ?? "user-a";
+  const headers: Record<string, string> = {
+    cookie: accessSessionCookie(email, { sub }),
+    "content-type": options?.contentType ?? "application/json",
+  };
+  if (options?.origin !== null) {
+    headers.origin = options?.origin ?? "https://files.example.com";
+  }
+  if (options?.csrf !== null) {
+    headers["x-r2e-csrf"] = options?.csrf ?? "1";
+  }
+  return headers;
+}
+
 async function initUpload(
   app: ReturnType<typeof createApp>,
   env: Awaited<ReturnType<typeof createTestEnv>>["env"],
   options?: {
+    authMode?: "bearer" | "cookie";
     email?: string;
     sub?: string;
     filename?: string;
@@ -57,12 +83,20 @@ async function initUpload(
   return app.fetch(
     new Request("https://files.example.com/api/v2/upload/init", {
       method: "POST",
-      headers: uploadHeaders({
-        email: options?.email,
-        sub: options?.sub,
-        origin: options?.origin,
-        csrf: options?.csrf,
-      }),
+      headers:
+        options?.authMode === "cookie"
+          ? uploadCookieHeaders(env, {
+              email: options?.email,
+              sub: options?.sub,
+              origin: options?.origin,
+              csrf: options?.csrf,
+            })
+          : uploadHeaders({
+              email: options?.email,
+              sub: options?.sub,
+              origin: options?.origin,
+              csrf: options?.csrf,
+            }),
       body: JSON.stringify({
         filename: options?.filename ?? "sample.bin",
         prefix: options?.prefix ?? "uploads/",
@@ -125,11 +159,11 @@ describe("multipart upload flow", () => {
     };
     expect(signPartOnePayload.url.includes("uploadId=")).toBe(true);
     expect(signPartOnePayload.headers["content-md5"]).toBe(partOneMd5);
-    expect(signPartOnePayload.headers["content-length"]).toBe(String(partSize));
+    expect(signPartOnePayload.headers["content-length"]).toBeUndefined();
     const signedHeaderSet = new Set(
       (new URL(signPartOnePayload.url).searchParams.get("X-Amz-SignedHeaders") ?? "").split(";"),
     );
-    expect(signedHeaderSet.has("content-length")).toBe(true);
+    expect(signedHeaderSet.has("content-length")).toBe(false);
     const uploadedPartOne = await upload.uploadPart(1, partOneBytes);
 
     const partTwoBytes = new Uint8Array(partSize);
@@ -463,6 +497,7 @@ describe("multipart upload flow", () => {
     const app = createApp();
 
     const missingOrigin = await initUpload(app, env, {
+      authMode: "cookie",
       origin: null,
       declaredSize: 2048,
     });
@@ -470,6 +505,7 @@ describe("multipart upload flow", () => {
     expect(((await missingOrigin.json()) as ErrorPayload).error?.code).toBe("origin_required");
 
     const disallowedOrigin = await initUpload(app, env, {
+      authMode: "cookie",
       origin: "https://evil.example.com",
       declaredSize: 2048,
     });
@@ -477,6 +513,7 @@ describe("multipart upload flow", () => {
     expect(((await disallowedOrigin.json()) as ErrorPayload).error?.code).toBe("origin_not_allowed");
 
     const nullOriginLiteral = await initUpload(app, env, {
+      authMode: "cookie",
       origin: "null",
       declaredSize: 2048,
     });
@@ -484,6 +521,7 @@ describe("multipart upload flow", () => {
     expect(((await nullOriginLiteral.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
 
     const malformedOrigin = await initUpload(app, env, {
+      authMode: "cookie",
       origin: "://malformed-origin",
       declaredSize: 2048,
     });
@@ -491,6 +529,7 @@ describe("multipart upload flow", () => {
     expect(((await malformedOrigin.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
 
     const javascriptOrigin = await initUpload(app, env, {
+      authMode: "cookie",
       origin: "javascript:void(0)",
       declaredSize: 2048,
     });
@@ -498,6 +537,7 @@ describe("multipart upload flow", () => {
     expect(((await javascriptOrigin.json()) as ErrorPayload).error?.code).toBe("origin_invalid");
 
     const missingCsrf = await initUpload(app, env, {
+      authMode: "cookie",
       csrf: null,
       declaredSize: 2048,
     });
@@ -505,11 +545,24 @@ describe("multipart upload flow", () => {
     expect(((await missingCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
 
     const nonCanonicalCsrf = await initUpload(app, env, {
+      authMode: "cookie",
       csrf: "TRUE",
       declaredSize: 2048,
     });
     expect(nonCanonicalCsrf.status).toBe(403);
     expect(((await nonCanonicalCsrf.json()) as ErrorPayload).error?.code).toBe("csrf_required");
+  });
+
+  it("does not require Origin/CSRF for Access-header upload mutation routes", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const response = await initUpload(app, env, {
+      authMode: "bearer",
+      origin: null,
+      csrf: null,
+      declaredSize: 1024,
+    });
+    expect(response.status).toBe(200);
   });
 
   it("accepts Access service-token principals on upload mutation routes", async () => {

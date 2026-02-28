@@ -12,7 +12,7 @@ const md5String = z
 
 export const requestActorSchema = z
   .object({
-    mode: z.enum(["access", "hmac"]),
+    mode: z.literal("access"),
     actor: z.string().min(1),
   })
   .strict();
@@ -251,12 +251,10 @@ export const serverInfoResponseSchema = z
     auth: z
       .object({
         accessEnabled: z.boolean(),
-        hmacAdminEnabled: z.boolean(),
       })
       .strict(),
     limits: z
       .object({
-        adminAuthWindowSec: z.number().int().positive(),
         maxShareTtlSec: z.number().int().positive(),
         defaultShareTtlSec: z.number().int().positive(),
         uiMaxListLimit: z.number().int().positive(),
@@ -298,7 +296,6 @@ export const serverInfoResponseSchema = z
       .object({
         mode: z.literal("kv-random-token"),
         kvNamespace: z.literal("R2E_SHARES_KV"),
-        keysetNamespace: z.literal("R2E_KEYS_KV"),
       })
       .strict(),
     actor: requestActorSchema,

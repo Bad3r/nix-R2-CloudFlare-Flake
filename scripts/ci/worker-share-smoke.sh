@@ -69,6 +69,40 @@ dump_response_context() {
   fi
 }
 
+assert_no_cloudflare_access_redirect() {
+  local label="$1"
+  local url="$2"
+  local body_file="$3"
+  local headers_file="$4"
+  local status curl_exit location
+
+  set +e
+  status="$(
+    curl -sS \
+      --max-time "${SMOKE_TIMEOUT_SEC}" \
+      --connect-timeout "${SMOKE_CONNECT_TIMEOUT_SEC}" \
+      -D "${headers_file}" \
+      -o "${body_file}" \
+      -w "%{http_code}" \
+      "${url}"
+  )"
+  curl_exit=$?
+  set -e
+
+  if [[ ${curl_exit} -ne 0 ]]; then
+    fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
+  fi
+
+  if [[ ${status} == "302" ]]; then
+    location="$(
+      awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2; exit }' "${headers_file}"
+    )"
+    if [[ ${location} == *"/cdn-cgi/access/login/"* || ${location} == *"/cdn-cgi/access/login"* ]]; then
+      fail "${label} hit Cloudflare Access redirect (${location}). /api/v2/* must not be edge-gated; remove stale Access app domains for this host."
+    fi
+  fi
+}
+
 should_retry_status() {
   local status="$1"
 
@@ -202,8 +236,6 @@ assert_share_exhaustion() {
 }
 
 require_env "R2E_SMOKE_BASE_URL"
-require_env "R2E_SMOKE_ADMIN_KID"
-require_env "R2E_SMOKE_ADMIN_SECRET"
 require_env "R2E_SMOKE_BUCKET"
 require_env "R2E_SMOKE_KEY"
 require_env "R2E_SMOKE_ACCESS_CLIENT_ID"
@@ -224,8 +256,6 @@ else
 fi
 
 export R2_EXPLORER_BASE_URL="${R2E_SMOKE_BASE_URL}"
-export R2_EXPLORER_ADMIN_KID="${R2E_SMOKE_ADMIN_KID}"
-export R2_EXPLORER_ADMIN_SECRET="${R2E_SMOKE_ADMIN_SECRET}"
 export R2_EXPLORER_ACCESS_CLIENT_ID="${R2E_SMOKE_ACCESS_CLIENT_ID}"
 export R2_EXPLORER_ACCESS_CLIENT_SECRET="${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
 
@@ -240,6 +270,29 @@ SMOKE_SHARE_EXHAUSTION_RETRIES="$(
 
 echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
 echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
+preflight_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke-preflight.XXXXXX")"
+preflight_cleanup() {
+  rm -rf "${preflight_tmp_dir}"
+}
+trap preflight_cleanup EXIT
+
+assert_http_status "401,302" "unauthenticated API preflight" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${preflight_tmp_dir}/api-preflight.body" "false" \
+  -D "${preflight_tmp_dir}/api-preflight.headers"
+
+if [[ ${LAST_HTTP_STATUS} == "302" ]]; then
+  preflight_location="$(
+    awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2; exit }' "${preflight_tmp_dir}/api-preflight.headers"
+  )"
+  if [[ ${preflight_location} != *"/cdn-cgi/access/login"* ]]; then
+    fail "unauthenticated API preflight redirected to unexpected location: ${preflight_location}"
+  fi
+else
+  preflight_error_code="$(jq -r '.error.code // empty' "${preflight_tmp_dir}/api-preflight.body" 2>/dev/null || true)"
+  if [[ -n ${preflight_error_code} && ${preflight_error_code} != "access_required" ]]; then
+    fail "unauthenticated API preflight returned unexpected error code: ${preflight_error_code}"
+  fi
+fi
+
 create_json="$(
   "${R2_BIN}" share worker create \
     "${R2E_SMOKE_BUCKET}" \
@@ -266,6 +319,7 @@ echo "Created smoke share token ${token_id} (expires ${expires_at})"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke.XXXXXX")"
 cleanup() {
+  preflight_cleanup
   rm -rf "${tmp_dir}"
 }
 trap cleanup EXIT
@@ -275,16 +329,6 @@ assert_http_status "200" "first download" "${share_url}" "${first_download_body}
 
 second_download_body="${tmp_dir}/second-download.body"
 assert_share_exhaustion "${share_url}" "${second_download_body}"
-
-api_probe_body="${tmp_dir}/api-probe.body"
-assert_http_status "302,401" "unauthenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_probe_body}" "false"
-
-if [[ ${LAST_HTTP_STATUS} == "401" ]]; then
-  api_error_code="$(jq -r '.error.code // empty' "${api_probe_body}" 2>/dev/null || true)"
-  if [[ -n ${api_error_code} && ${api_error_code} != "access_required" ]]; then
-    fail "unauthenticated /api/v2/session/info returned unexpected error code: ${api_error_code}"
-  fi
-fi
 
 api_authed_probe_body="${tmp_dir}/api-authed-probe.body"
 assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_authed_probe_body}" "false" \
