@@ -170,8 +170,7 @@ export function OpsExplorer(): JSX.Element {
       } catch (error) {
         if (isAuthRequired(error)) {
           setAuthRequired(true);
-          setFatalError("Sign in required to access R2 Explorer.");
-          appendActivity("Authentication required. Use Sign in to continue.", "error");
+          setFatalError("Sign in required to access R2 Explorer. Redirecting to Cloudflare Access.");
           return;
         }
         const message = errorMessage(error);
@@ -194,7 +193,7 @@ export function OpsExplorer(): JSX.Element {
       } catch (error) {
         if (isAuthRequired(error)) {
           setAuthRequired(true);
-          setFatalError("Sign in required to manage shares.");
+          setFatalError("Sign in required to manage shares. Redirecting to Cloudflare Access.");
           return;
         }
         setShares([]);
@@ -216,6 +215,14 @@ export function OpsExplorer(): JSX.Element {
   const startLogin = useCallback(() => {
     window.location.assign(ACCESS_API_BOOTSTRAP_PATH);
   }, []);
+
+  useEffect(() => {
+    if (!authRequired) {
+      return;
+    }
+    appendActivity("Authentication required. Redirecting to Cloudflare Access.", "error");
+    startLogin();
+  }, [appendActivity, authRequired, startLogin]);
 
   const openPreview = useCallback(
     (key: string) => {
