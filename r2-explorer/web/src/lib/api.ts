@@ -125,6 +125,8 @@ type RetryOptions = {
 };
 
 const TRANSIENT_HTTP_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504, 522, 524]);
+const ACCESS_LOGIN_PATH = "/cdn-cgi/access/login";
+export const ACCESS_API_BOOTSTRAP_PATH = "/api/v2/auth/bootstrap";
 const READ_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
   baseDelayMs: 1000,
@@ -191,12 +193,30 @@ function withDefaultCredentials(init?: RequestInit): RequestInit {
   return {
     credentials: "same-origin",
     ...init,
+    redirect: "manual",
   };
+}
+
+function isAccessLoginUrl(url: string | null): boolean {
+  return Boolean(url && url.includes(ACCESS_LOGIN_PATH));
+}
+
+function isAccessRedirectResponse(response: Response): boolean {
+  if (response.type === "opaqueredirect") {
+    return true;
+  }
+  if (response.redirected && isAccessLoginUrl(response.url)) {
+    return true;
+  }
+  if (response.status >= 300 && response.status < 400 && isAccessLoginUrl(response.headers.get("location"))) {
+    return true;
+  }
+  return false;
 }
 
 async function apiOnce<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, withDefaultCredentials(init));
-  if (response.redirected && response.url.includes("/cdn-cgi/access/login")) {
+  if (isAccessRedirectResponse(response)) {
     throw new ApiError(401, "access_required", "Cloudflare Access sign-in is required.");
   }
   const decoded = await decodeResponse<T>(response);

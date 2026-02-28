@@ -756,6 +756,7 @@ export function createApp(): Hono<AppContext> {
     "/api/v2/meta",
     "/api/v2/download",
     "/api/v2/preview",
+    "/api/v2/auth/bootstrap",
     "/api/v2/server/info",
     "/api/v2/session/info",
   ]) {
@@ -1349,6 +1350,7 @@ export function createApp(): Hono<AppContext> {
     return jsonValidated(serverInfoResponseSchema, payload);
   };
 
+  app.get("/api/v2/auth/bootstrap", (c) => c.redirect("/", 302));
   app.get("/api/v2/server/info", serverInfoHandler);
   app.get("/api/v2/session/info", serverInfoHandler);
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import {
+  ACCESS_API_BOOTSTRAP_PATH,
   ApiError,
   createShare,
   deleteObject,
@@ -213,7 +214,7 @@ export function OpsExplorer(): JSX.Element {
   }, [loadShares, selectedObject]);
 
   const startLogin = useCallback(() => {
-    window.location.assign("/cdn-cgi/access/login");
+    window.location.assign(ACCESS_API_BOOTSTRAP_PATH);
   }, []);
 
   const openPreview = useCallback(

@@ -16,6 +16,31 @@ afterEach(() => {
 });
 
 describe("web api retry behavior", () => {
+  it("maps Access login redirects to access_required without retrying", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: {
+          location: "https://repo.cloudflareaccess.com/cdn-cgi/access/login?kid=test",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchSessionInfo()).rejects.toMatchObject({
+      status: 401,
+      code: "access_required",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v2/session/info",
+      expect.objectContaining({
+        credentials: "same-origin",
+        redirect: "manual",
+      }),
+    );
+  });
+
   it("retries transient session info failures with exponential backoff", async () => {
     vi.useFakeTimers();
     const fetchMock = vi

@@ -111,6 +111,25 @@ describe("auth middleware", () => {
     expect(response.status).toBe(200);
   });
 
+  it("requires auth for /api/v2/auth/bootstrap and redirects when authenticated", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    const unauthenticated = await app.fetch(new Request("https://files.example.com/api/v2/auth/bootstrap"), env);
+    const unauthPayload = (await unauthenticated.json()) as { error: { code: string } };
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthPayload.error.code).toBe("access_required");
+
+    const authenticated = await app.fetch(
+      new Request("https://files.example.com/api/v2/auth/bootstrap", {
+        headers: accessHeaders("ops@example.com"),
+      }),
+      env,
+    );
+    expect(authenticated.status).toBe(302);
+    expect(authenticated.headers.get("location")).toBe("/");
+  });
+
   it("accepts valid EdDSA Access JWT on /api routes", async () => {
     const { env } = await createTestEnv();
     const app = createApp();
