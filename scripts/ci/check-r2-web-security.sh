@@ -19,7 +19,8 @@ Arguments:
   expected-csp-file   Path to the canonical CSP policy text file.
 
 Environment (optional):
-  (none)
+  R2E_SMOKE_ACCESS_CLIENT_ID       Cloudflare Access service token client ID for protected web roots.
+  R2E_SMOKE_ACCESS_CLIENT_SECRET   Cloudflare Access service token secret for protected web roots.
 
 Notes:
   - The script performs a protected-page fetch and checks:
@@ -98,6 +99,18 @@ headers_file="${tmp_dir}/headers.txt"
 body_file="${tmp_dir}/body.html"
 
 curl_headers=()
+access_client_id="${R2E_SMOKE_ACCESS_CLIENT_ID:-}"
+access_client_secret="${R2E_SMOKE_ACCESS_CLIENT_SECRET:-}"
+
+if [[ -n ${access_client_id} || -n ${access_client_secret} ]]; then
+  if [[ -z ${access_client_id} || -z ${access_client_secret} ]]; then
+    fail "R2E_SMOKE_ACCESS_CLIENT_ID and R2E_SMOKE_ACCESS_CLIENT_SECRET must both be set when using Access headers"
+  fi
+  curl_headers+=(
+    -H "CF-Access-Client-Id: ${access_client_id}"
+    -H "CF-Access-Client-Secret: ${access_client_secret}"
+  )
+fi
 
 http_code="$(
   curl -sS --location "${curl_headers[@]}" \

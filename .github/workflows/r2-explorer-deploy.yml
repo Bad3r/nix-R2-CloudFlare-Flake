@@ -252,6 +252,8 @@ jobs:
       R2E_SMOKE_RETRIES: "1"
       R2E_SMOKE_RETRY_DELAY_SEC: "2"
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
+      R2E_SMOKE_ACCESS_CLIENT_ID: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_ID }}
+      R2E_SMOKE_ACCESS_CLIENT_SECRET: ${{ secrets.R2E_SMOKE_ACCESS_CLIENT_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
