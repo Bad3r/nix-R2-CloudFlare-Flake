@@ -73,6 +73,9 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - Bisync uses a persistent `--workdir` under `/var/lib/r2-sync-<name>/bisync`.
   On first run (no prior state), it automatically runs `--resync` with
   `initialResyncMode` (default: `path1`).
+- If prior listing cache exists but no longer matches the current local/remote
+  basename pair (for example, path case changes), the wrapper retries once with
+  `--resync --resync-mode <initialResyncMode>` automatically.
 
 ## Generated runtime artifacts
 

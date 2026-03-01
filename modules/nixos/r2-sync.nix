@@ -135,23 +135,52 @@ let
 
         # First run requires an explicit resync to seed bisync state.
         resync_flags=()
-        if ! ${pkgs.coreutils}/bin/ls -1 ${workdirArg}/*.lst >/dev/null 2>&1; then
+        has_bisync_state=false
+        if ${pkgs.coreutils}/bin/ls -1 ${workdirArg}/*.lst >/dev/null 2>&1; then
+          has_bisync_state=true
+        else
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
-        exec ${pkgs.rclone}/bin/rclone bisync \
-          --config=/dev/null \
-          --s3-provider=Cloudflare \
-          --s3-endpoint="$endpoint" \
-          --s3-env-auth \
-          ${localPathArg} ${remoteArg} \
-          --backup-dir1=${localTrashArg} \
-          --backup-dir2=${remoteTrashArg} \
-          --max-delete=${toString mount.bisync.maxDelete} \
-          --workdir=${workdirArg} \
-          --check-access \
-          --check-filename=${checkFilenameArg} \
-          "''${resync_flags[@]}"
+        run_bisync() {
+          ${pkgs.rclone}/bin/rclone bisync \
+            --config=/dev/null \
+            --s3-provider=Cloudflare \
+            --s3-endpoint="$endpoint" \
+            --s3-env-auth \
+            ${localPathArg} ${remoteArg} \
+            --backup-dir1=${localTrashArg} \
+            --backup-dir2=${remoteTrashArg} \
+            --max-delete=${toString mount.bisync.maxDelete} \
+            --workdir=${workdirArg} \
+            --check-access \
+            --check-filename=${checkFilenameArg} \
+            "$@"
+        }
+
+        set +e
+        bisync_output="$(run_bisync "''${resync_flags[@]}" 2>&1)"
+        bisync_status=$?
+        set -e
+
+        if [[ "$bisync_status" -eq 0 ]]; then
+          printf '%s\n' "$bisync_output"
+          exit 0
+        fi
+
+        printf '%s\n' "$bisync_output" >&2
+
+        # When a mount path or remote basename changes, old listing files may still
+        # exist in workdir and bisync asks for manual --resync recovery.
+        if [[ "$has_bisync_state" == true ]] \
+          && [[ "''${#resync_flags[@]}" -eq 0 ]] \
+          && { [[ "$bisync_output" == *"cannot find prior Path1 or Path2 listings"* ]] || [[ "$bisync_output" == *"Must run --resync to recover"* ]]; }; then
+          echo "Detected stale bisync listing state for ${name}; retrying once with --resync." >&2
+          run_bisync --resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode}
+          exit 0
+        fi
+
+        exit "$bisync_status"
       '';
     in
     {

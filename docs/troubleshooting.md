@@ -305,12 +305,23 @@ sudo systemctl restart r2-mount-workspace
 sudo systemctl start r2-bisync-workspace
 ```
 
-If logs say `Must run --resync to recover`, reset bisync state (safe: it only
-removes rclone's listing cache, not your data):
+If logs say `Must run --resync to recover`, the service now retries once with
+`--resync` automatically when stale listing basenames are detected. If it still
+fails, archive bisync state and run a controlled resync (safe: this only moves
+rclone listing cache files, not your data):
 
 ```bash
 sudo systemctl stop r2-bisync-workspace.timer r2-bisync-workspace.service
-rm -f /var/lib/r2-sync-workspace/bisync/*.lst*
+sudo bash -c '
+  set -euo pipefail
+  shopt -s nullglob
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  archive="/var/lib/r2-sync-workspace/bisync/archive-${ts}"
+  install -d -m 0750 "$archive"
+  for f in /var/lib/r2-sync-workspace/bisync/*.lst*; do
+    mv "$f" "$archive/"
+  done
+'
 sudo systemctl start r2-bisync-workspace.service
 sudo systemctl start r2-bisync-workspace.timer
 ```
