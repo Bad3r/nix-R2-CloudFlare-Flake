@@ -5,7 +5,8 @@
   "type": "module",
   "pnpm": {
     "overrides": {
-      "wrangler": "^4.69.0"
+      "wrangler": "^4.69.0",
+      "svgo": ">=4.0.1"
     }
   },
   "scripts": {
@@ -23,7 +24,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260305.0",
-    "hono": "^4.12.3",
+    "hono": "^4.12.4",
     "miniflare": "^4.20260305.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
