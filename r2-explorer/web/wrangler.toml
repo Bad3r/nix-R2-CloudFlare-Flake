@@ -1,5 +1,5 @@
 name = "r2-explorer-web"
-compatibility_date = "2026-02-26"
+compatibility_date = "2026-03-07"
 main = "./dist/_worker.js"
 routes = [{ pattern = "files.unsigned.sh/*", zone_name = "unsigned.sh" }]
 
