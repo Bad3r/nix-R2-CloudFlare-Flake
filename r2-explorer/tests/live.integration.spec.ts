@@ -24,6 +24,8 @@ type CiContext = {
   r2Bin: string;
   smokeTtl: string;
   retries: number;
+  retryDelayMs: number;
+  shareExhaustionRetries: number;
 };
 
 function inferCiEnvironment(): CiEnvironment | null {
@@ -74,6 +76,16 @@ function readOptionalPrefixed(environment: CiEnvironment, suffix: string, fallba
   return value;
 }
 
+function parseNonNegativeInt(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parsePositiveInt(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function resolveMissingEnv(): string[] {
   const environment = inferCiEnvironment();
   if (!environment) {
@@ -92,9 +104,12 @@ function resolveCiContext(): CiContext {
     throw new Error("Unable to determine CI environment. Set CF_CI_ENVIRONMENT or define CF_PREVIEW_CI_* / CF_PRODUCTION_CI_* variables.");
   }
 
-  const retriesRaw = readOptionalPrefixed(environment, "SMOKE_RETRIES", "2");
-  const retriesParsed = Number.parseInt(retriesRaw, 10);
-  const retries = Number.isFinite(retriesParsed) && retriesParsed >= 0 ? retriesParsed : 2;
+  const retries = parseNonNegativeInt(readOptionalPrefixed(environment, "SMOKE_RETRIES", "2"), 2);
+  const retryDelaySec = parsePositiveInt(readOptionalPrefixed(environment, "SMOKE_RETRY_DELAY_SEC", "2"), 2);
+  const shareExhaustionRetries = parseNonNegativeInt(
+    readOptionalPrefixed(environment, "SMOKE_SHARE_EXHAUSTION_RETRIES", "5"),
+    5,
+  );
 
   return {
     environment,
@@ -106,6 +121,8 @@ function resolveCiContext(): CiContext {
     r2Bin: readOptionalPrefixed(environment, "R2_BIN", "r2"),
     smokeTtl: readOptionalPrefixed(environment, "SMOKE_TTL", "10m"),
     retries,
+    retryDelayMs: retryDelaySec * 1000,
+    shareExhaustionRetries,
   };
 }
 
@@ -119,6 +136,10 @@ type ResponseWithBody = {
   headers: Headers;
   body: string;
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function fetchWithRetry(
   url: string,
@@ -143,6 +164,47 @@ async function fetchWithRetry(
   }
 
   throw new Error(`Request failed after ${attempts} attempts: ${String(attemptError)}`);
+}
+
+async function fetchShareExhaustion(
+  url: string,
+  requestAttempts: number,
+  propagationRetries: number,
+  retryDelayMs: number,
+): Promise<ResponseWithBody> {
+  const attempts = propagationRetries + 1;
+  let lastResponse: ResponseWithBody | null = null;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithRetry(url, { redirect: "follow" }, requestAttempts);
+      lastResponse = response;
+
+      if (response.status === 410) {
+        return response;
+      }
+
+      if (attempt < attempts && (response.status === 200 || RETRYABLE_STATUS.has(response.status))) {
+        await sleep(retryDelayMs);
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(retryDelayMs);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (lastResponse) {
+    return lastResponse;
+  }
+  throw new Error(`Request failed while waiting for share exhaustion: ${String(lastError)}`);
 }
 
 describeLive("live worker integration", () => {
@@ -189,7 +251,12 @@ describeLive("live worker integration", () => {
         const firstDownload = await fetchWithRetry(createPayload.url, { redirect: "follow" }, attempts);
         expect(firstDownload.status).toBe(200);
 
-        const secondDownload = await fetchWithRetry(createPayload.url, { redirect: "follow" }, attempts);
+        const secondDownload = await fetchShareExhaustion(
+          createPayload.url,
+          attempts,
+          ci.shareExhaustionRetries,
+          ci.retryDelayMs,
+        );
         expect(secondDownload.status).toBe(410);
 
         const apiInfoUrl = `${ci.baseUrl}/api/v2/session/info`;
