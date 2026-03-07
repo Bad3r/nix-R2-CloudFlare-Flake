@@ -6,7 +6,7 @@
   "pnpm": {
     "overrides": {
       "svgo": "^4.0.1",
-      "wrangler": "^4.69.0"
+      "wrangler": "^4.71.0"
     }
   },
   "scripts": {
@@ -23,12 +23,12 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260305.0",
+    "@cloudflare/workers-types": "^4.20260307.1",
     "hono": "^4.12.5",
-    "miniflare": "^4.20260305.0",
+    "miniflare": "4.20260301.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
-    "wrangler": "^4.69.0"
+    "wrangler": "^4.71.0"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

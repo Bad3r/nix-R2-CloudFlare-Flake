@@ -350,7 +350,7 @@ jobs:
 
       - name: Upload smoke logs (preview)
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-preview-logs
           path: smoke-preview.log

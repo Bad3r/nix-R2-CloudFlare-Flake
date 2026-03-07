@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 1
 
       - name: PR Review with Progress Tracking
-        uses: anthropics/claude-code-action@1dd74842e568f373608605d9e45c9e854f65f543
+        uses: anthropics/claude-code-action@9469d113c6afd29550c402740f22d1a97dd1209b
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
