@@ -263,9 +263,9 @@ CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
 4. Keep Access policy split on host `files.unsigned.sh`:
    - `/*` = Allow trusted identities
    - `/share/*` = Bypass (public token links)
-5. Confirm CI/live smoke endpoint uses the real host:
-   - production environment secret `R2E_SMOKE_BASE_URL` should be
-     `https://files.unsigned.sh`
+5. Confirm production deploy host contract:
+   - production deploy targets `https://files.unsigned.sh` directly
+   - no production `CF_PRODUCTION_CI_SMOKE_BASE_URL` secret is required by CI
 6. Verify DNS/certificate propagation for the subdomain:
 
 ```bash

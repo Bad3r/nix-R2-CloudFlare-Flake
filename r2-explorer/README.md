@@ -115,10 +115,37 @@ CLI machine auth uses Access service-token headers:
 - `R2_EXPLORER_ACCESS_CLIENT_ID`
 - `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
-Access policy contract expected by CI and smoke checks:
+Access policy contract enforced by CI (preview):
 
-- `files.unsigned.sh/api/v2/*`: Access app with `allow` + `Service Auth`, no `bypass`
-- `files.unsigned.sh/share/*`: Access app with `bypass`
+- `preview.files.unsigned.sh/api/v2/*`: Access app with `allow` + `Service Auth`, no `bypass`
+- `preview.files.unsigned.sh/share/*`: Access app with `bypass`
+
+Production Access policy verification is operator-run and out of CI scope.
+
+## CI smoke credential contract
+
+CI smoke and live integration checks run only against preview.
+
+Required preview keys:
+
+- `CF_PREVIEW_CI_SMOKE_BASE_URL`
+- `CF_PREVIEW_CI_SMOKE_BUCKET`
+- `CF_PREVIEW_CI_SMOKE_KEY`
+- `CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_ID`
+- `CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET`
+
+Optional keys:
+
+- `CF_PREVIEW_CI_R2_BIN`
+- `CF_PREVIEW_CI_SMOKE_TTL`
+- `CF_PREVIEW_CI_SMOKE_RETRIES`
+- `CF_PREVIEW_CI_SMOKE_RETRY_DELAY_SEC`
+- `CF_PREVIEW_CI_SMOKE_TIMEOUT_SEC`
+- `CF_PREVIEW_CI_SMOKE_CONNECT_TIMEOUT_SEC`
+- `CF_PREVIEW_CI_SMOKE_SHARE_EXHAUSTION_RETRIES`
+
+Production deploy is CI deploy-only. It does not consume
+`CF_PRODUCTION_CI_*` smoke/service-token keys.
 
 ## Deploy
 
@@ -151,7 +178,7 @@ The deploy workflow syncs this rule with:
 
 - `scripts/ci/sync-r2-web-csp.sh`
 
-and verifies post-deploy behavior with:
+Preview smoke job verifies post-deploy behavior with:
 
 - `scripts/ci/check-r2-web-security.sh`
 

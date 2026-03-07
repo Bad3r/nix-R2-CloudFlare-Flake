@@ -1,6 +1,6 @@
 # Plan Status
 
-Last updated: **2026-02-27**
+Last updated: **2026-03-07**
 
 ## Current State
 
@@ -59,6 +59,11 @@ Consumer repo (`~/nixos`) completion items:
 Operations:
 
 - Rotate OAuth client credentials periodically using `docs/operators/key-rotation.md`.
+- Rotate preview CI service-token credentials periodically:
+  - `CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_ID`
+  - `CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET`
+- Keep production workflow deploy-only. Production CI does not require
+  `CF_PRODUCTION_CI_*` smoke/service-token keys.
 - Keep direct IdP bearer auth on `files.unsigned.sh`:
 - `/api/v2/*` validated in-worker against issuer/audience/JWKS.
 - `/share/*` remains public for token links.
@@ -70,3 +75,11 @@ Optional upstream follow-ups:
 
 - Cut a release version after consumer repo changes are merged, so `~/nixos` can pin a stable tag.
 - Add a small CI/runbook lint rule to flag stale Access/HMAC references in operational docs.
+
+## CI/Test Documentation State
+
+- Markdown entrypoint: `docs/index.md`.
+- CI test docs: `docs/ci-tests/*.md`.
+- Environment parity is intentionally manual to avoid CI overhead; use
+  `docs/ci-tests/environment-matrix.md` checklist plus `gh secret list` /
+  `gh variable list` commands per environment.
