@@ -3,4 +3,5 @@ node_modules/
 r2-explorer/wrangler.ci.toml
 .claude/*
 !.claude/commands/
+.env
 notes.md
