@@ -4,28 +4,113 @@ import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
-const REQUIRED_ENV = [
-  "R2E_SMOKE_BASE_URL",
-  "R2E_SMOKE_BUCKET",
-  "R2E_SMOKE_KEY",
-  "R2E_SMOKE_ACCESS_CLIENT_ID",
-  "R2E_SMOKE_ACCESS_CLIENT_SECRET",
+const REQUIRED_SUFFIXES = [
+  "SMOKE_BASE_URL",
+  "SMOKE_BUCKET",
+  "SMOKE_KEY",
+  "SERVICE_TOKEN_CLIENT_ID",
+  "SERVICE_TOKEN_CLIENT_SECRET",
 ] as const;
 
-const missingEnv = REQUIRED_ENV.filter((name) => {
-  const value = process.env[name];
-  return !value || value.trim().length === 0;
-});
+type CiEnvironment = "preview" | "production";
 
-const describeLive = missingEnv.length === 0 ? describe : describe.skip;
+type CiContext = {
+  environment: CiEnvironment;
+  baseUrl: string;
+  bucket: string;
+  key: string;
+  serviceTokenClientId: string;
+  serviceTokenClientSecret: string;
+  r2Bin: string;
+  smokeTtl: string;
+  retries: number;
+};
 
-function requiredEnv(name: (typeof REQUIRED_ENV)[number]): string {
+function inferCiEnvironment(): CiEnvironment | null {
+  const explicit = process.env.CF_CI_ENVIRONMENT?.trim().toLowerCase();
+  if (explicit) {
+    if (explicit === "preview" || explicit === "production") {
+      return explicit;
+    }
+    throw new Error(`CF_CI_ENVIRONMENT must be 'preview' or 'production' (got '${process.env.CF_CI_ENVIRONMENT}')`);
+  }
+
+  const hasPreview = Object.keys(process.env).some((name) => name.startsWith("CF_PREVIEW_CI_"));
+  const hasProduction = Object.keys(process.env).some((name) => name.startsWith("CF_PRODUCTION_CI_"));
+
+  if (hasPreview && hasProduction) {
+    throw new Error(
+      "Detected both CF_PREVIEW_CI_* and CF_PRODUCTION_CI_* variables. Set CF_CI_ENVIRONMENT to disambiguate.",
+    );
+  }
+  if (hasPreview) {
+    return "preview";
+  }
+  if (hasProduction) {
+    return "production";
+  }
+  return null;
+}
+
+function prefixedName(environment: CiEnvironment, suffix: string): string {
+  return `CF_${environment.toUpperCase()}_CI_${suffix}`;
+}
+
+function readRequiredPrefixed(environment: CiEnvironment, suffix: (typeof REQUIRED_SUFFIXES)[number]): string {
+  const name = prefixedName(environment, suffix);
   const value = process.env[name];
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
 }
+
+function readOptionalPrefixed(environment: CiEnvironment, suffix: string, fallback: string): string {
+  const name = prefixedName(environment, suffix);
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    return fallback;
+  }
+  return value;
+}
+
+function resolveMissingEnv(): string[] {
+  const environment = inferCiEnvironment();
+  if (!environment) {
+    return ["CF_CI_ENVIRONMENT or one CF_<ENV>_CI_* variable family"];
+  }
+
+  return REQUIRED_SUFFIXES.filter((suffix) => {
+    const value = process.env[prefixedName(environment, suffix)];
+    return !value || value.trim().length === 0;
+  }).map((suffix) => prefixedName(environment, suffix));
+}
+
+function resolveCiContext(): CiContext {
+  const environment = inferCiEnvironment();
+  if (!environment) {
+    throw new Error("Unable to determine CI environment. Set CF_CI_ENVIRONMENT or define CF_PREVIEW_CI_* / CF_PRODUCTION_CI_* variables.");
+  }
+
+  const retriesRaw = readOptionalPrefixed(environment, "SMOKE_RETRIES", "2");
+  const retriesParsed = Number.parseInt(retriesRaw, 10);
+  const retries = Number.isFinite(retriesParsed) && retriesParsed >= 0 ? retriesParsed : 2;
+
+  return {
+    environment,
+    baseUrl: readRequiredPrefixed(environment, "SMOKE_BASE_URL").replace(/\/+$/, ""),
+    bucket: readRequiredPrefixed(environment, "SMOKE_BUCKET"),
+    key: readRequiredPrefixed(environment, "SMOKE_KEY"),
+    serviceTokenClientId: readRequiredPrefixed(environment, "SERVICE_TOKEN_CLIENT_ID"),
+    serviceTokenClientSecret: readRequiredPrefixed(environment, "SERVICE_TOKEN_CLIENT_SECRET"),
+    r2Bin: readOptionalPrefixed(environment, "R2_BIN", "r2"),
+    smokeTtl: readOptionalPrefixed(environment, "SMOKE_TTL", "10m"),
+    retries,
+  };
+}
+
+const missingEnv = resolveMissingEnv();
+const describeLive = missingEnv.length === 0 ? describe : describe.skip;
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -64,34 +149,27 @@ describeLive("live worker integration", () => {
   it(
     "validates real share flow plus authenticated multipart upload behavior",
     async () => {
-      const baseUrl = requiredEnv("R2E_SMOKE_BASE_URL").replace(/\/+$/, "");
-      const baseOrigin = new URL(baseUrl).origin;
-      const bucket = requiredEnv("R2E_SMOKE_BUCKET");
-      const key = requiredEnv("R2E_SMOKE_KEY");
-      const accessClientId = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_ID");
-      const accessClientSecret = requiredEnv("R2E_SMOKE_ACCESS_CLIENT_SECRET");
-      const r2Bin = process.env.R2E_SMOKE_R2_BIN || "r2";
-      const ttl = process.env.R2E_SMOKE_TTL || "10m";
-      const retries = Number.parseInt(process.env.R2E_SMOKE_RETRIES || "2", 10);
-      const attempts = Number.isFinite(retries) && retries >= 0 ? retries + 1 : 3;
+      const ci = resolveCiContext();
+      const baseOrigin = new URL(ci.baseUrl).origin;
+      const attempts = ci.retries + 1;
 
       const cliEnv = {
         ...process.env,
-        R2_EXPLORER_BASE_URL: baseUrl,
-        R2_EXPLORER_ACCESS_CLIENT_ID: accessClientId,
-        R2_EXPLORER_ACCESS_CLIENT_SECRET: accessClientSecret,
+        R2_EXPLORER_BASE_URL: ci.baseUrl,
+        R2_EXPLORER_ACCESS_CLIENT_ID: ci.serviceTokenClientId,
+        R2_EXPLORER_ACCESS_CLIENT_SECRET: ci.serviceTokenClientSecret,
       } as NodeJS.ProcessEnv;
 
       const accessHeaders = {
-        "CF-Access-Client-Id": accessClientId,
-        "CF-Access-Client-Secret": accessClientSecret,
+        "CF-Access-Client-Id": ci.serviceTokenClientId,
+        "CF-Access-Client-Secret": ci.serviceTokenClientSecret,
       };
 
       let createdTokenId: string | null = null;
       try {
         const { stdout: createStdout } = await execFileAsync(
-          r2Bin,
-          ["share", "worker", "create", bucket, key, ttl, "--max-downloads", "1"],
+          ci.r2Bin,
+          ["share", "worker", "create", ci.bucket, ci.key, ci.smokeTtl, "--max-downloads", "1"],
           {
             env: cliEnv,
             timeout: 120_000,
@@ -114,7 +192,7 @@ describeLive("live worker integration", () => {
         const secondDownload = await fetchWithRetry(createPayload.url, { redirect: "follow" }, attempts);
         expect(secondDownload.status).toBe(410);
 
-        const apiInfoUrl = `${baseUrl}/api/v2/session/info`;
+        const apiInfoUrl = `${ci.baseUrl}/api/v2/session/info`;
 
         const unauthenticated = await fetchWithRetry(
           apiInfoUrl,
@@ -154,7 +232,7 @@ describeLive("live worker integration", () => {
         expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
 
         const uploadInit = await fetchWithRetry(
-          `${baseUrl}/api/v2/upload/init`,
+          `${ci.baseUrl}/api/v2/upload/init`,
           {
             method: "POST",
             redirect: "manual",
@@ -186,7 +264,7 @@ describeLive("live worker integration", () => {
         expect(initPayload.objectKey.startsWith("live/")).toBe(true);
 
         const signPart = await fetchWithRetry(
-          `${baseUrl}/api/v2/upload/sign-part`,
+          `${ci.baseUrl}/api/v2/upload/sign-part`,
           {
             method: "POST",
             redirect: "manual",
@@ -222,7 +300,7 @@ describeLive("live worker integration", () => {
         expect(etag).toBeTruthy();
 
         const completeMultipart = await fetchWithRetry(
-          `${baseUrl}/api/v2/upload/complete`,
+          `${ci.baseUrl}/api/v2/upload/complete`,
           {
             method: "POST",
             redirect: "manual",
@@ -256,7 +334,7 @@ describeLive("live worker integration", () => {
       } finally {
         if (createdTokenId) {
           const { stdout: revokeStdout } = await execFileAsync(
-            r2Bin,
+            ci.r2Bin,
             ["share", "worker", "revoke", createdTokenId],
             {
               env: cliEnv,

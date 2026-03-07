@@ -19,8 +19,12 @@ Arguments:
   expected-csp-file   Path to the canonical CSP policy text file.
 
 Environment (optional):
-  R2E_SMOKE_ACCESS_CLIENT_ID       Cloudflare Access service token client ID for protected web roots.
-  R2E_SMOKE_ACCESS_CLIENT_SECRET   Cloudflare Access service token secret for protected web roots.
+  CF_CI_ENVIRONMENT                          Optional selector: preview or production.
+  CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_ID     Preview Access service token client ID for protected web roots.
+  CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET Preview Access service token secret for protected web roots.
+  CF_PRODUCTION_CI_SERVICE_TOKEN_CLIENT_ID  Production Access service token client ID for protected web roots.
+  CF_PRODUCTION_CI_SERVICE_TOKEN_CLIENT_SECRET
+                                            Production Access service token secret for protected web roots.
 
 Notes:
   - The script performs a protected-page fetch and checks:
@@ -35,6 +39,41 @@ require_command() {
   if ! command -v "${name}" >/dev/null 2>&1; then
     fail "required command not found: ${name}"
   fi
+}
+
+uppercase_env_name() {
+  local value="$1"
+  printf '%s' "${value}" | tr '[:lower:]' '[:upper:]'
+}
+
+infer_ci_environment() {
+  local preview_count production_count
+
+  preview_count="$(env | awk -F= '/^CF_PREVIEW_CI_/ {count += 1} END {print count + 0}')"
+  production_count="$(env | awk -F= '/^CF_PRODUCTION_CI_/ {count += 1} END {print count + 0}')"
+
+  if [[ ${preview_count} -gt 0 && ${production_count} -gt 0 ]]; then
+    fail "detected both CF_PREVIEW_CI_* and CF_PRODUCTION_CI_* variables; set CF_CI_ENVIRONMENT to disambiguate"
+  fi
+  if [[ ${preview_count} -gt 0 ]]; then
+    echo "preview"
+    return
+  fi
+  if [[ ${production_count} -gt 0 ]]; then
+    echo "production"
+    return
+  fi
+
+  # Access headers are optional for this script; no env family means no token headers.
+  echo ""
+}
+
+resolve_prefixed_var_name() {
+  local env_name="$1"
+  local suffix="$2"
+  local env_upper
+  env_upper="$(uppercase_env_name "${env_name}")"
+  printf 'CF_%s_CI_%s' "${env_upper}" "${suffix}"
 }
 
 normalize_space() {
@@ -99,12 +138,28 @@ headers_file="${tmp_dir}/headers.txt"
 body_file="${tmp_dir}/body.html"
 
 curl_headers=()
-access_client_id="${R2E_SMOKE_ACCESS_CLIENT_ID:-}"
-access_client_secret="${R2E_SMOKE_ACCESS_CLIENT_SECRET:-}"
+ci_environment_raw="${CF_CI_ENVIRONMENT:-}"
+if [[ -n ${ci_environment_raw} ]]; then
+  ci_environment="$(printf '%s' "${ci_environment_raw}" | tr '[:upper:]' '[:lower:]')"
+  if [[ ${ci_environment} != "preview" && ${ci_environment} != "production" ]]; then
+    fail "CF_CI_ENVIRONMENT must be 'preview' or 'production' (got '${ci_environment_raw}')"
+  fi
+else
+  ci_environment="$(infer_ci_environment)"
+fi
+
+access_client_id=""
+access_client_secret=""
+if [[ -n ${ci_environment} ]]; then
+  access_client_id_var="$(resolve_prefixed_var_name "${ci_environment}" "SERVICE_TOKEN_CLIENT_ID")"
+  access_client_secret_var="$(resolve_prefixed_var_name "${ci_environment}" "SERVICE_TOKEN_CLIENT_SECRET")"
+  access_client_id="${!access_client_id_var:-}"
+  access_client_secret="${!access_client_secret_var:-}"
+fi
 
 if [[ -n ${access_client_id} || -n ${access_client_secret} ]]; then
   if [[ -z ${access_client_id} || -z ${access_client_secret} ]]; then
-    fail "R2E_SMOKE_ACCESS_CLIENT_ID and R2E_SMOKE_ACCESS_CLIENT_SECRET must both be set when using Access headers"
+    fail "service token client ID and secret must both be set when using Access headers"
   fi
   curl_headers+=(
     -H "CF-Access-Client-Id: ${access_client_id}"
