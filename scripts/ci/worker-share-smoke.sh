@@ -56,6 +56,60 @@ require_command() {
   fi
 }
 
+uppercase_env_name() {
+  local value="$1"
+  printf '%s' "${value}" | tr '[:lower:]' '[:upper:]'
+}
+
+infer_ci_environment() {
+  local preview_count production_count
+
+  preview_count="$(env | awk -F= '/^CF_PREVIEW_CI_/ {count += 1} END {print count + 0}')"
+  production_count="$(env | awk -F= '/^CF_PRODUCTION_CI_/ {count += 1} END {print count + 0}')"
+
+  if [[ ${preview_count} -gt 0 && ${production_count} -gt 0 ]]; then
+    fail "detected both CF_PREVIEW_CI_* and CF_PRODUCTION_CI_* variables; set CF_CI_ENVIRONMENT to disambiguate"
+  fi
+  if [[ ${preview_count} -gt 0 ]]; then
+    echo "preview"
+    return
+  fi
+  if [[ ${production_count} -gt 0 ]]; then
+    echo "production"
+    return
+  fi
+  fail "no CF_PREVIEW_CI_* or CF_PRODUCTION_CI_* variables found; set CF_CI_ENVIRONMENT and required keys"
+}
+
+resolve_prefixed_var_name() {
+  local suffix="$1"
+  local env_upper
+  env_upper="$(uppercase_env_name "${CI_ENVIRONMENT}")"
+  printf 'CF_%s_CI_%s' "${env_upper}" "${suffix}"
+}
+
+resolve_required_prefixed_value() {
+  local suffix="$1"
+  local var_name
+  var_name="$(resolve_prefixed_var_name "${suffix}")"
+  if [[ -z ${!var_name:-} ]]; then
+    fail "required environment variable is missing: ${var_name}"
+  fi
+  printf '%s' "${!var_name}"
+}
+
+resolve_optional_prefixed_value() {
+  local suffix="$1"
+  local fallback="$2"
+  local var_name
+  var_name="$(resolve_prefixed_var_name "${suffix}")"
+  if [[ -n ${!var_name:-} ]]; then
+    printf '%s' "${!var_name}"
+    return
+  fi
+  printf '%s' "${fallback}"
+}
+
 dump_response_context() {
   local status="$1"
   local body_file="$2"
@@ -235,16 +289,26 @@ assert_share_exhaustion() {
   done
 }
 
-require_env "R2E_SMOKE_BASE_URL"
-require_env "R2E_SMOKE_BUCKET"
-require_env "R2E_SMOKE_KEY"
-require_env "R2E_SMOKE_ACCESS_CLIENT_ID"
-require_env "R2E_SMOKE_ACCESS_CLIENT_SECRET"
+CI_ENVIRONMENT_RAW="${CF_CI_ENVIRONMENT:-}"
+if [[ -n ${CI_ENVIRONMENT_RAW} ]]; then
+  CI_ENVIRONMENT="$(printf '%s' "${CI_ENVIRONMENT_RAW}" | tr '[:upper:]' '[:lower:]')"
+  if [[ ${CI_ENVIRONMENT} != "preview" && ${CI_ENVIRONMENT} != "production" ]]; then
+    fail "CF_CI_ENVIRONMENT must be 'preview' or 'production' (got '${CI_ENVIRONMENT_RAW}')"
+  fi
+else
+  CI_ENVIRONMENT="$(infer_ci_environment)"
+fi
+
+SMOKE_BASE_URL="$(resolve_required_prefixed_value "SMOKE_BASE_URL")"
+SMOKE_BUCKET="$(resolve_required_prefixed_value "SMOKE_BUCKET")"
+SMOKE_KEY="$(resolve_required_prefixed_value "SMOKE_KEY")"
+SERVICE_TOKEN_CLIENT_ID="$(resolve_required_prefixed_value "SERVICE_TOKEN_CLIENT_ID")"
+SERVICE_TOKEN_CLIENT_SECRET="$(resolve_required_prefixed_value "SERVICE_TOKEN_CLIENT_SECRET")"
 
 require_command "jq"
 require_command "curl"
 
-R2_BIN="${R2E_SMOKE_R2_BIN:-r2}"
+R2_BIN="$(resolve_optional_prefixed_value "R2_BIN" "r2")"
 if [[ ${R2_BIN} == */* ]]; then
   if [[ ! -x ${R2_BIN} ]]; then
     fail "r2 binary is not executable: ${R2_BIN}"
@@ -255,20 +319,20 @@ else
   fi
 fi
 
-export R2_EXPLORER_BASE_URL="${R2E_SMOKE_BASE_URL}"
-export R2_EXPLORER_ACCESS_CLIENT_ID="${R2E_SMOKE_ACCESS_CLIENT_ID}"
-export R2_EXPLORER_ACCESS_CLIENT_SECRET="${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
+export R2_EXPLORER_BASE_URL="${SMOKE_BASE_URL}"
+export R2_EXPLORER_ACCESS_CLIENT_ID="${SERVICE_TOKEN_CLIENT_ID}"
+export R2_EXPLORER_ACCESS_CLIENT_SECRET="${SERVICE_TOKEN_CLIENT_SECRET}"
 
-ttl="${R2E_SMOKE_TTL:-10m}"
-SMOKE_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_TIMEOUT:-60}" "R2E_SMOKE_TIMEOUT" "60")"
-SMOKE_CONNECT_TIMEOUT_SEC="$(parse_positive_int "${R2E_SMOKE_CONNECT_TIMEOUT:-10}" "R2E_SMOKE_CONNECT_TIMEOUT" "10")"
-SMOKE_RETRIES="$(parse_non_negative_int "${R2E_SMOKE_RETRIES:-0}" "R2E_SMOKE_RETRIES" "0")"
-SMOKE_RETRY_DELAY_SEC="$(parse_positive_int "${R2E_SMOKE_RETRY_DELAY_SEC:-2}" "R2E_SMOKE_RETRY_DELAY_SEC" "2")"
+ttl="$(resolve_optional_prefixed_value "SMOKE_TTL" "10m")"
+SMOKE_TIMEOUT_SEC="$(parse_positive_int "$(resolve_optional_prefixed_value "SMOKE_TIMEOUT_SEC" "60")" "$(resolve_prefixed_var_name "SMOKE_TIMEOUT_SEC")" "60")"
+SMOKE_CONNECT_TIMEOUT_SEC="$(parse_positive_int "$(resolve_optional_prefixed_value "SMOKE_CONNECT_TIMEOUT_SEC" "10")" "$(resolve_prefixed_var_name "SMOKE_CONNECT_TIMEOUT_SEC")" "10")"
+SMOKE_RETRIES="$(parse_non_negative_int "$(resolve_optional_prefixed_value "SMOKE_RETRIES" "0")" "$(resolve_prefixed_var_name "SMOKE_RETRIES")" "0")"
+SMOKE_RETRY_DELAY_SEC="$(parse_positive_int "$(resolve_optional_prefixed_value "SMOKE_RETRY_DELAY_SEC" "2")" "$(resolve_prefixed_var_name "SMOKE_RETRY_DELAY_SEC")" "2")"
 SMOKE_SHARE_EXHAUSTION_RETRIES="$(
-  parse_non_negative_int "${R2E_SMOKE_SHARE_EXHAUSTION_RETRIES:-5}" "R2E_SMOKE_SHARE_EXHAUSTION_RETRIES" "5"
+  parse_non_negative_int "$(resolve_optional_prefixed_value "SMOKE_SHARE_EXHAUSTION_RETRIES" "5")" "$(resolve_prefixed_var_name "SMOKE_SHARE_EXHAUSTION_RETRIES")" "5"
 )"
 
-echo "Running Worker share smoke checks against ${R2E_SMOKE_BASE_URL}"
+echo "Running Worker share smoke checks against ${SMOKE_BASE_URL} (environment=${CI_ENVIRONMENT})"
 echo "Smoke request config: timeout=${SMOKE_TIMEOUT_SEC}s connect_timeout=${SMOKE_CONNECT_TIMEOUT_SEC}s retries=${SMOKE_RETRIES}" >&2
 preflight_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke-preflight.XXXXXX")"
 preflight_cleanup() {
@@ -276,7 +340,7 @@ preflight_cleanup() {
 }
 trap preflight_cleanup EXIT
 
-assert_http_status "401,302" "unauthenticated API preflight" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${preflight_tmp_dir}/api-preflight.body" "false" \
+assert_http_status "401,302" "unauthenticated API preflight" "${SMOKE_BASE_URL%/}/api/v2/session/info" "${preflight_tmp_dir}/api-preflight.body" "false" \
   -D "${preflight_tmp_dir}/api-preflight.headers"
 
 if [[ ${LAST_HTTP_STATUS} == "302" ]]; then
@@ -295,8 +359,8 @@ fi
 
 create_json="$(
   "${R2_BIN}" share worker create \
-    "${R2E_SMOKE_BUCKET}" \
-    "${R2E_SMOKE_KEY}" \
+    "${SMOKE_BUCKET}" \
+    "${SMOKE_KEY}" \
     "${ttl}" \
     --max-downloads 1
 )"
@@ -331,9 +395,9 @@ second_download_body="${tmp_dir}/second-download.body"
 assert_share_exhaustion "${share_url}" "${second_download_body}"
 
 api_authed_probe_body="${tmp_dir}/api-authed-probe.body"
-assert_http_status "200" "authenticated API probe" "${R2E_SMOKE_BASE_URL%/}/api/v2/session/info" "${api_authed_probe_body}" "false" \
-  -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
-  -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}"
+assert_http_status "200" "authenticated API probe" "${SMOKE_BASE_URL%/}/api/v2/session/info" "${api_authed_probe_body}" "false" \
+  -H "CF-Access-Client-Id: ${SERVICE_TOKEN_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${SERVICE_TOKEN_CLIENT_SECRET}"
 
 api_authed_mode="$(jq -r '.actor.mode // empty' "${api_authed_probe_body}" 2>/dev/null || true)"
 if [[ ${api_authed_mode} != "access" ]]; then

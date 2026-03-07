@@ -195,8 +195,8 @@ curl -sS -X POST https://files.unsigned.sh/api/v2/upload/init \
   -H 'content-type: application/json' \
   -H 'origin: https://files.unsigned.sh' \
   -H 'x-r2e-csrf: 1' \
-  -H "CF-Access-Client-Id: ${R2E_SMOKE_ACCESS_CLIENT_ID}" \
-  -H "CF-Access-Client-Secret: ${R2E_SMOKE_ACCESS_CLIENT_SECRET}" \
+  -H "CF-Access-Client-Id: ${CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_ID}" \
+  -H "CF-Access-Client-Secret: ${CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET}" \
   -d '{"filename":"smoke.bin","prefix":"smoke/","declaredSize":4096,"contentType":"application/octet-stream"}' | jq .
 
 # Negative guard checks

@@ -31,6 +31,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - `r2-explorer/`: API Worker + web Worker subflake and deployment tooling
 - `templates/`: starter flake templates
 - `docs/`: usage and design documentation
+  - navigation entrypoint: `docs/index.md`
   - includes first-line triage in `docs/troubleshooting.md`
 
 ## Secrets Model

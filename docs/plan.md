@@ -28,3 +28,11 @@ legacy Worker-proxied `/api/v2/upload/part` route.
 - `docs/plan/phase-8-1-consumer-integration.md`: completed 8.1 integration execution record.
 - `docs/plan/phase-8-2-runtime-enablement-validation.md`: gate-driven execution plan for milestones 8.2 through 8.6.
 - `docs/plan/status.md`: current production status snapshot and next actions.
+
+## Post-phase updates
+
+- 2026-03-07: CI smoke/live credential contract moved to preview-only
+  `CF_PREVIEW_CI_*` keys. Production workflow is deploy-only and does not
+  consume `CF_PRODUCTION_CI_*` smoke/service-token keys.
+- 2026-03-07: test/runbook documentation expanded with markdown-only index and
+  dedicated `docs/ci-tests/` coverage pages.
