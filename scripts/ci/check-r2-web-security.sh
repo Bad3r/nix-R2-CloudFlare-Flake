@@ -68,7 +68,7 @@ infer_ci_environment() {
   echo ""
 }
 
-resolve_prefixed_var_name() {
+resolve_prefixed_var_name_for_env() {
   local env_name="$1"
   local suffix="$2"
   local env_upper
@@ -151,8 +151,8 @@ fi
 access_client_id=""
 access_client_secret=""
 if [[ -n ${ci_environment} ]]; then
-  access_client_id_var="$(resolve_prefixed_var_name "${ci_environment}" "SERVICE_TOKEN_CLIENT_ID")"
-  access_client_secret_var="$(resolve_prefixed_var_name "${ci_environment}" "SERVICE_TOKEN_CLIENT_SECRET")"
+  access_client_id_var="$(resolve_prefixed_var_name_for_env "${ci_environment}" "SERVICE_TOKEN_CLIENT_ID")"
+  access_client_secret_var="$(resolve_prefixed_var_name_for_env "${ci_environment}" "SERVICE_TOKEN_CLIENT_SECRET")"
   access_client_id="${!access_client_id_var:-}"
   access_client_secret="${!access_client_secret_var:-}"
 fi
