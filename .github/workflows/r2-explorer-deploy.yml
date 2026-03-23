@@ -129,7 +129,7 @@ jobs:
           ./scripts/ci/check-r2-access-policy.sh "${smoke_host}" "${R2E_ACCESS_AUD_PREVIEW}" "${CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_ID}"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 10
 
@@ -281,7 +281,7 @@ jobs:
         run: nix --accept-flake-config build .#r2
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 10
 
@@ -509,7 +509,7 @@ jobs:
         run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 10
 
