@@ -1,5 +1,11 @@
 packages:
   - web
+# Moved from package.json "pnpm.overrides": pnpm v11 only reads overrides from
+# the workspace manifest, so the package.json copy was silently ignored and left
+# a duplicate transitive wrangler@4.50.0 in the tree alongside the pinned 4.71.0.
+overrides:
+  svgo: ^4.0.1
+  wrangler: ^4.71.0
 allowBuilds:
   esbuild: true
   sharp: true
