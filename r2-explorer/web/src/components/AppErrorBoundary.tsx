@@ -45,25 +45,32 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   render(): JSX.Element {
     if (this.state.hasError) {
       return (
-        <main className="shell">
-          <section className="panel">
-            <div className="panel-header">
-              <h2 className="panel-title">Console Error</h2>
-            </div>
-            <div className="panel-content stack">
-              <div className="badge danger">A runtime error interrupted the operator console.</div>
-              <div className="mono subtle">{this.state.message}</div>
-              <div className="row">
-                <button className="primary" onClick={this.resetBoundary}>
-                  Retry
-                </button>
-                <button className="ghost" onClick={() => window.location.reload()}>
-                  Reload page
-                </button>
+        <div class="console">
+          <div class="workspace" style={{ gridTemplateColumns: "1fr" }}>
+            <section class="panel" role="alert" style={{ maxWidth: "42rem", margin: "3rem auto" }}>
+              <div class="panel-head">
+                <span class="tag">
+                  <span class="idx" style={{ color: "var(--danger)" }}>!!</span>
+                  Console error
+                </span>
               </div>
-            </div>
-          </section>
-        </main>
+              <div class="panel-body stack">
+                <div class="alert">A runtime error interrupted the operator console.</div>
+                <div class="mono faint" style={{ fontSize: "0.8rem", overflowWrap: "anywhere" }}>
+                  {this.state.message}
+                </div>
+                <div class="row">
+                  <button type="button" class="btn primary" onClick={this.resetBoundary}>
+                    Retry
+                  </button>
+                  <button type="button" class="btn ghost" onClick={() => window.location.reload()}>
+                    Reload page
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
       );
     }
 
