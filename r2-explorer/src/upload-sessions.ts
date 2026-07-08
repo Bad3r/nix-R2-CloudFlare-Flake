@@ -1,4 +1,5 @@
-import { apiError, HttpError, json } from "./http";
+import { apiError, HttpError, json, parseJsonText } from "./http";
+import { abortMultipartUpload } from "./r2";
 import type { Env } from "./types";
 
 type SessionStatus = "init" | "active" | "completed" | "aborted" | "expired";
@@ -15,7 +16,14 @@ type SessionStorageRecord = {
   ownerId: string;
   bucket: string;
   uploadId: string;
+  /** Final key the upload is promoted to after validation. */
   objectKey: string;
+  /**
+   * Key the multipart upload is assembled under (.r2e-staging/...). Legacy
+   * records written before staged completion existed default this to
+   * objectKey, preserving their original direct-to-target behavior.
+   */
+  stagingKey: string;
   filename: string;
   contentType: string;
   declaredSize: number;
@@ -74,19 +82,6 @@ function normalizeOwnerKey(ownerId: string): string {
   // OAuth principals are email-like where possible; enforce canonical lowercase
   // form so equivalent identifiers cannot bypass session ownership checks.
   return trimmed.toLowerCase();
-}
-
-function parseRequestBody<T>(raw: string): T {
-  if (raw.trim().length === 0) {
-    throw new HttpError(400, "bad_request", "Request body is required.");
-  }
-  try {
-    return JSON.parse(raw) as T;
-  } catch (error) {
-    throw new HttpError(400, "bad_request", "Request body must be valid JSON.", {
-      cause: String(error),
-    });
-  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -183,13 +178,21 @@ function parseSessionStatus(value: unknown): SessionStatus {
 
 function parseSessionRecord(input: unknown): SessionStorageRecord {
   const record = asRecord(input);
+  const objectKey = asString(record.objectKey, "session.objectKey");
+  // Sessions created before staged completion have no stagingKey; treat their
+  // objectKey as the staging location so legacy in-flight uploads keep working.
+  const stagingKey =
+    record.stagingKey === undefined || record.stagingKey === null
+      ? objectKey
+      : asString(record.stagingKey, "session.stagingKey");
 
   return {
     sessionId: asString(record.sessionId, "session.sessionId"),
     ownerId: asString(record.ownerId, "session.ownerId"),
     bucket: asString(record.bucket, "session.bucket"),
     uploadId: asString(record.uploadId, "session.uploadId"),
-    objectKey: asString(record.objectKey, "session.objectKey"),
+    objectKey,
+    stagingKey,
     filename: asString(record.filename, "session.filename"),
     contentType: asString(record.contentType, "session.contentType"),
     declaredSize: asPositiveInt(record.declaredSize, "session.declaredSize"),
@@ -259,6 +262,10 @@ function isExpired(session: SessionStorageRecord, nowMs: number): boolean {
   return Date.parse(session.expiresAt) <= nowMs;
 }
 
+function isInFlight(session: SessionStorageRecord): boolean {
+  return session.status === "init" || session.status === "active";
+}
+
 async function callSessionStore<T>(
   env: Env,
   ownerId: string,
@@ -326,6 +333,7 @@ function assertSessionOwner(session: SessionStorageRecord, ownerId: string): voi
   }
 }
 
+/** Create an upload session owned by ownerId, enforcing the concurrency cap. */
 export async function createUploadSession(
   env: Env,
   ownerId: string,
@@ -337,6 +345,7 @@ export async function createUploadSession(
   return session;
 }
 
+/** Load an upload session, optionally requiring it to still be active. */
 export async function requireUploadSession(
   env: Env,
   ownerId: string,
@@ -348,6 +357,7 @@ export async function requireUploadSession(
   return session;
 }
 
+/** Transition an active upload session to completed. */
 export async function markUploadSessionCompleted(
   env: Env,
   ownerId: string,
@@ -359,6 +369,7 @@ export async function markUploadSessionCompleted(
   return session;
 }
 
+/** Transition an upload session to aborted (idempotent for aborted sessions). */
 export async function markUploadSessionAborted(
   env: Env,
   ownerId: string,
@@ -370,6 +381,7 @@ export async function markUploadSessionAborted(
   return session;
 }
 
+/** Record a signed part issuance on an active upload session. */
 export async function recordUploadSessionSignedPart(
   env: Env,
   ownerId: string,
@@ -384,8 +396,36 @@ export async function recordUploadSessionSignedPart(
 export class UploadSessionDurableObject {
   constructor(
     private readonly state: DurableObjectState,
-    private readonly _env: Env,
+    private readonly env: Env,
   ) {}
+
+  /**
+   * Release the R2 resources held by an expired in-flight session: abort the
+   * multipart upload and delete any staged object left behind by a partially
+   * completed request. Failures are logged and do not stop pruning; R2's
+   * bucket lifecycle rules for incomplete multipart uploads are the backstop
+   * for aborts that keep failing.
+   */
+  private async releaseExpiredUploadResources(session: SessionStorageRecord): Promise<void> {
+    const stagingKey = session.stagingKey ?? session.objectKey;
+    try {
+      await abortMultipartUpload(this.env.FILES_BUCKET, stagingKey, session.uploadId);
+    } catch (error) {
+      console.error(
+        `Failed to abort expired multipart upload ${session.uploadId} for session ${session.sessionId}:`,
+        error,
+      );
+    }
+    // Never delete the target key itself: legacy sessions staged directly at
+    // objectKey, where the key may hold a previously stored object.
+    if (stagingKey !== session.objectKey) {
+      try {
+        await this.env.FILES_BUCKET.delete(stagingKey);
+      } catch (error) {
+        console.error(`Failed to delete staged object ${stagingKey} for session ${session.sessionId}:`, error);
+      }
+    }
+  }
 
   private async pruneExpiredSessions(nowMs: number): Promise<void> {
     const listing = await this.state.storage.list<SessionStorageRecord>({ prefix: SESSION_PREFIX });
@@ -398,6 +438,9 @@ export class UploadSessionDurableObject {
       }
 
       if (value.status !== "expired") {
+        if (isInFlight(value)) {
+          await this.releaseExpiredUploadResources(value);
+        }
         updates.set(key, {
           ...value,
           status: "expired",
@@ -416,6 +459,67 @@ export class UploadSessionDurableObject {
     if (deletes.length > 0) {
       await this.state.storage.delete(deletes);
     }
+  }
+
+  /**
+   * Schedule the alarm for the next session lifecycle event: the earliest
+   * pending expiry, or the earliest retention deletion for already-expired
+   * records. Without this alarm nothing would ever invoke pruning, so
+   * abandoned uploads would hold R2 multipart state forever.
+   */
+  private async scheduleNextAlarm(): Promise<void> {
+    const listing = await this.state.storage.list<SessionStorageRecord>({ prefix: SESSION_PREFIX });
+    let nextEventMs: number | null = null;
+    for (const value of listing.values()) {
+      const expiresAtMs = Date.parse(value.expiresAt);
+      if (!Number.isFinite(expiresAtMs)) {
+        continue;
+      }
+      const eventMs = value.status === "expired" ? expiresAtMs + EXPIRED_RETENTION_MS : expiresAtMs;
+      if (nextEventMs === null || eventMs < nextEventMs) {
+        nextEventMs = eventMs;
+      }
+    }
+
+    if (nextEventMs === null) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    await this.state.storage.setAlarm(nextEventMs);
+  }
+
+  /** Alarm handler: prune expired sessions, then schedule the next event. */
+  async alarm(): Promise<void> {
+    await this.pruneExpiredSessions(Date.now());
+    await this.scheduleNextAlarm();
+  }
+
+  private async loadSession(sessionId: string): Promise<SessionStorageRecord> {
+    const key = storageKey(sessionId);
+    const session = await this.state.storage.get<SessionStorageRecord>(key);
+    if (!session) {
+      throw new HttpError(404, "upload_session_not_found", "Upload session not found.", {
+        sessionId,
+      });
+    }
+
+    assertIsoTimestamp(session.expiresAt, "session.expiresAt");
+    const nowMs = Date.now();
+    if (isExpired(session, nowMs)) {
+      if (session.status !== "expired" && isInFlight(session)) {
+        await this.releaseExpiredUploadResources(session);
+      }
+      const updated: SessionStorageRecord = {
+        ...session,
+        status: "expired",
+      };
+      await this.state.storage.put(key, updated);
+      throw new HttpError(410, "upload_session_expired", "Upload session has expired.", {
+        sessionId,
+      });
+    }
+
+    return session;
   }
 
   private async activeSessionCount(nowMs: number): Promise<number> {
@@ -439,31 +543,6 @@ export class UploadSessionDurableObject {
     return null;
   }
 
-  private async loadSession(sessionId: string): Promise<SessionStorageRecord> {
-    const key = storageKey(sessionId);
-    const session = await this.state.storage.get<SessionStorageRecord>(key);
-    if (!session) {
-      throw new HttpError(404, "upload_session_not_found", "Upload session not found.", {
-        sessionId,
-      });
-    }
-
-    assertIsoTimestamp(session.expiresAt, "session.expiresAt");
-    const nowMs = Date.now();
-    if (isExpired(session, nowMs)) {
-      const updated: SessionStorageRecord = {
-        ...session,
-        status: "expired",
-      };
-      await this.state.storage.put(key, updated);
-      throw new HttpError(410, "upload_session_expired", "Upload session has expired.", {
-        sessionId,
-      });
-    }
-
-    return session;
-  }
-
   private createSessionResponse(session: SessionStorageRecord): Response {
     return json({ session });
   }
@@ -479,7 +558,7 @@ export class UploadSessionDurableObject {
       const rawBody = await request.text();
 
       if (url.pathname === "/create") {
-        const body = parseCreateRequest(parseRequestBody(rawBody));
+        const body = parseCreateRequest(parseJsonText(rawBody));
         assertIsoTimestamp(body.session.createdAt, "session.createdAt");
         assertIsoTimestamp(body.session.expiresAt, "session.expiresAt");
 
@@ -533,11 +612,12 @@ export class UploadSessionDurableObject {
           status: "active",
         };
         await this.state.storage.put(key, activeSession);
+        await this.scheduleNextAlarm();
         return this.createSessionResponse(activeSession);
       }
 
       if (url.pathname === "/get") {
-        const body = parseSessionRequest(parseRequestBody(rawBody));
+        const body = parseSessionRequest(parseJsonText(rawBody));
         const session = await this.loadSession(body.sessionId);
         if (body.requireActive && session.status !== "active") {
           throw new HttpError(
@@ -554,7 +634,7 @@ export class UploadSessionDurableObject {
       }
 
       if (url.pathname === "/record-signed-part") {
-        const body = parseRecordSignedPartRequest(parseRequestBody(rawBody));
+        const body = parseRecordSignedPartRequest(parseJsonText(rawBody));
         const session = await this.loadSession(body.sessionId);
 
         if (session.uploadId !== body.uploadId) {
@@ -588,7 +668,7 @@ export class UploadSessionDurableObject {
       }
 
       if (url.pathname === "/complete") {
-        const body = parseUpdateRequest(parseRequestBody(rawBody));
+        const body = parseUpdateRequest(parseJsonText(rawBody));
         const session = await this.loadSession(body.sessionId);
 
         if (session.uploadId !== body.uploadId) {
@@ -614,7 +694,7 @@ export class UploadSessionDurableObject {
       }
 
       if (url.pathname === "/abort") {
-        const body = parseUpdateRequest(parseRequestBody(rawBody));
+        const body = parseUpdateRequest(parseJsonText(rawBody));
         const session = await this.loadSession(body.sessionId);
 
         if (session.uploadId !== body.uploadId) {
@@ -651,6 +731,7 @@ export class UploadSessionDurableObject {
 
       if (url.pathname === "/gc-expired") {
         await this.pruneExpiredSessions(Date.now());
+        await this.scheduleNextAlarm();
         return json({ ok: true });
       }
 
@@ -659,9 +740,8 @@ export class UploadSessionDurableObject {
       if (error instanceof HttpError) {
         return apiError(error.status, error.code, error.message, error.details);
       }
-      return apiError(500, "internal_error", "Unexpected upload session store error.", {
-        message: String(error),
-      });
+      console.error("Unhandled upload session store error:", error);
+      return apiError(500, "internal_error", "Unexpected upload session store error.");
     }
   }
 }

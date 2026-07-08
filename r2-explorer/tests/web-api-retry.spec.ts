@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createShare, fetchSessionInfo, multipartUpload } from "../web/src/lib/api";
+import { ApiError, createShare, fetchSessionInfo } from "../web/src/lib/api";
+import { multipartUpload } from "../web/src/lib/upload";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {

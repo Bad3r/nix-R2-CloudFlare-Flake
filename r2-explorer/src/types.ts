@@ -2,6 +2,7 @@ export interface Env {
   FILES_BUCKET: R2Bucket;
   R2E_SHARES_KV: KVNamespace;
   R2E_UPLOAD_SESSIONS: DurableObjectNamespace;
+  R2E_SHARE_COUNTERS: DurableObjectNamespace;
   R2E_MAX_SHARE_TTL_SEC?: string;
   R2E_DEFAULT_SHARE_TTL_SEC?: string;
   R2E_UI_MAX_LIST_LIMIT?: string;

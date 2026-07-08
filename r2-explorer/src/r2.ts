@@ -51,6 +51,33 @@ export async function moveObject(bucket: R2Bucket, fromKey: string, toKey: strin
   await bucket.delete(fromKey);
 }
 
+/**
+ * Promote a validated staged object to its final key, preserving metadata,
+ * then delete the staged source. R2 has no server-side rename, so the copy
+ * streams through the Worker and is bound by R2 single-upload size limits;
+ * staged uploads larger than that limit fail here with the original target
+ * object left untouched.
+ */
+export async function promoteObject(bucket: R2Bucket, fromKey: string, toKey: string): Promise<R2Object> {
+  const object = await getObject(bucket, fromKey);
+  const stored = await bucket.put(toKey, object.body, {
+    httpMetadata: object.httpMetadata,
+    customMetadata: object.customMetadata,
+  });
+  if (!stored) {
+    throw new HttpError(500, "upload_promote_failed", `Failed to promote staged upload to key: ${toKey}`);
+  }
+  // The staged copy is redundant once the final key is written. A failed
+  // cleanup only leaks a staging object (later removed by session pruning),
+  // so log it instead of failing the completed upload.
+  try {
+    await bucket.delete(fromKey);
+  } catch (error) {
+    console.error(`Failed to delete staged object ${fromKey} after promotion:`, error);
+  }
+  return stored;
+}
+
 export async function createMultipartUpload(
   bucket: R2Bucket,
   key: string,

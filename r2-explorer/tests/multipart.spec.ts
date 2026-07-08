@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
+import { stagingObjectKey } from "../src/routes/upload";
 import { accessHeaders, accessSessionCookie, createAccessJwt, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
 
 type InitPayload = {
@@ -133,7 +134,10 @@ describe("multipart upload flow", () => {
     expect(initPayload.uploadId).toBeTruthy();
     expect(initPayload.objectKey.startsWith("uploads/")).toBe(true);
 
-    const upload = bucket.resumeMultipartUpload(initPayload.objectKey, initPayload.uploadId);
+    const upload = bucket.resumeMultipartUpload(
+      stagingObjectKey(initPayload.sessionId, initPayload.objectKey),
+      initPayload.uploadId,
+    );
 
     const partOneBytes = new Uint8Array(partSize);
     partOneBytes.fill(65);
@@ -381,7 +385,10 @@ describe("multipart upload flow", () => {
     expect(initResponse.status).toBe(200);
     const initPayload = await parseInitPayload(initResponse);
 
-    const upload = bucket.resumeMultipartUpload(initPayload.objectKey, initPayload.uploadId);
+    const upload = bucket.resumeMultipartUpload(
+      stagingObjectKey(initPayload.sessionId, initPayload.objectKey),
+      initPayload.uploadId,
+    );
     const first = new Uint8Array(partSize);
     first.fill(10);
     const second = new Uint8Array(partSize);
@@ -797,7 +804,10 @@ describe("multipart upload flow", () => {
     );
     expect(signResponse.status).toBe(200);
 
-    const upload = bucket.resumeMultipartUpload(initPayload.objectKey, initPayload.uploadId);
+    const upload = bucket.resumeMultipartUpload(
+      stagingObjectKey(initPayload.sessionId, initPayload.objectKey),
+      initPayload.uploadId,
+    );
     const uploadedPart = await upload.uploadPart(1, partBytes);
 
     const completeResponse = await app.fetch(
@@ -861,7 +871,10 @@ describe("multipart upload flow", () => {
     );
     expect(signResponse.status).toBe(200);
 
-    const upload = bucket.resumeMultipartUpload(initPayload.objectKey, initPayload.uploadId);
+    const upload = bucket.resumeMultipartUpload(
+      stagingObjectKey(initPayload.sessionId, initPayload.objectKey),
+      initPayload.uploadId,
+    );
     const uploadedPart = await upload.uploadPart(1, partBytes);
 
     const completeResponse = await app.fetch(
@@ -933,5 +946,208 @@ describe("multipart upload flow", () => {
     expect(response.status).toBe(400);
     const payload = (await response.json()) as ErrorPayload;
     expect(payload.error?.code).toBe("upload_content_type_blocked");
+  });
+
+  it("preserves the pre-existing object when an overwrite fails magic-byte validation", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    await bucket.put("uploads/report.pdf", "original pdf content", {
+      httpMetadata: { contentType: "application/pdf" },
+    });
+
+    const initResponse = await initUpload(app, env, {
+      filename: "report.pdf",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/pdf",
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    expect(initPayload.objectKey).toBe("uploads/report.pdf");
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // PNG magic bytes disagree with the declared application/pdf type.
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/complete", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          finalSize: declaredSize,
+          parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+        }),
+      }),
+      env,
+    );
+    expect(completeResponse.status).toBe(400);
+    expect(((await completeResponse.json()) as ErrorPayload).error?.code).toBe("upload_magic_mismatch");
+
+    // The original object survives the rejected overwrite and the staged
+    // upload is cleaned up.
+    const original = await bucket.get("uploads/report.pdf");
+    expect(await original?.text()).toBe("original pdf content");
+    expect(await bucket.get(stagingKey)).toBeNull();
+  });
+
+  it("promotes a valid overwrite from staging onto the target key", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    await bucket.put("uploads/replace.pdf", "old pdf");
+
+    const initResponse = await initUpload(app, env, {
+      filename: "replace.pdf",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/pdf",
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x25, 0x50, 0x44, 0x46], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/complete", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          finalSize: declaredSize,
+          parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+        }),
+      }),
+      env,
+    );
+    expect(completeResponse.status).toBe(200);
+    const completePayload = (await completeResponse.json()) as { key: string; size: number };
+    expect(completePayload.key).toBe("uploads/replace.pdf");
+    expect(completePayload.size).toBe(declaredSize);
+
+    const replaced = await bucket.get("uploads/replace.pdf");
+    const replacedBytes = new Uint8Array((await replaced?.arrayBuffer()) ?? new ArrayBuffer(0));
+    expect(replacedBytes.byteLength).toBe(declaredSize);
+    expect(replacedBytes[0]).toBe(0x25);
+    expect(await bucket.get(stagingKey)).toBeNull();
+  });
+
+  it("rejects completed uploads whose size does not match declaredSize", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+
+    const initResponse = await initUpload(app, env, {
+      filename: "short.bin",
+      prefix: "uploads/",
+      declaredSize: 1024,
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(512);
+    partBytes.fill(9);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/complete", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+        }),
+      }),
+      env,
+    );
+    expect(completeResponse.status).toBe(400);
+    expect(((await completeResponse.json()) as ErrorPayload).error?.code).toBe("upload_size_mismatch");
+
+    // Neither the target key nor the staged object remains.
+    expect(await bucket.get("uploads/short.bin")).toBeNull();
+    expect(await bucket.get(stagingKey)).toBeNull();
+  });
+
+  it("rejects upload prefixes outside the configured allowlist", async () => {
+    const { env } = await createTestEnv();
+    env.R2E_UPLOAD_PREFIX_ALLOWLIST = "public/";
+    const app = createApp();
+
+    const response = await initUpload(app, env, {
+      prefix: "private/",
+      declaredSize: 1024,
+    });
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as ErrorPayload).error?.code).toBe("upload_prefix_forbidden");
+  });
+
+  it("rejects traversal and separator-bearing upload filenames", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    const dotDot = await initUpload(app, env, {
+      filename: "..",
+      declaredSize: 1024,
+    });
+    expect(dotDot.status).toBe(400);
+    expect(((await dotDot.json()) as ErrorPayload).error?.code).toBe("invalid_upload_filename");
+
+    const separator = await initUpload(app, env, {
+      filename: "nested/evil.bin",
+      declaredSize: 1024,
+    });
+    expect(separator.status).toBe(400);
+    expect(((await separator.json()) as ErrorPayload).error?.code).toBe("invalid_upload_filename");
+
+    const traversalPrefix = await initUpload(app, env, {
+      prefix: "uploads/../secrets/",
+      declaredSize: 1024,
+    });
+    expect(traversalPrefix.status).toBe(400);
+    expect(((await traversalPrefix.json()) as ErrorPayload).error?.code).toBe("invalid_upload_prefix");
+  });
+
+  it("rejects uploads targeting the reserved staging prefix", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    const response = await initUpload(app, env, {
+      prefix: ".r2e-staging/hijack/",
+      declaredSize: 1024,
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as ErrorPayload).error?.code).toBe("invalid_upload_prefix");
+  });
+
+  it("omits the configured origin allowlist from origin_not_allowed errors", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    const response = await initUpload(app, env, {
+      authMode: "cookie",
+      origin: "https://evil.example.com",
+      declaredSize: 1024,
+    });
+    expect(response.status).toBe(403);
+    const payload = (await response.json()) as {
+      error?: { code?: string; details?: { origin?: string; allowedOrigins?: unknown } };
+    };
+    expect(payload.error?.code).toBe("origin_not_allowed");
+    expect(payload.error?.details?.origin).toBe("https://evil.example.com");
+    expect(payload.error?.details?.allowedOrigins).toBeUndefined();
   });
 });

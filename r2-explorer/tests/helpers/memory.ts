@@ -30,6 +30,7 @@ type UploadSessionRecord = {
   bucket: string;
   uploadId: string;
   objectKey: string;
+  stagingKey: string;
   filename: string;
   contentType: string;
   declaredSize: number;
@@ -599,6 +600,160 @@ export class MemoryUploadSessionNamespace {
   }
 }
 
+/**
+ * In-memory stand-in for the ShareCounterDurableObject namespace. The
+ * /consume handler performs its read-modify-write synchronously, mirroring
+ * the serialization the real Durable Object input gate provides, so
+ * concurrent app.fetch calls observe an atomic counter.
+ */
+export class MemoryShareCounterNamespace {
+  private readonly counts = new Map<string, number>();
+
+  idFromName(name: string): DurableObjectId {
+    return {
+      name,
+      toString: () => name,
+    } as unknown as DurableObjectId;
+  }
+
+  /** Test hook: read the authoritative counter for a token. */
+  countFor(tokenId: string): number {
+    return this.counts.get(tokenId) ?? 0;
+  }
+
+  get(id: DurableObjectId): DurableObjectStub {
+    const tokenKey = (id as unknown as MemoryDurableObjectId).name ?? String(id);
+    return {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+        if ((init?.method || "GET").toUpperCase() !== "POST") {
+          return doError(405, "method_not_allowed", "Only POST is supported.");
+        }
+        if (url.pathname !== "/consume") {
+          return doError(404, "not_found", "Share counter route not found.");
+        }
+        const raw = typeof init?.body === "string" ? init.body : "";
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw || "{}");
+        } catch (error) {
+          return doError(400, "bad_request", "Request body must be valid JSON.", { cause: String(error) });
+        }
+        const payload =
+          parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+        if (!payload) {
+          return doError(400, "validation_error", "Request payload must be a JSON object.");
+        }
+        const maxDownloads =
+          typeof payload.maxDownloads === "number" && Number.isInteger(payload.maxDownloads)
+            ? payload.maxDownloads
+            : 0;
+        const expiresAtMs = typeof payload.expiresAtMs === "number" ? payload.expiresAtMs : 0;
+        if (Date.now() >= expiresAtMs) {
+          return doError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
+        }
+
+        const current = this.counts.get(tokenKey) ?? 0;
+        if (maxDownloads > 0 && current >= maxDownloads) {
+          return doError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
+        }
+        const updated = current + 1;
+        this.counts.set(tokenKey, updated);
+        return new Response(JSON.stringify({ count: updated }), {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      },
+    } as unknown as DurableObjectStub;
+  }
+}
+
+/**
+ * Minimal in-memory DurableObjectStorage implementation for unit-testing the
+ * real Durable Object classes (UploadSessionDurableObject and
+ * ShareCounterDurableObject) without miniflare.
+ */
+export class MemoryDurableObjectStorage {
+  private readonly entries = new Map<string, unknown>();
+
+  private alarmTime: number | null = null;
+
+  async get<T>(key: string): Promise<T | undefined> {
+    return this.entries.get(key) as T | undefined;
+  }
+
+  async put(keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> {
+    if (typeof keyOrEntries === "string") {
+      this.entries.set(keyOrEntries, value);
+      return;
+    }
+    for (const [key, entryValue] of Object.entries(keyOrEntries)) {
+      this.entries.set(key, entryValue);
+    }
+  }
+
+  async delete(keys: string | string[]): Promise<boolean | number> {
+    if (typeof keys === "string") {
+      return this.entries.delete(keys);
+    }
+    let deleted = 0;
+    for (const key of keys) {
+      if (this.entries.delete(key)) {
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
+  async deleteAll(): Promise<void> {
+    this.entries.clear();
+    this.alarmTime = null;
+  }
+
+  async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+    const prefix = options?.prefix ?? "";
+    const result = new Map<string, T>();
+    const keys = [...this.entries.keys()].filter((key) => key.startsWith(prefix)).sort((a, b) => a.localeCompare(b));
+    for (const key of keys) {
+      result.set(key, this.entries.get(key) as T);
+    }
+    return result;
+  }
+
+  async getAlarm(): Promise<number | null> {
+    return this.alarmTime;
+  }
+
+  async setAlarm(scheduledTime: number | Date): Promise<void> {
+    this.alarmTime = typeof scheduledTime === "number" ? scheduledTime : scheduledTime.getTime();
+  }
+
+  async deleteAlarm(): Promise<void> {
+    this.alarmTime = null;
+  }
+}
+
+/** Build a DurableObjectState stub around MemoryDurableObjectStorage. */
+export function createMemoryDurableObjectState(): {
+  state: DurableObjectState;
+  storage: MemoryDurableObjectStorage;
+} {
+  const storage = new MemoryDurableObjectStorage();
+  const state = {
+    storage,
+    waitUntil: () => undefined,
+    blockConcurrencyWhile: async <T>(callback: () => Promise<T>): Promise<T> => callback(),
+  } as unknown as DurableObjectState;
+  return { state, storage };
+}
+
 export const AUTH_TEST_TEAM_DOMAIN = "repo.cloudflareaccess.com";
 export const AUTH_TEST_ISSUER = `https://${AUTH_TEST_TEAM_DOMAIN}`;
 export const AUTH_TEST_AUD = "4e6af42fbb5a5c49daa17742abca157c30bac4f734855b695f02e1c4ae849769";
@@ -787,17 +942,20 @@ export async function createTestEnv(): Promise<{
   bucket: MemoryR2Bucket;
   photosBucket: MemoryR2Bucket;
   sharesKv: MemoryKV;
+  shareCounters: MemoryShareCounterNamespace;
 }> {
   const bucket = new MemoryR2Bucket();
   const photosBucket = new MemoryR2Bucket();
   const sharesKv = new MemoryKV();
   const uploadSessions = new MemoryUploadSessionNamespace();
+  const shareCounters = new MemoryShareCounterNamespace();
 
   const env: Env = {
     FILES_BUCKET: bucket as unknown as R2Bucket,
     PHOTOS_BUCKET: photosBucket as unknown as R2Bucket,
     R2E_SHARES_KV: sharesKv as unknown as KVNamespace,
     R2E_UPLOAD_SESSIONS: uploadSessions as unknown as DurableObjectNamespace,
+    R2E_SHARE_COUNTERS: shareCounters as unknown as DurableObjectNamespace,
     R2E_MAX_SHARE_TTL_SEC: "2592000",
     R2E_DEFAULT_SHARE_TTL_SEC: "86400",
     R2E_UI_MAX_LIST_LIMIT: "1000",
@@ -838,5 +996,6 @@ export async function createTestEnv(): Promise<{
     bucket,
     photosBucket,
     sharesKv,
+    shareCounters,
   };
 }

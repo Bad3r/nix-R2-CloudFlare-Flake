@@ -55,9 +55,19 @@ preview_id = "replace-with-shares-kv-namespace-id-preview"
 name = "R2E_UPLOAD_SESSIONS"
 class_name = "UploadSessionDurableObject"
 
+# Per-token atomic download counters for share links (authoritative
+# maxDownloads enforcement; the KV record count is display-only).
+[[durable_objects.bindings]]
+name = "R2E_SHARE_COUNTERS"
+class_name = "ShareCounterDurableObject"
+
 [[migrations]]
 tag = "r2e-upload-sessions-v1"
 new_sqlite_classes = ["UploadSessionDurableObject"]
+
+[[migrations]]
+tag = "r2e-share-counters-v1"
+new_sqlite_classes = ["ShareCounterDurableObject"]
 
 [env.preview]
 workers_dev = true
@@ -119,3 +129,7 @@ id = "replace-with-shares-kv-namespace-id-preview"
 [[env.preview.durable_objects.bindings]]
 name = "R2E_UPLOAD_SESSIONS"
 class_name = "UploadSessionDurableObject"
+
+[[env.preview.durable_objects.bindings]]
+name = "R2E_SHARE_COUNTERS"
+class_name = "ShareCounterDurableObject"

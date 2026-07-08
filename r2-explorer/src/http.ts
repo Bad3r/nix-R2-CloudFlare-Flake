@@ -13,6 +13,7 @@ export class HttpError extends Error {
   }
 }
 
+/** Serialize data as a JSON response with no-store caching semantics. */
 export function json(data: unknown, init?: ResponseInit): Response {
   const headers = new Headers(init?.headers);
   if (!headers.has("content-type")) {
@@ -22,6 +23,7 @@ export function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), { ...init, headers });
 }
 
+/** Build the standard machine-readable API error envelope. */
 export function apiError(status: number, code: string, message: string, details?: unknown): Response {
   const payload: ApiErrorPayload = {
     error: {
@@ -33,16 +35,17 @@ export function apiError(status: number, code: string, message: string, details?
   return json(payload, { status });
 }
 
-export async function readBodyText(request: Request): Promise<string> {
-  return request.text();
-}
-
-export function parseJsonBody<T>(rawBody: string): T {
-  if (rawBody.length === 0) {
+/**
+ * Parse a raw JSON request body. This is the single JSON body parser shared
+ * by the Hono routes and the Durable Object handlers; it rejects empty and
+ * malformed bodies with client-safe 400 errors.
+ */
+export function parseJsonText(rawBody: string): unknown {
+  if (rawBody.trim().length === 0) {
     throw new HttpError(400, "bad_request", "Request body is required.");
   }
   try {
-    return JSON.parse(rawBody) as T;
+    return JSON.parse(rawBody) as unknown;
   } catch (error) {
     throw new HttpError(400, "bad_request", "Request body must be valid JSON.", {
       parseError: String(error),
@@ -50,14 +53,12 @@ export function parseJsonBody<T>(rawBody: string): T {
   }
 }
 
-export function methodNotAllowed(allowed: string[]): Response {
-  return apiError(405, "method_not_allowed", `Method not allowed. Allowed methods: ${allowed.join(", ")}`);
-}
-
+/** Build the standard 404 API error response. */
 export function notFound(message = "Resource not found."): Response {
   return apiError(404, "not_found", message);
 }
 
+/** Build a Content-Disposition header value for an object key. */
 export function contentDisposition(value: "attachment" | "inline", key: string): string {
   const filename = key.split("/").filter(Boolean).at(-1) ?? "file";
   return `${value}; filename="${sanitizeFilename(filename)}"`;

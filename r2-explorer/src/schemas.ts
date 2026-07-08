@@ -103,7 +103,7 @@ export const uploadSignPartResponseSchema = z
     sessionId: z.string().min(1),
     uploadId: z.string().min(1),
     partNumber: z.number().int().positive(),
-    url: z.string().url(),
+    url: z.url(),
     method: z.literal("PUT"),
     headers: z.record(z.string(), z.string()),
     expiresAt: z.string(),
@@ -192,7 +192,7 @@ export const shareCreateBodySchema = z
 export const shareCreateResponseSchema = z
   .object({
     tokenId: z.string(),
-    url: z.string().url(),
+    url: z.url(),
     expiresAt: z.string(),
     maxDownloads: z.number().int().nonnegative(),
     bucket: z.string(),

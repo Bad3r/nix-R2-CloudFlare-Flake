@@ -67,18 +67,23 @@ export function resolveBucket(env: Env, alias: string): { alias: string; binding
   const map = parseBucketMap(env);
   const binding = map[alias];
   if (!binding) {
+    // Log the configured aliases for operators; the client only gets back the
+    // alias it asked for, not the deployment's bucket map.
+    console.error(`Unknown bucket alias '${alias}'; configured aliases: ${Object.keys(map).join(", ")}`);
     throw new HttpError(400, "bucket_unknown", `Unknown bucket alias: ${alias}`, {
       alias,
-      knownBuckets: Object.keys(map),
     });
   }
   const bucket = (env as BucketBindings)[binding];
   if (!bucket) {
+    // Binding names are deployment internals; log them instead of echoing
+    // them in the client-facing error payload.
+    console.error(`Bucket binding '${binding}' for alias '${alias}' not found in worker environment.`);
     throw new HttpError(
       500,
       "bucket_binding_missing",
-      `Bucket binding '${binding}' not found in worker environment.`,
-      { alias, binding },
+      `Bucket for alias '${alias}' is not bound in this worker environment.`,
+      { alias },
     );
   }
   return { alias, binding, bucket };
