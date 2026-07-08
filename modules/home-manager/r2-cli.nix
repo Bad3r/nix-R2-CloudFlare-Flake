@@ -9,20 +9,12 @@ let
   r2lib = import ../../lib/r2.nix { inherit lib; };
   versionlib = import ../../lib/version.nix { inherit lib; };
   inherit (versionlib) releaseBase;
-  optionalPkg = name: if builtins.hasAttr name pkgs then [ pkgs.${name} ] else [ ];
-  wranglerPkg =
-    if builtins.hasAttr "nodePackages" pkgs && builtins.hasAttr "wrangler" pkgs.nodePackages then
-      pkgs.nodePackages.wrangler
-    else if builtins.hasAttr "wrangler" pkgs then
-      pkgs.wrangler
-    else
-      null;
   r2DerivationVersion = versionlib.mkDerivationVersion {
     inherit releaseBase;
     src = ../../.;
   };
-  r2Package = pkgs.callPackage ../../packages/r2-cli.nix {
-    wrangler = wranglerPkg;
+  defaultR2Package = pkgs.callPackage ../../packages/r2-cli.nix {
+    inherit (pkgs) wrangler;
     derivationVersion = r2DerivationVersion;
     inherit releaseBase;
   };
@@ -71,21 +63,34 @@ let
           echo "Error: rclone remote name must be env-var-safe for endpoint export: $rclone_remote" >&2
           exit 1
         fi
-        export "RCLONE_CONFIG_''${remote_env_name}_ENDPOINT=https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+        export "RCLONE_CONFIG_''${remote_env_name}_ENDPOINT=${r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}"}"
       fi
-      exec ${r2Package}/bin/r2 "$@"
+      exec ${cfg.package}/bin/r2 "$@"
     '';
   };
   toolPackages = [
     pkgs.rclone
     pkgs.restic
+    pkgs.wrangler
   ]
-  ++ optionalPkg "git-annex"
-  ++ lib.optional (wranglerPkg != null) wranglerPkg;
+  # git-annex is not packaged for every supported platform.
+  ++ lib.optionals (pkgs ? git-annex) [ pkgs.git-annex ];
 in
 {
   options.programs.r2-cloud = {
     enable = lib.mkEnableOption "R2 cloud CLI helpers";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = defaultR2Package;
+      defaultText = lib.literalExpression "pkgs.callPackage ../../packages/r2-cli.nix { inherit (pkgs) wrangler; }";
+      description = ''
+        The `r2` CLI package wrapped by this module. Defaults to the CLI built
+        from this flake's `packages/r2-cli.nix` using `pkgs.wrangler`. Set it
+        to the flake's `packages.<system>.r2` output to reuse the exact CLI
+        provided by `nix run .#r2`.
+      '';
+    };
 
     accountId = lib.mkOption {
       type = lib.types.str;
@@ -141,7 +146,7 @@ in
     installTools = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Install runtime dependencies (rclone, restic, git-annex, wrangler when available)";
+      description = "Install runtime dependencies (rclone, restic, wrangler, and git-annex when available)";
     };
   };
 
@@ -150,10 +155,6 @@ in
       {
         assertion = cfg.accountId != "" || cfg.accountIdFile != null;
         message = "programs.r2-cloud.accountId or programs.r2-cloud.accountIdFile must be set when programs.r2-cloud.enable = true";
-      }
-      {
-        assertion = toString cfg.credentialsFile != "";
-        message = "programs.r2-cloud.credentialsFile must be set when programs.r2-cloud.enable = true";
       }
       {
         assertion = (!cfg.enableRcloneRemote) || (cfg.rcloneRemoteName != "");

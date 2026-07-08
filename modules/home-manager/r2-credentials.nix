@@ -105,9 +105,19 @@ in
         account_id="$account_id_literal"
       elif [[ -n "$top_account_id_literal" ]]; then
         account_id="$top_account_id_literal"
-      elif [[ -n "$account_id_file" && -r "$account_id_file" ]]; then
+      elif [[ -n "$account_id_file" ]]; then
+        # A configured account ID file must be readable; silently falling back
+        # would mask a misconfigured secret path.
+        if [[ ! -r "$account_id_file" ]]; then
+          echo "Error: account ID file is missing or unreadable: $account_id_file" >&2
+          exit 1
+        fi
         { IFS= read -r account_id || true; } < "$account_id_file"
-      elif [[ -n "$top_account_id_file" && -r "$top_account_id_file" ]]; then
+      elif [[ -n "$top_account_id_file" ]]; then
+        if [[ ! -r "$top_account_id_file" ]]; then
+          echo "Error: account ID file is missing or unreadable: $top_account_id_file" >&2
+          exit 1
+        fi
         { IFS= read -r account_id || true; } < "$top_account_id_file"
       fi
 
@@ -130,12 +140,17 @@ in
 
       ${pkgs.coreutils}/bin/mkdir -p "$output_dir"
       umask 077
+      # Write to a temp file and rename: the existing output is mode 0400, so
+      # truncating it in place fails on re-activation, and the rename keeps
+      # the update atomic (no partially written credentials).
+      tmp_output_file="$(${pkgs.coreutils}/bin/mktemp "$output_dir/.r2-env.XXXXXX")"
       {
         printf 'R2_ACCOUNT_ID=%s\n' "$account_id"
         printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key_id"
         printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_access_key"
-      } > "$output_file"
-      ${pkgs.coreutils}/bin/chmod 0400 "$output_file"
+      } > "$tmp_output_file"
+      ${pkgs.coreutils}/bin/chmod 0400 "$tmp_output_file"
+      ${pkgs.coreutils}/bin/mv -f "$tmp_output_file" "$output_file"
     '';
   };
 }

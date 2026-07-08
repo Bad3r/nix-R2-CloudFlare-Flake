@@ -15,18 +15,29 @@ let
   };
   hasMounts = cfg.mounts != { };
 
+  # Endpoint resolved at service runtime from the account ID env/file.
+  runtimeEndpoint = r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}";
+
+  # Per-mount remote layout derived from the normalized prefix. The module
+  # assertions below guarantee a non-empty normalized prefix before any
+  # generated unit can be built.
+  mkRemoteLayout =
+    mount:
+    let
+      prefix = r2lib.normalizeRemotePrefix mount.remotePrefix;
+    in
+    {
+      inherit prefix;
+      path = if prefix == "" then mount.bucket else "${mount.bucket}/${prefix}";
+    };
+
   mkMountService =
     name: mount:
     let
       mountPoint = toString mount.mountPoint;
       mountPointArg = lib.escapeShellArg mountPoint;
-      remotePrefix =
-        if mount.remotePrefix == "" then
-          ""
-        else
-          lib.removePrefix "/" (lib.removeSuffix "/" mount.remotePrefix);
-      remotePath = if remotePrefix == "" then mount.bucket else "${mount.bucket}/${remotePrefix}";
-      remoteArg = lib.escapeShellArg ":s3:${remotePath}";
+      layout = mkRemoteLayout mount;
+      remoteArg = lib.escapeShellArg ":s3:${layout.path}";
       mountScript = pkgs.writeShellScript "r2-mount-${name}" ''
         set -euo pipefail
         # rclone invokes `fusermount3` for FUSE mounts. On NixOS the setuid wrapper
@@ -34,7 +45,7 @@ let
         # with "Operation not permitted" for non-root mounts).
         export PATH="/run/wrappers/bin:$PATH"
         ${resolveAccountIdShell}
-        endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+        endpoint="${runtimeEndpoint}"
         exec ${pkgs.rclone}/bin/rclone mount \
           --config=/dev/null \
           --s3-provider=Cloudflare \
@@ -47,6 +58,18 @@ let
           --allow-other \
           ${remoteArg} \
           ${mountPointArg}
+      '';
+      # systemd Exec lines do not support shell operators, so the graceful
+      # unmount logic must live in a real script.
+      unmountScript = pkgs.writeShellScript "r2-unmount-${name}" ''
+        set -euo pipefail
+        # Only unmount while the path is still a mountpoint; rclone also
+        # unmounts on SIGTERM, so this is the graceful first pass.
+        if ${pkgs.util-linux}/bin/mountpoint -q ${mountPointArg}; then
+          /run/wrappers/bin/fusermount3 -u ${mountPointArg} \
+            || /run/wrappers/bin/fusermount -u ${mountPointArg} \
+            || /run/wrappers/bin/umount ${mountPointArg}
+        fi
       '';
     in
     {
@@ -63,10 +86,7 @@ let
           Type = "simple";
           EnvironmentFile = cfg.credentialsFile;
           ExecStart = mountScript;
-          ExecStop = ''
-            ${pkgs.util-linux}/bin/mountpoint -q ${mountPointArg} && \
-              (/run/wrappers/bin/fusermount3 -u ${mountPointArg} || /run/wrappers/bin/fusermount -u ${mountPointArg} || /run/wrappers/bin/umount ${mountPointArg}) || true
-          '';
+          ExecStop = unmountScript;
           Restart = "on-failure";
           RestartSec = "5s";
           StateDirectory = "r2-sync-${name}";
@@ -104,22 +124,16 @@ let
       localCheckArg = lib.escapeShellArg localCheckPath;
       workdirPath = "/var/lib/r2-sync-${name}/bisync";
       workdirArg = lib.escapeShellArg workdirPath;
-      remotePrefix =
-        if mount.remotePrefix == "" then
-          ""
-        else
-          lib.removePrefix "/" (lib.removeSuffix "/" mount.remotePrefix);
-      remotePath = if remotePrefix == "" then mount.bucket else "${mount.bucket}/${remotePrefix}";
-      remoteArg = lib.escapeShellArg ":s3:${remotePath}";
-      remoteTrashSuffix = remotePrefix;
-      remoteTrashPath = ":s3:${mount.bucket}/.trash/${remoteTrashSuffix}";
+      layout = mkRemoteLayout mount;
+      remoteArg = lib.escapeShellArg ":s3:${layout.path}";
+      remoteTrashPath = ":s3:${mount.bucket}/.trash/${layout.prefix}";
       remoteTrashArg = lib.escapeShellArg remoteTrashPath;
-      remoteCheckPath = ":s3:${remotePath}/${checkFilename}";
+      remoteCheckPath = ":s3:${layout.path}/${checkFilename}";
       remoteCheckArg = lib.escapeShellArg remoteCheckPath;
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
-        endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
+        endpoint="${runtimeEndpoint}"
         # Ensure the bisync access-check file exists on the remote before running.
         #
         # On S3/R2, rclone stores mtimes in metadata. Copying the local check file to
@@ -223,7 +237,8 @@ let
         OnActiveSec = "2m";
         OnUnitActiveSec = mount.syncInterval;
         Unit = "r2-bisync-${name}.service";
-        Persistent = true;
+        # No Persistent=true here: it only applies to OnCalendar= timers and is
+        # a no-op for monotonic OnActiveSec/OnUnitActiveSec schedules.
       };
     };
   };
@@ -266,7 +281,12 @@ in
             remotePrefix = lib.mkOption {
               type = lib.types.str;
               default = "";
-              description = "Optional path prefix inside the bucket to use as the mount/sync root";
+              description = ''
+                Required path prefix inside the bucket to use as the mount/sync
+                root. Must normalize to a non-empty prefix (bare or repeated
+                slashes are rejected) so the bisync trash backup-dir stays
+                outside the sync root.
+              '';
               example = "workspace";
             };
 
@@ -287,12 +307,6 @@ in
               type = lib.types.str;
               default = "5m";
               description = "Bisync interval in systemd time format";
-            };
-
-            trashRetention = lib.mkOption {
-              type = lib.types.int;
-              default = 30;
-              description = "Retention policy hint for deleted files in .trash/";
             };
 
             vfsCache = {
@@ -374,8 +388,12 @@ in
       message = "services.r2-sync.mounts.${name}.bucket must be a non-empty string";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
-      assertion = mount.remotePrefix != "";
-      message = "services.r2-sync.mounts.${name}.remotePrefix must be non-empty (required for bisync trash backup-dir outside sync root)";
+      assertion = mount.bucket == "" || r2lib.isValidBucketName mount.bucket;
+      message = "services.r2-sync.mounts.${name}.bucket must be a valid R2 bucket name (3-63 lowercase letters, digits, or hyphens; must start and end with a letter or digit): got '${mount.bucket}'";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = r2lib.normalizeRemotePrefix mount.remotePrefix != "";
+      message = "services.r2-sync.mounts.${name}.remotePrefix must be non-empty after normalization (required for bisync trash backup-dir outside sync root): got '${mount.remotePrefix}'";
     }) cfg.mounts;
 
     environment.systemPackages = [
