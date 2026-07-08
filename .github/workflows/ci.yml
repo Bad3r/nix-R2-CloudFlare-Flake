@@ -5,147 +5,203 @@ name: CI
 on:
   push:
     branches: [main]
+  # labeled/unlabeled are intentionally not triggers here: a label toggle must
+  # not rerun (or cancel, via the concurrency group below) the expensive
+  # validation jobs, and it must not emit fresh "skipped" check runs that
+  # would supersede real validation results. Label changes are handled by
+  # security-policy-refresh.yml, which re-runs only the
+  # security-sensitive-change-policy check.
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+
+# Default token scope for all jobs; jobs needing more declare it explicitly.
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Path-group change detection (issues #34/#35). Pull requests are filtered
+  # with dorny/paths-filter against the PR base; push and workflow_dispatch
+  # events force every group to "true" so all jobs still run unconditionally
+  # there (issue #37).
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      any: ${{ github.event_name != 'pull_request' || steps.filter.outputs.any == 'true' }}
+      root_nix: ${{ github.event_name != 'pull_request' || steps.filter.outputs.root_nix == 'true' }}
+      worker: ${{ github.event_name != 'pull_request' || steps.filter.outputs.worker == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+      docs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs == 'true' }}
+      templates: ${{ github.event_name != 'pull_request' || steps.filter.outputs.templates == 'true' }}
+      workflows: ${{ github.event_name != 'pull_request' || steps.filter.outputs.workflows == 'true' }}
+      scripts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.scripts == 'true' }}
+      lockfiles: ${{ github.event_name != 'pull_request' || steps.filter.outputs.lockfiles == 'true' }}
+      ci_config: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ci_config == 'true' }}
+    steps:
+      - name: Detect changed path groups (pull_request only)
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        with:
+          filters: |
+            any:
+              - "**"
+            root_nix:
+              - "flake.nix"
+              - "flake.lock"
+              - "default.nix"
+              - "lib/**"
+              - "modules/**"
+              - "packages/**"
+            worker:
+              - "r2-explorer/**"
+            web:
+              - "r2-explorer/web/**"
+            docs:
+              - "docs/**"
+              - "README.md"
+            templates:
+              - "templates/**"
+            workflows:
+              - ".github/workflows/**"
+              - ".github/actions/**"
+            scripts:
+              - "scripts/**"
+            lockfiles:
+              - "**/flake.lock"
+              - "**/pnpm-lock.yaml"
+            ci_config:
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
+              - "scripts/ci/**"
+
+      - name: Report resolved change groups
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FILTER_OUTPUTS: ${{ toJSON(steps.filter.outputs) }}
+        run: |
+          set -euo pipefail
+          log() { echo "[changes] $*"; }
+          log "event=${EVENT_NAME}"
+          if [[ "${EVENT_NAME}" != "pull_request" ]]; then
+            log "non-pull_request event: all change groups forced to true; no job is skipped (issue #37)."
+          else
+            log "pull_request path filter results: ${FILTER_OUTPUTS}"
+          fi
+
   validate-root-format-lint:
+    name: validate (root-format-lint)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: changes
+    # treefmt/lint covers every file type, so any change is relevant (#36).
+    if: needs.changes.outputs.any == 'true'
     env:
       CI_STRICT: "1"
-    name: validate (root-format-lint)
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
         with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: nix-r2-cloudflare-flake
-          extraPullNames: wrangler
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-format-lint
 
   validate-root-flake-template-docs:
+    name: validate (root-flake-template-docs)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: changes
+    # Covers flake checks, template init, docs cross-links, and the workflow
+    # hardening scan, so it runs for Nix, docs, template, workflow, and CI
+    # config changes (#36).
+    if: >-
+      needs.changes.outputs.root_nix == 'true' ||
+      needs.changes.outputs.docs == 'true' ||
+      needs.changes.outputs.templates == 'true' ||
+      needs.changes.outputs.workflows == 'true' ||
+      needs.changes.outputs.ci_config == 'true'
     env:
       CI_STRICT: "1"
-    name: validate (root-flake-template-docs)
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
         with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: nix-r2-cloudflare-flake
-          extraPullNames: wrangler
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-flake-template-docs
 
   validate-root-cli-module-eval:
+    name: validate (root-cli-module-eval)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: changes
+    # Builds the CLI and evaluates NixOS/HM modules; skipped for docs-only or
+    # worker-only pull requests (#39, #40).
+    if: >-
+      needs.changes.outputs.root_nix == 'true' ||
+      needs.changes.outputs.ci_config == 'true'
     env:
       CI_STRICT: "1"
-    name: validate (root-cli-module-eval)
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
         with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: nix-r2-cloudflare-flake
-          extraPullNames: wrangler
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target root-cli-module-eval
 
   validate-worker-typecheck-test:
+    name: validate (worker-typecheck-test)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: changes
+    # Worker typecheck/tests; skipped for docs-only pull requests (#39).
+    if: >-
+      needs.changes.outputs.worker == 'true' ||
+      needs.changes.outputs.ci_config == 'true'
     env:
       CI_STRICT: "1"
-    name: validate (worker-typecheck-test)
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
         with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: nix-r2-cloudflare-flake
-          extraPullNames: wrangler
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
         run: ./scripts/ci/validate.sh --target worker-typecheck-test
@@ -154,31 +210,25 @@ jobs:
     name: security-dependency-audit
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    permissions:
-      contents: read
+    needs: changes
+    # Audits flake inputs, worker dependencies, and the Nix closure; skipped
+    # for docs-only pull requests (#39).
+    if: >-
+      needs.changes.outputs.root_nix == 'true' ||
+      needs.changes.outputs.worker == 'true' ||
+      needs.changes.outputs.lockfiles == 'true' ||
+      needs.changes.outputs.ci_config == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
         with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: nix-r2-cloudflare-flake
-          extraPullNames: wrangler
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -250,6 +300,10 @@ jobs:
     name: security-sensitive-change-policy
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Runs unconditionally on every CI event (issue #38): the shared action
+    # inspects the PR diff itself and early-exits when no sensitive paths
+    # changed. Label add/remove re-evaluation is handled by
+    # security-policy-refresh.yml, which shares the concurrency group below.
     concurrency:
       group: ci-security-sensitive-change-policy-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
@@ -257,59 +311,60 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Detect sensitive changes
-        id: detect
-        uses: actions/github-script@v8
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
-          script: |
-            const sensitivePatterns = [
-              /^\.github\/workflows\/.*/,
-              /(^|\/)flake\.lock$/,
-              /(^|\/)pnpm-lock\.yaml$/
-            ];
+          fetch-depth: 1
 
-            if (context.eventName !== "pull_request") {
-              core.info("Sensitive-change policy is enforced on pull_request events.");
-              core.setOutput("sensitive_changed", "false");
-              core.setOutput("matched_files", "");
-              return;
-            }
+      - name: Run sensitive-change policy
+        uses: ./.github/actions/security-sensitive-change-policy
 
-            const prNumber = context.payload.pull_request.number;
-            const files = await github.paginate(
-              github.rest.pulls.listFiles,
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber,
-                per_page: 100
-              }
-            );
+  # Single aggregation gate for branch protection (issue #41): make branch
+  # protection require "ci-required" plus "security-sensitive-change-policy".
+  # Jobs skipped by path filtering count as pass; failed or cancelled jobs
+  # (including a failed "changes" job) fail the gate, so nothing is dropped
+  # silently and no required check stays perpetually pending.
+  # security-sensitive-change-policy is deliberately not aggregated here: it
+  # stays its own required check so a label toggle can refresh it via
+  # security-policy-refresh.yml without rerunning this workflow.
+  ci-required:
+    name: ci-required
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+    needs:
+      - changes
+      - validate-root-format-lint
+      - validate-root-flake-template-docs
+      - validate-root-cli-module-eval
+      - validate-worker-typecheck-test
+      - security-dependency-audit
+    steps:
+      - name: Evaluate required job results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          log() { echo "[ci-required] $*"; }
 
-            const matched = files
-              .map((f) => f.filename)
-              .filter((filename) =>
-                sensitivePatterns.some((pattern) => pattern.test(filename))
-              );
+          failed=0
+          while IFS=$'\t' read -r job result; do
+            case "${result}" in
+            success)
+              log "job '${job}' succeeded"
+              ;;
+            skipped)
+              log "job '${job}' was skipped by path filtering; treating as pass (issue #41)"
+              ;;
+            *)
+              log "job '${job}' finished with result '${result}'"
+              failed=1
+              ;;
+            esac
+          done < <(jq -r 'to_entries[] | [.key, .value.result] | @tsv' <<<"${NEEDS_JSON}")
 
-            core.info(`Sensitive files changed: ${matched.length}`);
-            core.setOutput("sensitive_changed", matched.length > 0 ? "true" : "false");
-            core.setOutput("matched_files", matched.join("\n"));
-
-      - name: Enforce security review label for sensitive changes
-        if: github.event_name == 'pull_request' && steps.detect.outputs.sensitive_changed == 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const requiredLabel = "security-review-approved";
-            const labels = (context.payload.pull_request.labels || []).map((label) => label.name);
-            if (!labels.includes(requiredLabel)) {
-              const changed = `${{ steps.detect.outputs.matched_files }}`;
-              core.setFailed(
-                [
-                  `Sensitive file changes detected:\n${changed}`,
-                  `Missing required label: ${requiredLabel}`,
-                  "Add the label and ensure CODEOWNER approval before merge."
-                ].join("\n\n")
-              );
-            }
+          if [[ ${failed} -ne 0 ]]; then
+            log "at least one required job failed or was cancelled"
+            exit 1
+          fi
+          log "all required jobs succeeded or were skipped"

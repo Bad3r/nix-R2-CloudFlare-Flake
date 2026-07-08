@@ -484,10 +484,15 @@ jobs:
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Reject non-main production deploy ref
+        env:
+          # workflow_dispatch inputs are user-controlled; bind through the
+          # environment instead of interpolating ${{ }} into the run: script.
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
         run: |
-          if [[ "${{ github.event.inputs.ref }}" != "main" ]]; then
+          set -euo pipefail
+          if [[ "${DEPLOY_REF}" != "main" ]]; then
             echo "Production deploys require ref=main." >&2
-            echo "Got '${{ github.event.inputs.ref }}'." >&2
+            echo "Got '${DEPLOY_REF}'." >&2
             exit 1
           fi
 

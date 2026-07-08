@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Security Policy Label Refresh
+
+# Re-evaluates only the sensitive-change policy check when PR labels change.
+# ci.yml intentionally no longer triggers on labeled/unlabeled, so a label
+# toggle does not rerun (or cancel) the Nix validation jobs; this workflow
+# renews the "security-sensitive-change-policy" check run instead. The job
+# name matches the ci.yml job exactly, so the newest run of either workflow
+# determines the required check's state.
+on:
+  pull_request:
+    types: [labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-policy-refresh-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security-sensitive-change-policy:
+    name: security-sensitive-change-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Shared with the ci.yml policy job so concurrent evaluations for the
+    # same pull request cancel each other and the newest event wins.
+    concurrency:
+      group: ci-security-sensitive-change-policy-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run sensitive-change policy
+        uses: ./.github/actions/security-sensitive-change-policy

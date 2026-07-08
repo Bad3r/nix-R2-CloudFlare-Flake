@@ -23,9 +23,10 @@ on:
           - "false"
           - "true"
 
+# Least-privilege default: only publish-release pushes branches/tags and
+# manages the release PR, so write scopes are granted on that job alone.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: release-production
@@ -100,24 +101,11 @@ jobs:
         with:
           ref: ${{ inputs.target_ref }}
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
         with:
-          # Disable Determinate Systems enterprise features for OSS project
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: nix-r2-cloudflare-flake
-          extraPullNames: wrangler
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: true
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skip-push: "true"
 
       - name: Build root CLI package
         run: |
@@ -318,6 +306,9 @@ jobs:
     name: publish-release
     runs-on: ubuntu-latest
     needs: [preflight, build-root, build-worker, verify-cli-smoke]
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout target ref
         uses: actions/checkout@v6
