@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fail() {
-  echo "Error: $*" >&2
-  exit 1
-}
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=scripts/ci/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 
 usage() {
   cat <<'USAGE'
@@ -48,9 +47,7 @@ if [[ ! -f "${worker_dir}/package.json" ]]; then
 fi
 
 for required in node jq pnpm; do
-  if ! command -v "${required}" >/dev/null 2>&1; then
-    fail "required command not found: ${required}"
-  fi
+  require_command "${required}"
 done
 
 origins_json="$(

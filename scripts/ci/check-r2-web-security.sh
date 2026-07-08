@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=scripts/ci/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
 # base64(sha512(empty content)); used as broken-SRI empty-body sentinel.
 EMPTY_BODY_SHA512_B64='z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg=='
-
-fail() {
-  echo "Error: $*" >&2
-  exit 1
-}
 
 usage() {
   cat <<'USAGE'
@@ -32,13 +31,6 @@ Notes:
     2) Analytics is detectable via HTML loader markers or Zaraz runtime endpoint.
     3) Known empty-content SRI hash marker is absent.
 USAGE
-}
-
-require_command() {
-  local name="$1"
-  if ! command -v "${name}" >/dev/null 2>&1; then
-    fail "required command not found: ${name}"
-  fi
 }
 
 uppercase_env_name() {
@@ -74,10 +66,6 @@ resolve_prefixed_var_name_for_env() {
   local env_upper
   env_upper="$(uppercase_env_name "${env_name}")"
   printf 'CF_%s_CI_%s' "${env_upper}" "${suffix}"
-}
-
-normalize_space() {
-  tr '\n' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ +| +$//g'
 }
 
 read_csp_policy() {
@@ -206,8 +194,10 @@ if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflarei
       --write-out '%{http_code}' \
       "${request_url%/}/cdn-cgi/zaraz/s.js"
   )"
-  if [[ ${zaraz_probe_status} == "404" ]]; then
-    fail "analytics markers not found in HTML and Zaraz endpoint unavailable"
+  # Any non-2xx probe status means the analytics runtime is unavailable
+  # (404, 403, 5xx, ...); only a successful probe proves analytics is served.
+  if [[ ! ${zaraz_probe_status} =~ ^2[0-9][0-9]$ ]]; then
+    fail "analytics markers not found in HTML and Zaraz endpoint probe returned HTTP ${zaraz_probe_status}"
   fi
 fi
 

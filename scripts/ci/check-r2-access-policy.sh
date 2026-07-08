@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fail() {
-  echo "Error: $*" >&2
-  exit 1
-}
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=scripts/ci/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 
 usage() {
   cat <<'USAGE'
@@ -20,67 +19,6 @@ Required environment:
   CLOUDFLARE_API_TOKEN
   CLOUDFLARE_ACCOUNT_ID
 USAGE
-}
-
-require_command() {
-  local name="$1"
-  if ! command -v "${name}" >/dev/null 2>&1; then
-    fail "required command not found: ${name}"
-  fi
-}
-
-require_env() {
-  local name="$1"
-  if [[ -z ${!name:-} ]]; then
-    fail "required environment variable is missing: ${name}"
-  fi
-}
-
-cf_api_get() {
-  local path="$1"
-  curl -fsS \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-    "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}${path}"
-}
-
-cf_api_get_paginated_results() {
-  local path="$1"
-  local resource_name="$2"
-  local page=1
-  local total_pages=1
-  local all_results='[]'
-
-  while :; do
-    local separator="?"
-    if [[ ${path} == *\?* ]]; then
-      separator="&"
-    fi
-
-    local response
-    response="$(cf_api_get "${path}${separator}page=${page}&per_page=50")"
-
-    local success
-    success="$(jq -r '.success' <<<"${response}")"
-    if [[ ${success} != "true" ]]; then
-      fail "Cloudflare ${resource_name} API returned success=${success} (page ${page})"
-    fi
-
-    local page_results
-    page_results="$(jq -c '.result // []' <<<"${response}")"
-    all_results="$(jq -cn --argjson acc "${all_results}" --argjson page_data "${page_results}" '$acc + $page_data')"
-
-    total_pages="$(jq -r '.result_info.total_pages // 1' <<<"${response}")"
-    if [[ ! ${total_pages} =~ ^[0-9]+$ ]] || [[ ${total_pages} -lt 1 ]]; then
-      total_pages=1
-    fi
-
-    if ((page >= total_pages)); then
-      break
-    fi
-    ((page += 1))
-  done
-
-  printf '%s\n' "${all_results}"
 }
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
@@ -158,15 +96,19 @@ fi
 
 service_tokens_results_json="$(cf_api_get_paginated_results "/access/service_tokens" "Access service tokens")"
 
-service_token_id="$(
+# Count matches with jq so N matching tokens count as N (wc -l counts newline
+# characters, which under-counts by one and hid the multiple-token warning).
+token_count="$(
   jq -r --arg client_id "${service_token_client_id}" \
-    '.[] | select(.client_id == $client_id) | .id' <<<"${service_tokens_results_json}"
+    '[.[] | select(.client_id == $client_id)] | length' <<<"${service_tokens_results_json}"
 )"
-token_count="$(printf '%s' "${service_token_id}" | wc -l)"
 if [[ ${token_count} -gt 1 ]]; then
   echo "Warning: multiple service tokens found for client id ${service_token_client_id}; using first" >&2
 fi
-service_token_id="$(printf '%s' "${service_token_id}" | head -n1)"
+service_token_id="$(
+  jq -r --arg client_id "${service_token_client_id}" \
+    '[.[] | select(.client_id == $client_id) | .id] | first // empty' <<<"${service_tokens_results_json}"
+)"
 if [[ -z ${service_token_id} ]]; then
   fail "no Cloudflare service token found for client id ${service_token_client_id}"
 fi

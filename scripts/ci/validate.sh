@@ -157,11 +157,16 @@ run_docs_checks() {
     esac
   }
 
+  # Both backends must scan the same set: README.md plus docs/** recursively,
+  # excluding plan docs (docs/plan.md, docs/plan-*.md, docs/plan/**), matching
+  # the AGENTS.md stale-phase policy. The rg branch previously used
+  # --glob "docs/*.md", which silently skipped docs/operators and
+  # docs/reference while the grep branch scanned them.
   scan_stale_phase_language() {
     local output_file="$1"
     case "${search_backend}" in
     rg)
-      rg -n --glob "README.md" --glob "docs/*.md" --glob "!docs/plan.md" --glob "!docs/plan-*.md" \
+      rg -n --glob "*.md" --glob "!plan.md" --glob "!plan-*.md" --glob "!**/plan/**" \
         "Phase[[:space:]]+[0-9]+" README.md docs >"${output_file}"
       ;;
     grep)
@@ -599,15 +604,17 @@ run_target_root_flake_template_docs() {
   run nix flake check
   run_template_checks
   run_docs_checks
+  # Scan .github (workflows and composite actions) so the Nix installer
+  # hardening invariant follows the shared setup-nix-cachix action.
   if command -v rg >/dev/null 2>&1; then
-    if rg -n "require-sigs = false" .github/workflows >/dev/null; then
-      echo "Workflow hardening check failed: found 'require-sigs = false' in .github/workflows." >&2
-      rg -n "require-sigs = false" .github/workflows >&2
+    if rg -n "require-sigs = false" .github >/dev/null; then
+      echo "Workflow hardening check failed: found 'require-sigs = false' in .github." >&2
+      rg -n "require-sigs = false" .github >&2
       exit 1
     fi
-  elif grep -R --line-number "require-sigs = false" .github/workflows >/dev/null; then
-    echo "Workflow hardening check failed: found 'require-sigs = false' in .github/workflows." >&2
-    grep -R --line-number "require-sigs = false" .github/workflows >&2
+  elif grep -R --line-number "require-sigs = false" .github >/dev/null; then
+    echo "Workflow hardening check failed: found 'require-sigs = false' in .github." >&2
+    grep -R --line-number "require-sigs = false" .github >&2
     exit 1
   fi
 }
