@@ -31,10 +31,12 @@ let
     ${resticRepositoryShell}
 
     # Initialize the repository on first use so the first backup into an empty
-    # bucket succeeds (mirrors services.restic.backups.*.initialize).
-    if ! ${pkgs.restic}/bin/restic snapshots >/dev/null 2>&1; then
-      ${pkgs.restic}/bin/restic init
-    fi
+    # bucket succeeds (mirrors services.restic.backups.*.initialize). Probe
+    # with `cat config` (one object read instead of listing all snapshots) and
+    # keep stderr, so a transient credential/network failure stays visible
+    # instead of silently escalating into `restic init` against a repository
+    # that already exists.
+    ${pkgs.restic}/bin/restic cat config >/dev/null || ${pkgs.restic}/bin/restic init
   '';
 
   resticBackupScript = pkgs.writeShellScript "r2-restic-backup" ''
@@ -95,7 +97,7 @@ in
     initialize = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Whether to create the restic repository if it does not exist yet (runs `restic init` before the backup when `restic snapshots` fails, matching services.restic.backups.*.initialize)";
+      description = "Whether to create the restic repository if it does not exist yet (runs `restic init` before the backup when the `restic cat config` probe fails, matching services.restic.backups.*.initialize)";
     };
 
     paths = lib.mkOption {
