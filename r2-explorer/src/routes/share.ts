@@ -133,7 +133,14 @@ export function registerShareRoutes(app: Hono<AppContext>): void {
   });
 
   app.get("/share/:token", async (c) => {
-    const tokenId = decodeURIComponent(c.req.param("token"));
+    let tokenId: string;
+    try {
+      tokenId = decodeURIComponent(c.req.param("token"));
+    } catch {
+      // Malformed percent-encoding (e.g. GET /share/%) throws URIError, which
+      // is not a valid token, not a server fault.
+      throw new HttpError(404, "share_not_found", "Share token malformed.");
+    }
     if (!tokenId) {
       throw new HttpError(404, "share_not_found", "Share token missing.");
     }

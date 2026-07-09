@@ -113,6 +113,18 @@ describe("share lifecycle", () => {
     expect(payload.error.code).toBe("share_expired");
   });
 
+  it("returns 404 share_not_found for a malformed share token", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    // "%" is invalid percent-encoding; decodeURIComponent throws URIError,
+    // which must map to the share 404, not a 500 internal_error.
+    const response = await app.fetch(new Request("https://files.example.com/share/%"), env);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(response.status).toBe(404);
+    expect(payload.error.code).toBe("share_not_found");
+  });
+
   it("serves share downloads from a non-default bucket", async () => {
     const { env, photosBucket } = await createTestEnv();
     await photosBucket.put("images/cat.jpg", "meow");
