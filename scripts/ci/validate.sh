@@ -645,7 +645,9 @@ run_target_root_cli_module_eval() {
 }
 
 run_target_worker_typecheck_test() {
-  run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install --frozen-lockfile && pnpm run check && pnpm run build:web && pnpm run test:api"
+  # test:all = node suite (test:api) + workerd pool (test:workers), so the
+  # real Durable Objects are exercised in CI, not only the memory fakes.
+  run nix develop ./r2-explorer --command bash -lc "cd r2-explorer && pnpm install --frozen-lockfile && pnpm run check && pnpm run build:web && pnpm run test:all"
 }
 
 run_target() {

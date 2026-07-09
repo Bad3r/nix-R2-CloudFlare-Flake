@@ -12,11 +12,14 @@
     "check": "pnpm run check:api && pnpm run check:web",
     "deploy": "wrangler deploy",
     "test:api": "vitest run",
+    "test:workers": "vitest run --config vitest.workers.config.ts",
     "test": "pnpm run test:api",
+    "test:all": "pnpm run test:api && pnpm run test:workers",
     "test:live": "vitest run tests/live.integration.spec.ts",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.2",
     "@cloudflare/workers-types": "^4.20260702.1",
     "hono": "^4.12.28",
     "miniflare": "4.20260701.0",
