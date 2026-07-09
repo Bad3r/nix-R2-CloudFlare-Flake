@@ -5,7 +5,7 @@ packages:
 # a duplicate transitive wrangler@4.50.0 in the tree alongside the pinned 4.71.0.
 overrides:
   svgo: ^4.0.1
-  wrangler: ^4.71.0
+  wrangler: ^4.107.0
 allowBuilds:
   esbuild: true
   sharp: true
