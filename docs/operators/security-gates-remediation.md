@@ -21,6 +21,31 @@ gates fail.
   - lockfile/workflow changes require `security-review-approved` label
   - CODEOWNER review required by branch protection
 
+## Gate Topology and Branch Protection
+
+Branch protection on `main` must require these status checks:
+
+- `ci-required`: the single aggregation gate over the CI validation jobs.
+  Jobs skipped by path filtering count as pass; failed or cancelled jobs
+  (including the `changes` detection job) fail the gate.
+- `security-sensitive-change-policy`: kept separate from `ci-required` so a
+  label add/remove can refresh it through
+  `.github/workflows/security-policy-refresh.yml` without rerunning CI.
+
+Self-neutering backstop: the policy check executes the composite action from
+the PR head commit, so a PR could edit its own enforcement logic. Two
+controls close that hole and must stay in place:
+
+- `.github/CODEOWNERS` requires owner review for `/.github/workflows/` and
+  `/.github/actions/`, so enforcement-surface changes cannot merge on the
+  strength of the (self-evaluated) green check alone.
+- Non-`pull_request` CI runs (push, `workflow_dispatch`) publish the policy
+  job under the distinct name `security-sensitive-change-policy
+(informational)`. A dispatched run on a PR branch therefore cannot emit a
+  fresh SUCCESS under the required check name on the same head SHA and
+  supersede a red pull-request result; only `pull_request` events (CI and the
+  label-refresh workflow) write the authoritative check.
+
 ## Prerequisites
 
 - `nix`, `pnpm`, and `gh` installed.

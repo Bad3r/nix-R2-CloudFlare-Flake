@@ -1,5 +1,9 @@
 # Sensitive automation and lockfiles require explicit owner review.
+# /.github/actions/ hosts the security-sensitive-change-policy composite that
+# CI runs from the PR head; owner review here is the backstop that prevents a
+# PR from neutering its own enforcement.
 /.github/workflows/* @Bad3r
+/.github/actions/ @Bad3r
 /flake.lock @Bad3r
 /r2-explorer/flake.lock @Bad3r
 /r2-explorer/pnpm-lock.yaml @Bad3r
