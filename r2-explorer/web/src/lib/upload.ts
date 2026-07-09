@@ -80,12 +80,9 @@ function buildUploadRequestHeaders(signedHeaders: Record<string, string> | undef
 type Chunk = { partNumber: number; blob: Blob; size: number };
 
 function sliceIntoChunks(file: File, partSize: number): Chunk[] {
+  // Zero-byte files never reach this point: upload/init requires a positive
+  // declaredSize (schemas.ts), so the worker 400s before any slicing.
   const chunks: Chunk[] = [];
-  if (file.size === 0) {
-    // A zero-byte object is a single empty part so completion has >= 1 part.
-    chunks.push({ partNumber: 1, blob: file.slice(0, 0), size: 0 });
-    return chunks;
-  }
   for (let offset = 0, partNumber = 1; offset < file.size; offset += partSize, partNumber += 1) {
     const blob = file.slice(offset, offset + partSize);
     chunks.push({ partNumber, blob, size: blob.size });
