@@ -147,11 +147,13 @@ export function useObjectBrowser({ log, session, onAuthRequired, onAuthOk }: Bro
         if (isAbortError(error)) {
           return;
         }
-        if (isAuthRequired(error)) {
-          onAuthRequired();
+        // Staleness first: a superseded request must make no state transition
+        // at all, or a slow stale 401 could flip a healthy view to sign-in.
+        if (seq !== listSeqRef.current) {
           return;
         }
-        if (seq !== listSeqRef.current) {
+        if (isAuthRequired(error)) {
+          onAuthRequired();
           return;
         }
         const message = errorMessage(error);
@@ -240,11 +242,12 @@ export function useObjectBrowser({ log, session, onAuthRequired, onAuthOk }: Bro
         if (isAbortError(error)) {
           return;
         }
-        if (isAuthRequired(error)) {
-          onAuthRequired();
+        // Staleness first, as in list(): stale failures must not touch state.
+        if (seq !== shareSeqRef.current) {
           return;
         }
-        if (seq !== shareSeqRef.current) {
+        if (isAuthRequired(error)) {
+          onAuthRequired();
           return;
         }
         setShares([]);
