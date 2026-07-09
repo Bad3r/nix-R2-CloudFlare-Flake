@@ -90,6 +90,12 @@ export function registerObjectRoutes(app: Hono<AppContext>): void {
   app.post("/api/v2/object/delete", async (c) => {
     const body = readJsonBody(c, objectDeleteBodySchema);
     const key = normalizeObjectKey(body.key);
+    // The staging area belongs to in-flight multipart uploads; letting delete
+    // reach it would let a writer soft-delete another session's staged bytes
+    // between completion and validation.
+    if (key.startsWith(UPLOAD_STAGING_PREFIX)) {
+      throw new HttpError(400, "invalid_delete", `Delete cannot touch the reserved upload staging prefix: ${UPLOAD_STAGING_PREFIX}`);
+    }
     const result = await softDeleteObject(c.env.FILES_BUCKET, key);
     return jsonValidated(objectDeleteResponseSchema, {
       key,

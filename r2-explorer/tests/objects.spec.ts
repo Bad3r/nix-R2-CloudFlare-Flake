@@ -229,6 +229,28 @@ describe("object routes", () => {
     expect(((await response.json()) as ErrorPayload).error?.code).toBe("invalid_move");
   });
 
+  it("rejects deletes that touch the reserved upload staging prefix", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put(".r2e-staging/session/docs/secret.bin", "staged bytes");
+    const app = createApp();
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/object/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...accessHeaders(),
+        },
+        body: JSON.stringify({ key: ".r2e-staging/session/docs/secret.bin" }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as ErrorPayload).error?.code).toBe("invalid_delete");
+    // The staged bytes survive the rejected delete.
+    expect(await bucket.get(".r2e-staging/session/docs/secret.bin")).not.toBeNull();
+  });
+
   it("round-trips a truncated multi-page list via cursors", async () => {
     const { env, bucket } = await createTestEnv();
     const keys = ["page/a.txt", "page/b.txt", "page/c.txt", "page/d.txt", "page/e.txt"];
