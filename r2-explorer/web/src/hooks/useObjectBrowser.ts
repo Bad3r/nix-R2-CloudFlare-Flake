@@ -95,6 +95,16 @@ export function useObjectBrowser({ log, session, onAuthRequired, onAuthOk }: Bro
 
   const bucketAlias = session?.buckets?.[0]?.alias ?? DEFAULT_BUCKET_ALIAS;
 
+  // Abort in-flight reads on unmount so late responses cannot resolve against
+  // a disposed component (mirrors useSessionBootstrap's cleanup).
+  useEffect(
+    () => () => {
+      listAbortRef.current?.abort();
+      shareAbortRef.current?.abort();
+    },
+    [],
+  );
+
   const selectedObject = useMemo(
     () => objects.find((object) => object.key === selectedKey) ?? null,
     [objects, selectedKey],
@@ -195,15 +205,15 @@ export function useObjectBrowser({ log, session, onAuthRequired, onAuthOk }: Bro
   }, [list, listComplete, nextCursor]);
 
   const goBack = useCallback(() => {
-    setPageStack((stack) => {
-      if (stack.length === 0) {
-        return stack;
-      }
-      const previous = stack[stack.length - 1];
-      void list(prefixRef.current, previous);
-      return stack.slice(0, -1);
-    });
-  }, [list]);
+    // Read the stack from state and keep the updater pure: fetching inside
+    // the setPageStack callback would run a side effect per updater call.
+    if (pageStack.length === 0) {
+      return;
+    }
+    const previous = pageStack[pageStack.length - 1];
+    setPageStack(pageStack.slice(0, -1));
+    void list(prefixRef.current, previous);
+  }, [list, pageStack]);
 
   const select = useCallback(
     (key: string) => {
