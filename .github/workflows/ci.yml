@@ -297,7 +297,13 @@ jobs:
           exit 1
 
   security-sensitive-change-policy:
-    name: security-sensitive-change-policy
+    # Non-pull_request runs (push, workflow_dispatch) publish under a distinct
+    # informational name: the action no-ops there, and a dispatched run on a
+    # PR branch must not emit a fresh SUCCESS under the required check name on
+    # the same head SHA (it would supersede a red pull_request result). Only
+    # pull_request events (here and security-policy-refresh.yml) write the
+    # authoritative check.
+    name: ${{ github.event_name == 'pull_request' && 'security-sensitive-change-policy' || 'security-sensitive-change-policy (informational)' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Runs unconditionally on every CI event (issue #38): the shared action

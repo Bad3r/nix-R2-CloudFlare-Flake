@@ -6,7 +6,10 @@ description: >-
   and fail unless the security-review-approved label is present. Shared by
   ci.yml (all CI events) and security-policy-refresh.yml (label toggles) so
   both produce the same check logic; on non-pull_request events the check is
-  an informational no-op.
+  an informational no-op. Caller contract: jobs running this action on
+  non-pull_request events must publish under a name distinct from the
+  required security-sensitive-change-policy check, so the no-op success
+  cannot supersede a pull_request result on the same head SHA.
 
 runs:
   using: composite
