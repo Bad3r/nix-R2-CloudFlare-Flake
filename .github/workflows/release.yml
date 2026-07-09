@@ -240,15 +240,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [preflight, build-root]
     steps:
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+      # Checkout is required to run the local composite action, which keeps
+      # the substituter/key configuration byte-identical across consumers.
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+          fetch-depth: 1
+
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
 
       - name: Download root artifacts
         uses: actions/download-artifact@v8

@@ -39,11 +39,9 @@ jobs:
       any: ${{ github.event_name != 'pull_request' || steps.filter.outputs.any == 'true' }}
       root_nix: ${{ github.event_name != 'pull_request' || steps.filter.outputs.root_nix == 'true' }}
       worker: ${{ github.event_name != 'pull_request' || steps.filter.outputs.worker == 'true' }}
-      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
       docs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs == 'true' }}
       templates: ${{ github.event_name != 'pull_request' || steps.filter.outputs.templates == 'true' }}
       workflows: ${{ github.event_name != 'pull_request' || steps.filter.outputs.workflows == 'true' }}
-      scripts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.scripts == 'true' }}
       lockfiles: ${{ github.event_name != 'pull_request' || steps.filter.outputs.lockfiles == 'true' }}
       ci_config: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ci_config == 'true' }}
     steps:
@@ -64,8 +62,6 @@ jobs:
               - "packages/**"
             worker:
               - "r2-explorer/**"
-            web:
-              - "r2-explorer/web/**"
             docs:
               - "docs/**"
               - "README.md"
@@ -74,8 +70,6 @@ jobs:
             workflows:
               - ".github/workflows/**"
               - ".github/actions/**"
-            scripts:
-              - "scripts/**"
             lockfiles:
               - "**/flake.lock"
               - "**/pnpm-lock.yaml"

@@ -267,15 +267,8 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
 
       - name: Build r2 CLI
         run: nix --accept-flake-config build .#r2
