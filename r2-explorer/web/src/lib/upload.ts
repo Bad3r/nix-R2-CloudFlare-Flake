@@ -123,7 +123,8 @@ export async function multipartUpload(file: File, prefix: string, options: Uploa
         partNumber,
         contentLength,
       }),
-      // Signing is safe to retry (idempotent on the session), unlike the PUT.
+      // Signing is idempotent on the session, and the part PUT itself is
+      // idempotent too (same bytes, same partNumber), so both retry.
       retry: UPLOAD_PART_RETRY_OPTIONS,
     });
 

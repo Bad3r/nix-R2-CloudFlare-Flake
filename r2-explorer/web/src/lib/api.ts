@@ -161,7 +161,10 @@ const UPLOAD_PART_RETRY_OPTIONS: RetryOptions = {
   baseDelayMs: 500,
   maxDelayMs: 6000,
   retryableStatuses: TRANSIENT_HTTP_STATUSES,
-  retryNetworkErrors: false,
+  // Part PUTs are idempotent (same bytes, same partNumber) and each attempt
+  // re-signs its URL, so a dropped connection is safe to retry instead of
+  // aborting the whole upload and discarding every uploaded part.
+  retryNetworkErrors: true,
 };
 
 function isJsonResponse(response: Response): boolean {
@@ -193,6 +196,11 @@ function shouldRetryError(
     return false;
   }
   if (error instanceof ApiError) {
+    // Status 0 marks a network-level failure the caller wrapped before any
+    // HTTP response existed (e.g. upload_part_request_failed).
+    if (error.status === 0) {
+      return retryNetworkErrors;
+    }
     return retryableStatuses.has(error.status);
   }
   return retryNetworkErrors && error instanceof TypeError;
