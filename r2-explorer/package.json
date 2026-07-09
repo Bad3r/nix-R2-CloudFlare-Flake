@@ -20,10 +20,10 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.2",
-    "@cloudflare/workers-types": "^4.20260702.1",
+    "@cloudflare/workers-types": "^5.20260708.1",
     "hono": "^4.12.28",
     "miniflare": "4.20260701.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.10",
     "wrangler": "^4.108.0"
   },
