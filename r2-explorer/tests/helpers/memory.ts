@@ -179,6 +179,7 @@ export class MemoryR2Bucket {
       storageClass: "Standard",
       ssecKeyMd5: undefined,
       customMetadata: object.customMetadata,
+      httpMetadata: object.httpMetadata as R2HTTPMetadata,
       writeHttpMetadata(headers: Headers): void {
         const contentType = object.httpMetadata?.contentType;
         if (typeof contentType === "string" && contentType.length > 0) {
@@ -194,7 +195,6 @@ export class MemoryR2Bucket {
       ...base,
       body: object.bytes.slice(),
       bodyUsed: false,
-      httpMetadata: object.httpMetadata as R2HTTPMetadata,
       text: async () => new TextDecoder().decode(object.bytes),
       json: async () => JSON.parse(new TextDecoder().decode(object.bytes)),
       arrayBuffer: async () =>
@@ -224,12 +224,37 @@ export class MemoryR2Bucket {
     return this.toR2Object(object);
   }
 
-  async get(key: string): Promise<R2ObjectBody | null> {
+  async get(
+    key: string,
+    options?: { range?: { offset?: number; length?: number; suffix?: number } },
+  ): Promise<R2ObjectBody | null> {
     const object = this.objects.get(key);
     if (!object) {
       return null;
     }
-    return this.toR2ObjectBody(object);
+    const range = options?.range;
+    if (!range) {
+      return this.toR2ObjectBody(object);
+    }
+    const total = object.bytes.byteLength;
+    let offset: number;
+    let end: number;
+    if (typeof range.suffix === "number") {
+      offset = Math.max(0, total - range.suffix);
+      end = total;
+    } else {
+      offset = range.offset ?? 0;
+      end = typeof range.length === "number" ? Math.min(total, offset + range.length) : total;
+    }
+    if (offset < 0 || offset >= total || end <= offset) {
+      throw new Error(`Unsatisfiable range for key '${key}': offset ${offset}, end ${end}, size ${total}`);
+    }
+    const view = this.toR2ObjectBody({ ...object, bytes: object.bytes.slice(offset, end) });
+    return {
+      ...view,
+      size: total,
+      range: { offset, length: end - offset },
+    } as R2ObjectBody;
   }
 
   async head(key: string): Promise<R2Object | null> {
@@ -302,10 +327,8 @@ export class MemoryR2Bucket {
       customMetadata: options?.customMetadata,
       parts: new Map(),
     });
-    return {
-      key,
-      uploadId,
-    } as R2MultipartUpload;
+    // Real R2 returns a usable handle from createMultipartUpload, not just ids.
+    return this.resumeMultipartUpload(key, uploadId);
   }
 
   resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload {
@@ -340,12 +363,19 @@ export class MemoryR2Bucket {
         }
 
         const merged = concatBytes(orderedChunks);
-        const object = await this.put(key, merged, {
+        // Store directly instead of calling this.put so tests that spy on
+        // put() only observe API-level single-put writes, not completions.
+        const object: StoredObject = {
+          key,
+          bytes: merged,
+          uploaded: new Date(),
+          etag: hexDigest(merged),
           httpMetadata: upload.httpMetadata,
           customMetadata: upload.customMetadata,
-        });
+        };
+        this.objects.set(key, object);
         this.uploads.delete(uploadId);
-        return object;
+        return this.toR2Object(object);
       },
       abort: async () => {
         this.uploads.delete(uploadId);

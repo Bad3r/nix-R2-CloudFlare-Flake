@@ -1,8 +1,16 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
+import { promoteObject } from "../src/r2";
 import { stagingObjectKey } from "../src/routes/upload";
-import { accessHeaders, accessSessionCookie, createAccessJwt, createTestEnv, useAccessJwksFetchMock } from "./helpers/memory";
+import {
+  MemoryR2Bucket,
+  accessHeaders,
+  accessSessionCookie,
+  createAccessJwt,
+  createTestEnv,
+  useAccessJwksFetchMock,
+} from "./helpers/memory";
 
 type InitPayload = {
   sessionId: string;
@@ -1149,5 +1157,67 @@ describe("multipart upload flow", () => {
     expect(payload.error?.code).toBe("origin_not_allowed");
     expect(payload.error?.details?.origin).toBe("https://evil.example.com");
     expect(payload.error?.details?.allowedOrigins).toBeUndefined();
+  });
+});
+
+describe("promoteObject", () => {
+  const smallLimits = { singlePutLimitBytes: 8, copyPartSizeBytes: 4 };
+
+  function trackDirectPuts(bucket: MemoryR2Bucket): string[] {
+    const directPutKeys: string[] = [];
+    const originalPut = bucket.put.bind(bucket);
+    bucket.put = async (key, value, options) => {
+      directPutKeys.push(key);
+      return originalPut(key, value, options);
+    };
+    return directPutKeys;
+  }
+
+  it("promotes a staged object larger than the single-put limit via multipart copy", async () => {
+    const bucket = new MemoryR2Bucket();
+    const payload = Uint8Array.from({ length: 21 }, (_, index) => index);
+    await bucket.put(".r2e-staging/session/big.bin", payload, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { source: "staged" },
+    });
+    const directPutKeys = trackDirectPuts(bucket);
+
+    const stored = await promoteObject(
+      bucket as unknown as R2Bucket,
+      ".r2e-staging/session/big.bin",
+      "docs/big.bin",
+      smallLimits,
+    );
+
+    // The staged bytes must not funnel through one size-capped put() call.
+    expect(directPutKeys).not.toContain("docs/big.bin");
+    expect(stored.size).toBe(payload.byteLength);
+    const target = await bucket.get("docs/big.bin");
+    expect(target).not.toBeNull();
+    expect(new Uint8Array(await target!.arrayBuffer())).toEqual(payload);
+    expect(target?.httpMetadata?.contentType).toBe("application/octet-stream");
+    expect(target?.customMetadata).toEqual({ source: "staged" });
+    expect(await bucket.get(".r2e-staging/session/big.bin")).toBeNull();
+  });
+
+  it("keeps the single-put fast path for objects within the limit", async () => {
+    const bucket = new MemoryR2Bucket();
+    const payload = Uint8Array.from({ length: 6 }, (_, index) => index);
+    await bucket.put(".r2e-staging/session/small.bin", payload, {
+      httpMetadata: { contentType: "application/octet-stream" },
+    });
+    const directPutKeys = trackDirectPuts(bucket);
+
+    await promoteObject(
+      bucket as unknown as R2Bucket,
+      ".r2e-staging/session/small.bin",
+      "docs/small.bin",
+      smallLimits,
+    );
+
+    expect(directPutKeys).toEqual(["docs/small.bin"]);
+    const target = await bucket.get("docs/small.bin");
+    expect(new Uint8Array(await target!.arrayBuffer())).toEqual(payload);
+    expect(await bucket.get(".r2e-staging/session/small.bin")).toBeNull();
   });
 });
