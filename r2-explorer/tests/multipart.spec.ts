@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import { promoteObject } from "../src/r2";
 import { stagingObjectKey } from "../src/routes/upload";
@@ -1157,6 +1157,29 @@ describe("multipart upload flow", () => {
     expect(payload.error?.code).toBe("origin_not_allowed");
     expect(payload.error?.details?.origin).toBe("https://evil.example.com");
     expect(payload.error?.details?.allowedOrigins).toBeUndefined();
+  });
+
+  it("omits the configured origin value from upload_config_invalid errors", async () => {
+    const { env } = await createTestEnv();
+    env.R2E_UPLOAD_ALLOWED_ORIGINS = "ht!tp://boguslisted-origin";
+    const app = createApp();
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await initUpload(app, env, {
+        authMode: "cookie",
+        declaredSize: 1024,
+      });
+      expect(response.status).toBe(500);
+      const bodyText = await response.text();
+      const payload = JSON.parse(bodyText) as ErrorPayload;
+      expect(payload.error?.code).toBe("upload_config_invalid");
+      // The configured entry is logged for the operator, never echoed.
+      expect(bodyText).not.toContain("boguslisted-origin");
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 

@@ -40,7 +40,10 @@ export function parseAllowedOrigins(env: Env, requestOrigin: string): Set<string
     try {
       origins.add(new URL(entry).origin);
     } catch {
-      throw new HttpError(500, "upload_config_invalid", `Invalid origin in R2E_UPLOAD_ALLOWED_ORIGINS: ${entry}`);
+      // Log the offending entry for the operator; the client response must
+      // not echo configured deployment values.
+      console.error(`Invalid origin entry in R2E_UPLOAD_ALLOWED_ORIGINS: ${entry}`);
+      throw new HttpError(500, "upload_config_invalid", "R2E_UPLOAD_ALLOWED_ORIGINS contains an invalid origin.");
     }
   }
   return origins;
