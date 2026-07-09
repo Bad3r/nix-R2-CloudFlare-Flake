@@ -18,11 +18,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-parts.url = "github:hercules-ci/flake-parts";
-    wrangler = {
-      url = "github:emrldnix/wrangler";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-parts.follows = "flake-parts";
-    };
+    # No `follows` overrides here: rewriting wrangler's inputs changes its
+    # derivation hashes, which defeats the wrangler.cachix.org substituter
+    # configured above and forces a from-source wrangler build. Using its own
+    # locked inputs also keeps this flake and ./r2-explorer (which likewise
+    # does not override) on one identical wrangler derivation.
+    wrangler.url = "github:emrldnix/wrangler";
     # Only consumed by ./default.nix for non-flake `nix-build` / `import ./.`.
     flake-compat = {
       url = "github:edolstra/flake-compat";
