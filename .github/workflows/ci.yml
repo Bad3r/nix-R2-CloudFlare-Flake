@@ -353,6 +353,28 @@ jobs:
           set -euo pipefail
           log() { echo "[ci-required] $*"; }
 
+          # Keep in sync with the needs: list above. A mismatch means a gated
+          # job was added or removed without updating this tripwire, so the
+          # gate fails loudly instead of passing vacuously.
+          expected_jobs=6
+
+          # Capture jq output first: `done < <(jq ...)` discards jq's exit
+          # status under pipefail, so a parse failure would run the loop zero
+          # times and pass the gate with failed=0.
+          if ! rows="$(jq -r 'to_entries[] | [.key, .value.result] | @tsv' <<<"${NEEDS_JSON}")"; then
+            log "failed to parse needs JSON; failing closed"
+            exit 1
+          fi
+          if [[ -z ${rows} ]]; then
+            log "needs JSON produced no job rows; failing closed"
+            exit 1
+          fi
+          row_count="$(wc -l <<<"${rows}")"
+          if [[ ${row_count} -ne ${expected_jobs} ]]; then
+            log "expected ${expected_jobs} required jobs but saw ${row_count}; update expected_jobs with the needs list"
+            exit 1
+          fi
+
           failed=0
           while IFS=$'\t' read -r job result; do
             case "${result}" in
@@ -367,7 +389,7 @@ jobs:
               failed=1
               ;;
             esac
-          done < <(jq -r 'to_entries[] | [.key, .value.result] | @tsv' <<<"${NEEDS_JSON}")
+          done <<<"${rows}"
 
           if [[ ${failed} -ne 0 ]]; then
             log "at least one required job failed or was cancelled"
