@@ -95,7 +95,10 @@ export function isAuthRequired(error: unknown): error is ApiError {
   return (
     error instanceof ApiError &&
     error.status === 401 &&
-    (error.code === "access_required" || error.code === "token_invalid" || error.code === "token_missing")
+    // The worker's 401 family: access_required plus every token_invalid*
+    // variant (token_invalid, token_invalid_signature). Prefix-matching keeps
+    // key-rotation failures on the sign-in affordance instead of a dead end.
+    (error.code === "access_required" || error.code.startsWith("token_invalid"))
   );
 }
 
