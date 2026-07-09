@@ -152,8 +152,12 @@ jobs:
         working-directory: r2-explorer
         run: pnpm test
 
-      - name: Build web bundle
+      - name: Build web bundle (preview)
         working-directory: r2-explorer
+        env:
+          # Adapter v14 resolves the wrangler environment during the build;
+          # the emitted dist/server/wrangler.json is preview-specific.
+          CLOUDFLARE_ENV: preview
         run: pnpm run build:web
 
       - name: Sync runtime upload signing secrets (preview)
@@ -232,8 +236,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          cp web/.assetsignore web/dist/.assetsignore
-          pnpm exec wrangler deploy --config web/wrangler.toml --env preview
+          # The build already resolved the preview environment (CLOUDFLARE_ENV)
+          # into dist/server/wrangler.json; no --env at deploy time.
+          pnpm exec wrangler deploy --config web/dist/server/wrangler.json
   smoke-preview:
     name: Smoke preview
     if: >
@@ -566,5 +571,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          cp web/.assetsignore web/dist/.assetsignore
-          pnpm exec wrangler deploy --config web/wrangler.toml
+          # build:web resolved the production (top-level) environment into
+          # dist/server/wrangler.json, including the adapter's .assetsignore.
+          pnpm exec wrangler deploy --config web/dist/server/wrangler.json

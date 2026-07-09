@@ -112,9 +112,11 @@
               # `wrangler login` beforehand.
               ${locateCheckoutSnippet}
               pnpm install
+              # Adapter v14 resolves the target environment at build time
+              # (set CLOUDFLARE_ENV before running for non-production) and
+              # emits the deployable config + .assetsignore under dist/.
               pnpm -C web run build
-              cp web/.assetsignore web/dist/.assetsignore
-              wrangler deploy --config web/wrangler.toml "$@"
+              wrangler deploy --config web/dist/server/wrangler.json "$@"
             '';
           };
 
