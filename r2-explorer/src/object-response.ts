@@ -78,14 +78,15 @@ export type ObjectResponseOptions = {
   /** Override the stored or guessed Content-Type on the response. */
   forceContentType?: string;
   /**
-   * Response hardening profile:
-   * - "preview": authenticated /api/v2/preview responses; sends nosniff and
-   *   keeps the preview allowlist behavior unchanged.
-   * - "strict": /api/v2/download and public /share/:token responses; sends
-   *   nosniff plus `Content-Security-Policy: default-src 'none'; sandbox`
-   *   unless the response is inline with an inline-safe content type. The
-   *   inline-safe exemption keeps inline PDF and image shares rendering in
-   *   browsers whose viewers refuse sandboxed documents.
+   * Response hardening profile. Both profiles send nosniff plus
+   * `Content-Security-Policy: default-src 'none'; sandbox` unless the
+   * response is inline with an inline-safe content type, so stored
+   * script-capable documents (text/html, image/svg+xml, XML) never execute
+   * on the worker origin. The inline-safe exemption keeps inline text, PDF,
+   * and image renders working in browsers whose viewers refuse sandboxed
+   * documents.
+   * - "preview": authenticated /api/v2/preview responses.
+   * - "strict": /api/v2/download and public /share/:token responses.
    */
   hardening: "preview" | "strict";
 };
@@ -113,7 +114,7 @@ export async function responseFromObject(
   headers.set("cache-control", "private, max-age=0, no-store");
   headers.set("x-content-type-options", "nosniff");
 
-  if (options.hardening === "strict") {
+  if (options.hardening === "strict" || options.hardening === "preview") {
     const effectiveType = headers.get("content-type") ?? "application/octet-stream";
     const inlineSafe = disposition === "inline" && isInlineSafeContentType(effectiveType);
     if (!inlineSafe) {

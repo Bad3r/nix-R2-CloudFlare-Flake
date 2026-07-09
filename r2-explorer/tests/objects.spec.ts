@@ -106,6 +106,43 @@ describe("object routes", () => {
     expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
   });
 
+  it("sends a neutralizing CSP when previewing script-capable content inline", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/evil.html", "<script>alert(1)</script>", {
+      httpMetadata: { contentType: "text/html" },
+    });
+    const app = createApp();
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/preview?key=docs%2Fevil.html", {
+        headers: accessHeaders(),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    // Script-capable types must never render inline without a sandboxing CSP.
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+  });
+
+  it("previews an inline-safe type without a CSP", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/notes.txt", "hello", {
+      httpMetadata: { contentType: "text/plain" },
+    });
+    const app = createApp();
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/preview?key=docs%2Fnotes.txt", {
+        headers: accessHeaders(),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain("inline");
+    expect(response.headers.get("content-security-policy")).toBeNull();
+  });
+
   it("moves objects with metadata via /api/v2/object/move", async () => {
     const { env, bucket } = await createTestEnv();
     await bucket.put("docs/from.txt", "move me", {
