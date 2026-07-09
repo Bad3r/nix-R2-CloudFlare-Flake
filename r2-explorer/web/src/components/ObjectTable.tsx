@@ -94,11 +94,16 @@ export function ObjectTable({
                     onClick={() => onSelect(object.key)}
                     onDblClick={() => onActivate(object.key)}
                     onKeyDown={(event) => {
+                      // Stop propagation on handled keys: the row is not in
+                      // useKeyboardNav's INTERACTIVE selector, so a bubbled
+                      // Enter would trigger the global preview a second time.
                       if (event.key === "Enter") {
                         event.preventDefault();
+                        event.stopPropagation();
                         onActivate(object.key);
                       } else if (event.key === " ") {
                         event.preventDefault();
+                        event.stopPropagation();
                         onSelect(object.key);
                       }
                     }}
