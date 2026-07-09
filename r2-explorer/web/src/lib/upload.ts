@@ -13,9 +13,22 @@ import {
   UPLOAD_PART_RETRY_OPTIONS,
   jsonMutationHeaders,
   withRetry,
+  type RetryOptions,
   type UploadInitResponse,
   type UploadSignPartResponse,
 } from "./api";
+
+const UPLOAD_INIT_RETRY_OPTIONS: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 8000,
+  // Only statuses the worker returns before creating a session: the per-user
+  // concurrency 429 and an overloaded 503, both honoring Retry-After. Network
+  // errors are not retried because a dropped response may have created the
+  // session server-side, and init is not idempotent.
+  retryableStatuses: new Set([429, 503]),
+  retryNetworkErrors: false,
+};
 
 export type UploadProgress = {
   phase: "init" | "sign" | "upload" | "complete";
@@ -95,6 +108,7 @@ export async function multipartUpload(file: File, prefix: string, options: Uploa
     method: "POST",
     headers: jsonMutationHeaders(),
     signal,
+    retry: UPLOAD_INIT_RETRY_OPTIONS,
     body: JSON.stringify({
       filename: file.name,
       prefix,
