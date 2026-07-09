@@ -144,13 +144,20 @@ in
       # truncating it in place fails on re-activation, and the rename keeps
       # the update atomic (no partially written credentials).
       tmp_output_file="$(${pkgs.coreutils}/bin/mktemp "$output_dir/.r2-env.XXXXXX")"
-      {
-        printf 'R2_ACCOUNT_ID=%s\n' "$account_id"
-        printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key_id"
-        printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_access_key"
-      } > "$tmp_output_file"
-      ${pkgs.coreutils}/bin/chmod 0400 "$tmp_output_file"
-      ${pkgs.coreutils}/bin/mv -f "$tmp_output_file" "$output_file"
+      # Any failure between mktemp and mv (e.g. ENOSPC mid-write) must not
+      # leave a partial secret file behind. The trap lives in a subshell so it
+      # cannot clobber traps of the surrounding home-manager activation
+      # script; after a successful mv the rm is a no-op.
+      (
+        trap '${pkgs.coreutils}/bin/rm -f "$tmp_output_file"' EXIT
+        {
+          printf 'R2_ACCOUNT_ID=%s\n' "$account_id"
+          printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key_id"
+          printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_access_key"
+        } > "$tmp_output_file"
+        ${pkgs.coreutils}/bin/chmod 0400 "$tmp_output_file"
+        ${pkgs.coreutils}/bin/mv -f "$tmp_output_file" "$output_file"
+      )
     '';
   };
 }
