@@ -21,7 +21,6 @@ Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 | `services.r2-sync.mounts.<name>.mountPoint`               | path                                                         | none          | yes                                   | Local mount location for `rclone mount`.                      |
 | `services.r2-sync.mounts.<name>.localPath`                | `null` or path                                               | `null`        | no                                    | Local bisync side; falls back to `mountPoint`.                |
 | `services.r2-sync.mounts.<name>.syncInterval`             | string                                                       | `"5m"`        | no                                    | `OnUnitActiveSec` value for bisync timer.                     |
-| `services.r2-sync.mounts.<name>.trashRetention`           | integer                                                      | `30`          | no                                    | Policy hint only; not currently enforced in unit logic.       |
 | `services.r2-sync.mounts.<name>.bisync.maxDelete`         | integer                                                      | `100000`      | no                                    | Passed to `rclone bisync --max-delete`.                       |
 | `services.r2-sync.mounts.<name>.bisync.checkFilename`     | string                                                       | `".r2-check"` | no                                    | Used for `--check-access` safety.                             |
 | `services.r2-sync.mounts.<name>.bisync.initialResyncMode` | enum `path1`, `path2`, `newer`, `older`, `larger`, `smaller` | `"path1"`     | no                                    | Used on first run to seed bisync state.                       |
@@ -118,7 +117,6 @@ For each mount name (example: `documents`):
       mountPoint = "/mnt/r2/workspace";
       localPath = "/data/r2/workspace";
       syncInterval = "10m";
-      trashRetention = 30;
       vfsCache = {
         mode = "full";
         maxSize = "20G";

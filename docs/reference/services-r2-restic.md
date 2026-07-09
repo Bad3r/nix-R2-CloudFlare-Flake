@@ -9,21 +9,22 @@ Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 
 ## Options
 
-| Option                                 | Type            | Default   | Required when enabled  | Notes                                    |
-| -------------------------------------- | --------------- | --------- | ---------------------- | ---------------------------------------- |
-| `services.r2-restic.enable`            | boolean         | `false`   | no                     | Enables backup service + timer.          |
-| `services.r2-restic.credentialsFile`   | `null` or path  | `null`    | yes                    | Environment file for AWS/R2 auth values. |
-| `services.r2-restic.accountId`         | string          | `""`      | yes (if file unset)    | Used in R2 endpoint URL.                 |
-| `services.r2-restic.accountIdFile`     | `null` or path  | `null`    | yes (if literal unset) | File-based account ID source.            |
-| `services.r2-restic.passwordFile`      | `null` or path  | `null`    | yes                    | Exported as `RESTIC_PASSWORD_FILE`.      |
-| `services.r2-restic.bucket`            | string          | `""`      | yes                    | Bucket name used in `RESTIC_REPOSITORY`. |
-| `services.r2-restic.paths`             | list of paths   | `[]`      | yes (non-empty)        | Backup input paths.                      |
-| `services.r2-restic.exclude`           | list of strings | `[]`      | no                     | Converted to `--exclude` flags.          |
-| `services.r2-restic.schedule`          | string          | `"daily"` | no                     | `systemd` `OnCalendar` expression.       |
-| `services.r2-restic.retention.daily`   | integer         | `7`       | no                     | Must be `>= 0`.                          |
-| `services.r2-restic.retention.weekly`  | integer         | `4`       | no                     | Must be `>= 0`.                          |
-| `services.r2-restic.retention.monthly` | integer         | `12`      | no                     | Must be `>= 0`.                          |
-| `services.r2-restic.retention.yearly`  | integer         | `3`       | no                     | Must be `>= 0`.                          |
+| Option                                 | Type            | Default   | Required when enabled  | Notes                                                                                                                   |
+| -------------------------------------- | --------------- | --------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `services.r2-restic.enable`            | boolean         | `false`   | no                     | Enables backup service + timer.                                                                                         |
+| `services.r2-restic.credentialsFile`   | `null` or path  | `null`    | yes                    | Environment file for AWS/R2 auth values.                                                                                |
+| `services.r2-restic.accountId`         | string          | `""`      | yes (if file unset)    | Used in R2 endpoint URL.                                                                                                |
+| `services.r2-restic.accountIdFile`     | `null` or path  | `null`    | yes (if literal unset) | File-based account ID source.                                                                                           |
+| `services.r2-restic.passwordFile`      | `null` or path  | `null`    | yes                    | Exported as `RESTIC_PASSWORD_FILE`.                                                                                     |
+| `services.r2-restic.bucket`            | string          | `""`      | yes                    | Bucket name used in `RESTIC_REPOSITORY`.                                                                                |
+| `services.r2-restic.initialize`        | boolean         | `true`    | no                     | Run `restic init` before the backup when the repository probe fails, so the first backup into an empty bucket succeeds. |
+| `services.r2-restic.paths`             | list of paths   | `[]`      | yes (non-empty)        | Backup input paths.                                                                                                     |
+| `services.r2-restic.exclude`           | list of strings | `[]`      | no                     | Converted to `--exclude` flags.                                                                                         |
+| `services.r2-restic.schedule`          | string          | `"daily"` | no                     | `systemd` `OnCalendar` expression.                                                                                      |
+| `services.r2-restic.retention.daily`   | integer         | `7`       | no                     | Must be `>= 0`.                                                                                                         |
+| `services.r2-restic.retention.weekly`  | integer         | `4`       | no                     | Must be `>= 0`.                                                                                                         |
+| `services.r2-restic.retention.monthly` | integer         | `12`      | no                     | Must be `>= 0`.                                                                                                         |
+| `services.r2-restic.retention.yearly`  | integer         | `3`       | no                     | Must be `>= 0`.                                                                                                         |
 
 ## Failure semantics
 
@@ -35,6 +36,12 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-restic.bucket must be set when services.r2-restic.enable = true`
 - `services.r2-restic.paths must contain at least one path when services.r2-restic.enable = true`
 - `services.r2-restic.retention values must be >= 0`
+
+When `initialize = true` (the default), an `ExecStartPre` probe checks the
+repository and runs `restic init` when the probe fails. The probe script runs
+under `set -euo pipefail`, so a failed `restic init` (for example, credentials
+that cannot reach an already-initialized repository) fails the unit before
+`restic backup` starts.
 
 ## Generated runtime artifacts
 
