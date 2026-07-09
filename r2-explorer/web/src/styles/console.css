@@ -24,7 +24,9 @@
 
   --ink: #e7ecef;
   --ink-dim: #98a2aa;
-  --ink-faint: #5b656c;
+  /* Micro-labels render in this token; keep >= 4.5:1 small-text contrast on
+     every surface (#8b959c: 6.2 on --surface, 5.4 on --surface-3). */
+  --ink-faint: #8b959c;
 
   --accent: #4fd6ff;
   --accent-quiet: #1d3f4c;
@@ -54,7 +56,9 @@
 
   --ink: #191c1d;
   --ink-dim: #565b53;
-  --ink-faint: #888a7d;
+  /* Keep >= 4.5:1 on every light surface (#626456: 5.4 on --surface, 4.6 on
+     --surface-3). */
+  --ink-faint: #626456;
 
   --accent: #0a7d9e;
   --accent-quiet: #cfe6ee;

@@ -89,6 +89,7 @@ export function UploadPanel({ uploads, prefix, onEnqueue, onCancel, onClearFinis
               value={item.uploadedParts}
               total={item.totalParts}
               tone={item.status === "error" ? "err" : item.status === "done" ? "done" : "accent"}
+              label={`Uploading ${item.fileName}`}
             />
             <div class="spread">
               <span class="faint" style={{ fontSize: "0.74rem" }}>{item.detail}</span>

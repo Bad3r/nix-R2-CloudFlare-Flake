@@ -19,10 +19,13 @@ export function ProgressBar({
   value,
   total,
   tone = "accent",
+  label,
 }: {
   value: number;
   total: number;
   tone?: "accent" | "done" | "err";
+  /** Accessible name; role=progressbar is unnamed without it. */
+  label: string;
 }): JSX.Element {
   const ratio = total > 0 ? Math.min(100, Math.round((value / total) * 100)) : 0;
   const cls = tone === "accent" ? "progress" : `progress ${tone}`;
@@ -30,6 +33,7 @@ export function ProgressBar({
     <div
       class={cls}
       role="progressbar"
+      aria-label={label}
       aria-valuemin={0}
       aria-valuemax={total > 0 ? total : 1}
       aria-valuenow={value}

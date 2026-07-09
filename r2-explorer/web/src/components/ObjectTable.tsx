@@ -90,7 +90,10 @@ export function ObjectTable({
                     key={object.key}
                     class={selected ? "selected" : ""}
                     tabIndex={0}
-                    aria-selected={selected}
+                    // aria-selected is ignored on a tr outside a grid role;
+                    // aria-current is valid on any element and is what AT
+                    // announces for "the current item in a set".
+                    aria-current={selected ? "true" : undefined}
                     onClick={() => onSelect(object.key)}
                     onDblClick={() => onActivate(object.key)}
                     onKeyDown={(event) => {
