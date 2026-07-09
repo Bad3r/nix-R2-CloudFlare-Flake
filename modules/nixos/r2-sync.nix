@@ -394,7 +394,21 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = r2lib.normalizeRemotePrefix mount.remotePrefix != "";
       message = "services.r2-sync.mounts.${name}.remotePrefix must be non-empty after normalization (required for bisync trash backup-dir outside sync root): got '${mount.remotePrefix}'";
-    }) cfg.mounts;
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (
+      name: mount:
+      let
+        normalized = r2lib.normalizeRemotePrefix mount.remotePrefix;
+      in
+      {
+        # The remote backup-dir lives at <bucket>/.trash/<remotePrefix>. A
+        # prefix equal to or nested under .trash would place the backup-dir
+        # inside the sync root, violating rclone bisync's non-overlap rule at
+        # runtime, so reject it at eval time.
+        assertion = normalized != ".trash" && !lib.hasPrefix ".trash/" normalized;
+        message = "services.r2-sync.mounts.${name}.remotePrefix must not be '.trash' or nested under it (the bisync remote backup-dir '<bucket>/.trash/<remotePrefix>' must stay outside the sync root): got '${mount.remotePrefix}'";
+      }
+    ) cfg.mounts;
 
     environment.systemPackages = [
       pkgs.rclone
