@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.target_ref }}
           fetch-depth: 0
@@ -96,7 +96,7 @@ jobs:
     needs: [preflight]
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.target_ref }}
 
@@ -170,7 +170,7 @@ jobs:
     needs: [preflight]
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.target_ref }}
 
@@ -320,7 +320,7 @@ jobs:
     needs: [preflight, build-root, build-worker, verify-cli-smoke]
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.target_ref }}
           fetch-depth: 0

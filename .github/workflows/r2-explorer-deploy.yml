@@ -95,7 +95,7 @@ jobs:
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -258,7 +258,7 @@ jobs:
       CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET: ${{ secrets.CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -501,7 +501,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.ref }}
 
