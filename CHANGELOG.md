@@ -37,6 +37,15 @@ and this project follows Conventional Commits.
   `dependabot[bot]`). Dependabot lockfile/action PRs no longer need a manual
   label to pass the required check; CODEOWNER review still gates the merge.
 
+### Removed
+
+- `vulnix` Nix closure vulnerability scanning:
+  - CI steps `Build root package for closure scan` and
+    `Scan Nix closure with vulnix` in `security-dependency-audit`
+  - `lefthook` pre-commit job `vulnix` and `scripts/hooks/vulnix-scan.sh`
+  - `scripts/ci/vulnix-whitelist.toml` baseline allowlist
+  - `vulnix` from the `devShells.hooks` package set
+
 ### Fixed
 
 - Home Manager `r2` wrapper now exports rclone endpoint when `enableRcloneRemote` is enabled.

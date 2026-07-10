@@ -3,6 +3,10 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
 startup_timeout_sec = 46
 
+[mcp_servers.cloudflare]
+url = "https://mcp.cloudflare.com/mcp"
+startup_timeout_sec = 46
+
 [mcp_servers.cloudflare-docs]
 url = "https://docs.mcp.cloudflare.com/mcp"
 

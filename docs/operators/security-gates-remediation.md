@@ -12,8 +12,6 @@ gates fail.
     - `flake.lock`
     - `r2-explorer/flake.lock`
   - `pnpm audit --audit-level=high` for `r2-explorer`
-  - `vulnix` scan for the built `.#r2` Nix closure
-  - baseline allowlist: `scripts/ci/vulnix-whitelist.toml`
 - Secret scanning gate:
   - `ripsecrets` in `lefthook` pre-commit jobs
   - CI enforcement through `lefthook run pre-commit --all-files`
@@ -77,8 +75,6 @@ place:
 nix run nixpkgs#flake-checker -- --no-telemetry --fail-mode --check-outdated --check-owner --check-supported flake.lock
 nix run nixpkgs#flake-checker -- --no-telemetry --fail-mode --check-outdated --check-owner --check-supported r2-explorer/flake.lock
 cd r2-explorer && pnpm install --frozen-lockfile && pnpm audit --audit-level=high
-nix build .#r2
-nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whitelist.toml
 ```
 
 3. Apply targeted remediation:
@@ -89,16 +85,6 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
      - update stale flake inputs (`nix flake update` scoped as needed)
      - replace unsupported or non-owner-pinned nixpkgs references
      - rerun `flake-checker` against both lockfiles
-   - For `vulnix` findings:
-     - update pinned flake inputs (`flake.lock`, `r2-explorer/flake.lock`)
-     - rebuild and rerun `vulnix`
-     - if risk acceptance is required, update
-       `scripts/ci/vulnix-whitelist.toml` in the same PR with justification
-     - a `flake.lock` bump that advances a whitelisted package (for example
-       `openssl-3.6.0` to `openssl-3.6.2`) invalidates its version-pinned entry
-       and re-surfaces the CVEs; rebuild `.#r2` and refresh the baseline with
-       `vulnix -C "$(nix path-info .#r2)" -W scripts/ci/vulnix-whitelist.toml`,
-       then review the diff under security review
    - For `ripsecrets` findings:
      - remove committed secret material and rotate leaked credentials
      - if false positive, add scoped ignore entries to `.secretsignore`
@@ -116,7 +102,6 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
 
 - `pnpm audit` exits non-zero with high/critical vulnerabilities.
 - `flake-checker` reports outdated/unsupported/non-compliant flake inputs.
-- `vulnix` reports non-empty results for closure CVEs.
 - `ripsecrets` reports potential secret patterns in changed files.
 - Policy check reports changed sensitive files and missing required label.
 

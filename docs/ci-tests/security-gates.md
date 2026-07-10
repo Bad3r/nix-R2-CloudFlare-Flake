@@ -11,7 +11,6 @@ CI enforces dependency and policy checks for root and worker surfaces.
 
 - flake input policy scan via `flake-checker`
 - JS dependency audit via `pnpm audit --audit-level=high`
-- Nix closure scan via `vulnix`
 - sensitive-file label gate for workflow and lockfile edits (trusted PR
   authors bypass the label; see the `trusted-actors` input in
   `.github/actions/security-sensitive-change-policy/action.yml`)
@@ -21,7 +20,6 @@ CI enforces dependency and policy checks for root and worker surfaces.
 ```bash
 nix run nixpkgs#flake-checker -- --no-telemetry --fail-mode --check-outdated --check-owner --check-supported flake.lock
 pnpm -C r2-explorer audit --audit-level=high
-nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whitelist.toml
 ```
 
 ## Remediation
@@ -29,7 +27,6 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
 1. Reproduce the failing gate locally.
 2. Patch dependency/config changes in source-of-truth files.
 3. Re-run the same gate command.
-4. Document justified exceptions in the allowlist when required.
 
 ## References
 

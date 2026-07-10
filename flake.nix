@@ -90,7 +90,7 @@
         let
           inherit (pkgs) lib;
           # Only for tools that genuinely may be missing on a supported system
-          # (git-annex and vulnix); everything else is referenced directly.
+          # (git-annex); everything else is referenced directly.
           optionalPkg = name: if builtins.hasAttr name pkgs then [ pkgs.${name} ] else [ ];
           wranglerPkg = wrangler.packages.${system}.default;
           formatterPkg = pkgs.writeShellApplication {
@@ -305,8 +305,7 @@
               pkgs.git
               pkgs.python3
             ]
-            ++ hookToolPackages
-            ++ optionalPkg "vulnix";
+            ++ hookToolPackages;
             shellHook = hookShellSetup;
           };
 

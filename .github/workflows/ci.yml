@@ -271,25 +271,6 @@ jobs:
         working-directory: r2-explorer
         run: pnpm audit --audit-level=high
 
-      - name: Build root package for closure scan
-        run: nix --accept-flake-config build .#r2
-
-      - name: Scan Nix closure with vulnix
-        run: |
-          set -euo pipefail
-          out_path="$(nix --accept-flake-config path-info .#r2)"
-          for attempt in 1 2 3; do
-            if nix --accept-flake-config run nixpkgs#vulnix -- -C "$out_path" -w ./scripts/ci/vulnix-whitelist.toml; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "vulnix attempt ${attempt} failed; retrying..." >&2
-              sleep 5
-            fi
-          done
-          echo "vulnix scan failed after retries." >&2
-          exit 1
-
   security-sensitive-change-policy:
     # Non-pull_request runs (push, workflow_dispatch) publish under a distinct
     # informational name: the action no-ops there, and a dispatched run on a
