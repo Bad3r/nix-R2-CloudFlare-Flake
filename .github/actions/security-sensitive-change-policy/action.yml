@@ -3,13 +3,30 @@
 name: Security Sensitive Change Policy
 description: >-
   Detect workflow, composite-action, and lockfile changes in a pull request
-  and fail unless the security-review-approved label is present. Shared by
-  ci.yml (all CI events) and security-policy-refresh.yml (label toggles) so
-  both produce the same check logic; on non-pull_request events the check is
-  an informational no-op. Caller contract: jobs running this action on
-  non-pull_request events must publish under a name distinct from the
-  required security-sensitive-change-policy check, so the no-op success
-  cannot supersede a pull_request result on the same head SHA.
+  and fail unless the security-review-approved label is present. Trusted PR
+  authors (the trusted-actors input, plus any author_association OWNER) bypass
+  the label requirement; CODEOWNER review on the sensitive paths remains the
+  merge-time backstop. Shared by ci.yml (all CI events) and
+  security-policy-refresh.yml (label toggles) so both produce the same check
+  logic; on non-pull_request events the check is an informational no-op.
+  Caller contract: jobs running this action on non-pull_request events must
+  publish under a name distinct from the required
+  security-sensitive-change-policy check, so the no-op success cannot supersede
+  a pull_request result on the same head SHA.
+
+inputs:
+  trusted-actors:
+    description: >-
+      Newline- or comma-separated PR author logins exempt from the
+      security-review-approved label requirement for sensitive changes. The PR
+      author login is set by GitHub from the head, not by PR content, so an
+      untrusted contributor cannot spoof a trusted login. The repository owner
+      (author_association OWNER) is always trusted in addition to this list.
+      Matching is case-insensitive.
+    required: false
+    default: |
+      Bad3r
+      dependabot[bot]
 
 runs:
   using: composite
@@ -17,6 +34,11 @@ runs:
     - name: Detect sensitive changes
       id: detect
       uses: actions/github-script@v9
+      env:
+        # The author allowlist is passed via the environment instead of being
+        # interpolated into the script source; inline ${{ }} inside the JS
+        # template would allow code injection via a crafted input value.
+        TRUSTED_ACTORS: ${{ inputs.trusted-actors }}
       with:
         script: |
           const sensitivePatterns = [
@@ -30,16 +52,45 @@ runs:
             core.info("Sensitive-change policy is enforced on pull_request events.");
             core.setOutput("sensitive_changed", "false");
             core.setOutput("matched_files", "");
+            core.setOutput("actor_trusted", "false");
             return;
           }
 
-          const prNumber = context.payload.pull_request.number;
+          const pr = context.payload.pull_request;
+
+          // Trusted authors bypass the label requirement. user.login and
+          // author_association are computed by GitHub from the PR's actual
+          // author relationship, not from PR content, so an untrusted
+          // contributor cannot forge them. author_association is honored only
+          // for OWNER (the repo owner never has to label their own PRs, and a
+          // downstream fork of this template trusts its own owner); write
+          // collaborators are deliberately NOT auto-trusted, so their sensitive
+          // changes still need the label. Bots such as dependabot[bot]
+          // (association NONE) are trusted through the explicit login list.
+          const trustedLogins = new Set(
+            (process.env.TRUSTED_ACTORS || "")
+              .split(/[\s,]+/)
+              .map((name) => name.trim().toLowerCase())
+              .filter(Boolean)
+          );
+          const author = (pr.user && pr.user.login ? pr.user.login : "").toLowerCase();
+          const association = pr.author_association || "NONE";
+          const actorTrusted =
+            author !== "" && (association === "OWNER" || trustedLogins.has(author));
+          core.setOutput("actor_trusted", actorTrusted ? "true" : "false");
+          if (actorTrusted) {
+            core.info(
+              `PR author ${pr.user.login} (association ${association}) is a trusted actor; ` +
+                "the security-review-approved label is not required for sensitive changes."
+            );
+          }
+
           const files = await github.paginate(
             github.rest.pulls.listFiles,
             {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: prNumber,
+              pull_number: pr.number,
               per_page: 100
             }
           );
@@ -54,8 +105,24 @@ runs:
           core.setOutput("sensitive_changed", matched.length > 0 ? "true" : "false");
           core.setOutput("matched_files", matched.join("\n"));
 
+    - name: Note trusted-author bypass
+      if: >-
+        github.event_name == 'pull_request' &&
+        steps.detect.outputs.sensitive_changed == 'true' &&
+        steps.detect.outputs.actor_trusted == 'true'
+      shell: bash
+      env:
+        MATCHED_FILES: ${{ steps.detect.outputs.matched_files }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      run: |
+        printf '::notice::Trusted author %s bypassed the security-review-approved label for sensitive changes.\n' "${PR_AUTHOR}"
+        printf 'Sensitive files changed:\n%s\n' "${MATCHED_FILES}"
+
     - name: Enforce security review label for sensitive changes
-      if: github.event_name == 'pull_request' && steps.detect.outputs.sensitive_changed == 'true'
+      if: >-
+        github.event_name == 'pull_request' &&
+        steps.detect.outputs.sensitive_changed == 'true' &&
+        steps.detect.outputs.actor_trusted != 'true'
       uses: actions/github-script@v9
       env:
         # PR-controlled filenames are passed via the environment instead of

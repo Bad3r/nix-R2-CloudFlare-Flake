@@ -12,7 +12,9 @@ CI enforces dependency and policy checks for root and worker surfaces.
 - flake input policy scan via `flake-checker`
 - JS dependency audit via `pnpm audit --audit-level=high`
 - Nix closure scan via `vulnix`
-- sensitive-file label gate for workflow and lockfile edits
+- sensitive-file label gate for workflow and lockfile edits (trusted PR
+  authors bypass the label; see the `trusted-actors` input in
+  `.github/actions/security-sensitive-change-policy/action.yml`)
 
 ## Local commands
 

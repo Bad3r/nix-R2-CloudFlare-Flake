@@ -31,6 +31,11 @@ and this project follows Conventional Commits.
 - `actions/setup-node` v6
 - `actions/download-artifact` v7
 - `actions/upload-artifact` v6
+- `security-sensitive-change-policy` now exempts trusted PR authors from the
+  `security-review-approved` label: the repo owner (`author_association`
+  `OWNER`) plus a `trusted-actors` allowlist (default `Bad3r`,
+  `dependabot[bot]`). Dependabot lockfile/action PRs no longer need a manual
+  label to pass the required check; CODEOWNER review still gates the merge.
 
 ### Fixed
 

@@ -19,7 +19,14 @@ gates fail.
   - CI enforcement through `lefthook run pre-commit --all-files`
 - Sensitive change policy gate (`security-sensitive-change-policy`):
   - lockfile/workflow changes require `security-review-approved` label
-  - CODEOWNER review required by branch protection
+  - trusted PR authors are exempt from the label: the repository owner
+    (`author_association` `OWNER`) plus the `trusted-actors` allowlist in
+    `.github/actions/security-sensitive-change-policy/action.yml` (default
+    `Bad3r` and `dependabot[bot]`). The author login is set by GitHub from the
+    PR head and cannot be spoofed by an untrusted contributor, so their PRs
+    still require the label.
+  - CODEOWNER review required by branch protection (unchanged for trusted
+    authors; it stays the enforcing backstop even when the label is skipped)
 
 ## Gate Topology and Branch Protection
 
@@ -33,7 +40,8 @@ Branch protection on `main` must require these status checks:
   `.github/workflows/security-policy-refresh.yml` without rerunning CI.
 
 Self-neutering backstop: the policy check executes the composite action from
-the PR head commit, so a PR could edit its own enforcement logic. Because the
+the PR head commit, so a PR could edit its own enforcement logic (including
+adding itself to the `trusted-actors` allowlist). Because the
 workflow that runs on `pull_request` is itself the PR's version, pinning the
 action to a trusted base ref cannot close this (the action is repo-local and
 absent on base for the PR that introduces it, and a PR could drop the pin
@@ -97,6 +105,9 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
    - For sensitive change policy failures:
      - add label `security-review-approved`
      - request and obtain CODEOWNER approval (`@Bad3r`)
+     - trusted authors (repo owner, `dependabot[bot]`, other `trusted-actors`
+       entries) do not hit this failure and need no label; CODEOWNER approval
+       still gates the merge
 
 4. Re-run local checks and push fixes.
 5. Confirm all required checks are green before merge.
