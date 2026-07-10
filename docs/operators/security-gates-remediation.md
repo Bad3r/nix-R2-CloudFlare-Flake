@@ -79,12 +79,18 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
      - rebuild and rerun `vulnix`
      - if risk acceptance is required, update
        `scripts/ci/vulnix-whitelist.toml` in the same PR with justification
+     - a `flake.lock` bump that advances a whitelisted package (for example
+       `openssl-3.6.0` to `openssl-3.6.2`) invalidates its version-pinned entry
+       and re-surfaces the CVEs; rebuild `.#r2` and refresh the baseline with
+       `vulnix -C "$(nix path-info .#r2)" -W scripts/ci/vulnix-whitelist.toml`,
+       then review the diff under security review
    - For `ripsecrets` findings:
      - remove committed secret material and rotate leaked credentials
      - if false positive, add scoped ignore entries to `.secretsignore`
    - For sensitive change policy failures:
      - add label `security-review-approved`
      - request and obtain CODEOWNER approval (`@Bad3r`)
+
 4. Re-run local checks and push fixes.
 5. Confirm all required checks are green before merge.
 
