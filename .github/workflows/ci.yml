@@ -110,7 +110,7 @@ jobs:
       - name: Setup Nix and Cachix
         uses: ./.github/actions/setup-nix-cachix
         with:
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-auth-token: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.CACHIX_AUTH_TOKEN || '' }}
           skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
@@ -141,7 +141,7 @@ jobs:
       - name: Setup Nix and Cachix
         uses: ./.github/actions/setup-nix-cachix
         with:
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-auth-token: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.CACHIX_AUTH_TOKEN || '' }}
           skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
@@ -168,7 +168,7 @@ jobs:
       - name: Setup Nix and Cachix
         uses: ./.github/actions/setup-nix-cachix
         with:
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-auth-token: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.CACHIX_AUTH_TOKEN || '' }}
           skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
@@ -194,7 +194,7 @@ jobs:
       - name: Setup Nix and Cachix
         uses: ./.github/actions/setup-nix-cachix
         with:
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-auth-token: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.CACHIX_AUTH_TOKEN || '' }}
           skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Validate target
@@ -221,7 +221,7 @@ jobs:
       - name: Setup Nix and Cachix
         uses: ./.github/actions/setup-nix-cachix
         with:
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-auth-token: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.CACHIX_AUTH_TOKEN || '' }}
           skip-push: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN != '') }}
 
       - name: Setup pnpm
@@ -311,9 +311,19 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Checkout
+      - name: Checkout the trusted base ref for the policy action
         uses: actions/checkout@v7
         with:
+          # On pull_request the default checkout is the PR merge ref, which makes
+          # the local composite action below PR-controlled: a PR could edit
+          # security-sensitive-change-policy/action.yml to under-report its own
+          # sensitive change and pass this required check without the label. Pin
+          # to the protected base commit so the enforced policy is always the
+          # trusted version. The action reads the PR's changed files and labels
+          # from the API (not the workspace), so evaluating from base still
+          # inspects this PR. Empty on non-pull_request events, where checkout
+          # falls back to the triggering ref and the action no-ops.
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
 
       - name: Run sensitive-change policy

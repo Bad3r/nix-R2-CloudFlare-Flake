@@ -9,7 +9,12 @@ description: >-
 
 inputs:
   cachix-auth-token:
-    description: Cachix auth token. Empty configures pull-only access.
+    description: >-
+      Cachix auth token. Empty configures pull-only access. Callers must pass a
+      non-empty token only on trusted events (push to main, workflow_dispatch),
+      never on pull_request: this composite action is resolved from the
+      checked-out (PR-controlled) tree, so a token handed to a PR run could be
+      exfiltrated by a modified action.
     required: false
     default: ""
   skip-push:
