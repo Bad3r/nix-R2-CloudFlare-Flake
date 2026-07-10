@@ -42,7 +42,10 @@ place:
 
 - `.github/CODEOWNERS` requires owner review for `/.github/workflows/` and
   `/.github/actions/`, so enforcement-surface changes cannot merge on the
-  strength of the (self-evaluated) green check alone.
+  strength of the (self-evaluated) green check alone. This holds only while
+  branch protection on `main` has "Require review from Code Owners" enabled and
+  is not admin-bypassable; without that setting CODEOWNERS is advisory and the
+  self-neutering gap reopens.
 - Non-`pull_request` CI runs (push, `workflow_dispatch`) publish the policy
   job under the distinct name `security-sensitive-change-policy
 (informational)`. A dispatched run on a PR branch therefore cannot emit a
