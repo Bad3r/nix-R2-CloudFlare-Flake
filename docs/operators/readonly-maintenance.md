@@ -25,6 +25,14 @@ read/list behavior.
   - `R2_EXPLORER_ACCESS_CLIENT_ID`
   - `R2_EXPLORER_ACCESS_CLIENT_SECRET`
 
+## Behavior While Readonly
+
+- Public share downloads keep working, but limited-download shares are not
+  decremented and `maxDownloads` caps are not enforced: enforcement requires a
+  Durable Object write, and readonly mode performs no writes. Revoke
+  limited-download shares before entering readonly if their caps must hold
+  during the window.
+
 ## Procedure (CLI-first)
 
 1. Announce maintenance window and freeze write operations.

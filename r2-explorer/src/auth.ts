@@ -1,3 +1,4 @@
+import { envInt, envNonNegativeInt } from "./config";
 import { HttpError } from "./http";
 import type { AuthIdentity, Env } from "./types";
 
@@ -39,28 +40,6 @@ const authSigningKeyCache = new Map<string, CachedAuthSigningKeys>();
 /** Clear the JWKS signing key cache. Exported for test teardown. */
 export function resetAuthSigningKeyCache(): void {
   authSigningKeyCache.clear();
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return parsed;
-}
-
-function parseNonNegativeInt(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return fallback;
-  }
-  return parsed;
 }
 
 function parseScopeList(value: string | undefined): string[] {
@@ -247,11 +226,21 @@ function normalizeAccessJwksUrl(env: Env, teamDomain: string): string {
 }
 
 function accessClockSkewSeconds(env: Env): number {
-  return parseNonNegativeInt(env.R2E_ACCESS_CLOCK_SKEW_SEC, DEFAULT_ACCESS_CLOCK_SKEW_SEC);
+  return envNonNegativeInt(
+    "R2E_ACCESS_CLOCK_SKEW_SEC",
+    env.R2E_ACCESS_CLOCK_SKEW_SEC,
+    DEFAULT_ACCESS_CLOCK_SKEW_SEC,
+    "access_config_invalid",
+  );
 }
 
 function accessJwksCacheTtlSeconds(env: Env): number {
-  return parsePositiveInt(env.R2E_ACCESS_JWKS_CACHE_TTL_SEC, DEFAULT_ACCESS_JWKS_CACHE_TTL_SEC);
+  return envInt(
+    "R2E_ACCESS_JWKS_CACHE_TTL_SEC",
+    env.R2E_ACCESS_JWKS_CACHE_TTL_SEC,
+    DEFAULT_ACCESS_JWKS_CACHE_TTL_SEC,
+    "access_config_invalid",
+  );
 }
 
 function decodeBase64Url(input: string): Uint8Array {
@@ -390,31 +379,27 @@ function validateAccessClaims(payload: AuthJwtPayload, issuer: string, expectedA
 }
 
 async function fetchAccessSigningKeys(jwksUrl: string): Promise<CachedAuthSigningKeys> {
+  // JWKS fetch failures log the endpoint and cause for operators; the
+  // client-facing error stays free of deployment config such as the JWKS URL.
   let response: Response;
   try {
     response = await fetch(jwksUrl, { method: "GET" });
   } catch (error) {
-    throw new HttpError(401, "token_invalid_signature", "Failed to fetch Cloudflare Access signing keys.", {
-      cause: String(error),
-      jwksUrl,
-    });
+    console.error(`Failed to fetch Access signing keys from ${jwksUrl}:`, error);
+    throw new HttpError(401, "token_invalid_signature", "Failed to fetch Cloudflare Access signing keys.");
   }
 
   if (!response.ok) {
-    throw new HttpError(401, "token_invalid_signature", "Failed to fetch Cloudflare Access signing keys.", {
-      jwksUrl,
-      status: response.status,
-    });
+    console.error(`Access signing keys fetch from ${jwksUrl} returned status ${response.status}.`);
+    throw new HttpError(401, "token_invalid_signature", "Failed to fetch Cloudflare Access signing keys.");
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch (error) {
-    throw new HttpError(401, "token_invalid_signature", "Access certs response is not valid JSON.", {
-      cause: String(error),
-      jwksUrl,
-    });
+    console.error(`Access certs response from ${jwksUrl} is not valid JSON:`, error);
+    throw new HttpError(401, "token_invalid_signature", "Access certs response is not valid JSON.");
   }
 
   const keysRaw = (payload as { keys?: unknown })?.keys;

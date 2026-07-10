@@ -1,5 +1,6 @@
 { config, lib, ... }:
 let
+  r2lib = import ../../lib/r2.nix { inherit lib; };
   cfg = lib.attrByPath [
     "programs"
     "r2-cloud"
@@ -40,7 +41,7 @@ in
       type = s3
       provider = Cloudflare
       env_auth = true
-      ${lib.optionalString hasAccountId "endpoint = https://${accountId}.r2.cloudflarestorage.com"}
+      ${lib.optionalString hasAccountId "endpoint = ${r2lib.mkR2Endpoint accountId}"}
     '';
   };
 }

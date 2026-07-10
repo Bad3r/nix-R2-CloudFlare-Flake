@@ -6,6 +6,7 @@
 }:
 let
   cfg = config.programs.git-annex-r2;
+  r2lib = import ../../lib/r2.nix { inherit lib; };
   credentialsFileValue = if cfg.credentialsFile == null then "" else toString cfg.credentialsFile;
   gitAnnexR2Init = pkgs.writeShellApplication {
     name = "git-annex-r2-init";
@@ -72,7 +73,7 @@ let
         echo "Error: rclone remote name must be env-var-safe for endpoint export: $rclone_remote_default" >&2
         exit 1
       fi
-      export "RCLONE_CONFIG_''${remote_env_name}_ENDPOINT=https://''${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+      export "RCLONE_CONFIG_''${remote_env_name}_ENDPOINT=${r2lib.mkR2Endpoint "\${R2_ACCOUNT_ID}"}"
 
       if ! git config --get annex.uuid >/dev/null 2>&1; then
         git annex init "$(${pkgs.coreutils}/bin/uname -n)"

@@ -33,10 +33,14 @@ updates:
           - "patch"
 
   # ── GitHub Actions used in CI and deploy workflows ──
+  # "/" covers .github/workflows; composite action directories are listed
+  # explicitly so the actions pinned inside them keep receiving updates.
+  # (A "/r2-explorer" entry was removed: r2-explorer/.github does not exist.)
   - package-ecosystem: "github-actions"
     directories:
       - "/"
-      - "/r2-explorer"
+      - "/.github/actions/setup-nix-cachix"
+      - "/.github/actions/security-sensitive-change-policy"
     schedule:
       interval: "weekly"
       day: "monday"

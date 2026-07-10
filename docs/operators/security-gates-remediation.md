@@ -21,6 +21,38 @@ gates fail.
   - lockfile/workflow changes require `security-review-approved` label
   - CODEOWNER review required by branch protection
 
+## Gate Topology and Branch Protection
+
+Branch protection on `main` must require these status checks:
+
+- `ci-required`: the single aggregation gate over the CI validation jobs.
+  Jobs skipped by path filtering count as pass; failed or cancelled jobs
+  (including the `changes` detection job) fail the gate.
+- `security-sensitive-change-policy`: kept separate from `ci-required` so a
+  label add/remove can refresh it through
+  `.github/workflows/security-policy-refresh.yml` without rerunning CI.
+
+Self-neutering backstop: the policy check executes the composite action from
+the PR head commit, so a PR could edit its own enforcement logic. Because the
+workflow that runs on `pull_request` is itself the PR's version, pinning the
+action to a trusted base ref cannot close this (the action is repo-local and
+absent on base for the PR that introduces it, and a PR could drop the pin
+anyway). Two out-of-band controls close the hole instead and must stay in
+place:
+
+- `.github/CODEOWNERS` requires owner review for `/.github/workflows/` and
+  `/.github/actions/`, so enforcement-surface changes cannot merge on the
+  strength of the (self-evaluated) green check alone. This holds only while
+  branch protection on `main` has "Require review from Code Owners" enabled and
+  is not admin-bypassable; without that setting CODEOWNERS is advisory and the
+  self-neutering gap reopens.
+- Non-`pull_request` CI runs (push, `workflow_dispatch`) publish the policy
+  job under the distinct name `security-sensitive-change-policy
+(informational)`. A dispatched run on a PR branch therefore cannot emit a
+  fresh SUCCESS under the required check name on the same head SHA and
+  supersede a red pull-request result; only `pull_request` events (CI and the
+  label-refresh workflow) write the authoritative check.
+
 ## Prerequisites
 
 - `nix`, `pnpm`, and `gh` installed.
@@ -54,12 +86,18 @@ nix run nixpkgs#vulnix -- -C "$(nix path-info .#r2)" -w ./scripts/ci/vulnix-whit
      - rebuild and rerun `vulnix`
      - if risk acceptance is required, update
        `scripts/ci/vulnix-whitelist.toml` in the same PR with justification
+     - a `flake.lock` bump that advances a whitelisted package (for example
+       `openssl-3.6.0` to `openssl-3.6.2`) invalidates its version-pinned entry
+       and re-surfaces the CVEs; rebuild `.#r2` and refresh the baseline with
+       `vulnix -C "$(nix path-info .#r2)" -W scripts/ci/vulnix-whitelist.toml`,
+       then review the diff under security review
    - For `ripsecrets` findings:
      - remove committed secret material and rotate leaked credentials
      - if false positive, add scoped ignore entries to `.secretsignore`
    - For sensitive change policy failures:
      - add label `security-review-approved`
      - request and obtain CODEOWNER approval (`@Bad3r`)
+
 4. Re-run local checks and push fixes.
 5. Confirm all required checks are green before merge.
 

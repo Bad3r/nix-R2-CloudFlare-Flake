@@ -105,9 +105,19 @@ in
         account_id="$account_id_literal"
       elif [[ -n "$top_account_id_literal" ]]; then
         account_id="$top_account_id_literal"
-      elif [[ -n "$account_id_file" && -r "$account_id_file" ]]; then
+      elif [[ -n "$account_id_file" ]]; then
+        # A configured account ID file must be readable; silently falling back
+        # would mask a misconfigured secret path.
+        if [[ ! -r "$account_id_file" ]]; then
+          echo "Error: account ID file is missing or unreadable: $account_id_file" >&2
+          exit 1
+        fi
         { IFS= read -r account_id || true; } < "$account_id_file"
-      elif [[ -n "$top_account_id_file" && -r "$top_account_id_file" ]]; then
+      elif [[ -n "$top_account_id_file" ]]; then
+        if [[ ! -r "$top_account_id_file" ]]; then
+          echo "Error: account ID file is missing or unreadable: $top_account_id_file" >&2
+          exit 1
+        fi
         { IFS= read -r account_id || true; } < "$top_account_id_file"
       fi
 
@@ -130,12 +140,24 @@ in
 
       ${pkgs.coreutils}/bin/mkdir -p "$output_dir"
       umask 077
-      {
-        printf 'R2_ACCOUNT_ID=%s\n' "$account_id"
-        printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key_id"
-        printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_access_key"
-      } > "$output_file"
-      ${pkgs.coreutils}/bin/chmod 0400 "$output_file"
+      # Write to a temp file and rename: the existing output is mode 0400, so
+      # truncating it in place fails on re-activation, and the rename keeps
+      # the update atomic (no partially written credentials).
+      tmp_output_file="$(${pkgs.coreutils}/bin/mktemp "$output_dir/.r2-env.XXXXXX")"
+      # Any failure between mktemp and mv (e.g. ENOSPC mid-write) must not
+      # leave a partial secret file behind. The trap lives in a subshell so it
+      # cannot clobber traps of the surrounding home-manager activation
+      # script; after a successful mv the rm is a no-op.
+      (
+        trap '${pkgs.coreutils}/bin/rm -f "$tmp_output_file"' EXIT
+        {
+          printf 'R2_ACCOUNT_ID=%s\n' "$account_id"
+          printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key_id"
+          printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_access_key"
+        } > "$tmp_output_file"
+        ${pkgs.coreutils}/bin/chmod 0400 "$tmp_output_file"
+        ${pkgs.coreutils}/bin/mv -f "$tmp_output_file" "$output_file"
+      )
     '';
   };
 }

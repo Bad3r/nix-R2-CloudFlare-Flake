@@ -1,3 +1,15 @@
+/*
+ * Typed HTTP client for the R2 Explorer worker API.
+ *
+ * Design notes:
+ * - Every read accepts an AbortSignal so the UI can cancel superseded requests
+ *   (the object browser fires overlapping list calls as the operator types).
+ * - Retry uses decorrelated jitter with a delay cap and honours Retry-After on
+ *   429/503 so a throttled worker is not hammered on a fixed exponential curve.
+ * - Cloudflare Access opaque redirects are converted into typed 401 ApiErrors so
+ *   the UI can present a deterministic sign-in affordance instead of a redirect.
+ */
+
 export type RequestActor = {
   mode: "access";
   actor: string;
@@ -70,6 +82,11 @@ export type UploadSignPartResponse = {
   expiresAt: string;
 };
 
+export type BucketBinding = {
+  alias: string;
+  binding: string;
+};
+
 export type SessionInfoResponse = {
   version: string;
   readonly: boolean;
@@ -90,10 +107,7 @@ export type SessionInfoResponse = {
       prefixAllowlist: string[];
     };
   };
-  buckets: Array<{
-    alias: string;
-    binding: string;
-  }>;
+  buckets: BucketBinding[];
 };
 
 export class ApiError extends Error {
@@ -110,6 +124,11 @@ export class ApiError extends Error {
   }
 }
 
+/** True for a fetch aborted via AbortController; callers should treat as benign. */
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 type ApiErrorPayload = {
   error?: {
     code?: string;
@@ -121,6 +140,7 @@ type ApiErrorPayload = {
 type RetryOptions = {
   maxRetries?: number;
   baseDelayMs?: number;
+  maxDelayMs?: number;
   retryableStatuses?: ReadonlySet<number>;
   retryNetworkErrors?: boolean;
 };
@@ -128,16 +148,23 @@ type RetryOptions = {
 const TRANSIENT_HTTP_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504, 522, 524]);
 const ACCESS_LOGIN_PATH = "/cdn-cgi/access/login";
 export const ACCESS_API_BOOTSTRAP_PATH = "/api/v2/auth/bootstrap";
+export const DEFAULT_BUCKET_ALIAS = "files";
+
 const READ_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
-  baseDelayMs: 1000,
+  baseDelayMs: 500,
+  maxDelayMs: 6000,
   retryableStatuses: TRANSIENT_HTTP_STATUSES,
 };
 const UPLOAD_PART_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
-  baseDelayMs: 1000,
+  baseDelayMs: 500,
+  maxDelayMs: 6000,
   retryableStatuses: TRANSIENT_HTTP_STATUSES,
-  retryNetworkErrors: false,
+  // Part PUTs are idempotent (same bytes, same partNumber) and each attempt
+  // re-signs its URL, so a dropped connection is safe to retry instead of
+  // aborting the whole upload and discarding every uploaded part.
+  retryNetworkErrors: true,
 };
 
 function isJsonResponse(response: Response): boolean {
@@ -165,36 +192,89 @@ function shouldRetryError(
   retryableStatuses: ReadonlySet<number>,
   retryNetworkErrors: boolean,
 ): boolean {
+  if (isAbortError(error)) {
+    return false;
+  }
   if (error instanceof ApiError) {
+    // Status 0 marks a network-level failure the caller wrapped before any
+    // HTTP response existed (e.g. upload_part_request_failed).
+    if (error.status === 0) {
+      return retryNetworkErrors;
+    }
     return retryableStatuses.has(error.status);
   }
   return retryNetworkErrors && error instanceof TypeError;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
-async function withRetry<T>(operation: () => Promise<T>, options: RetryOptions): Promise<T> {
+/** Retry-After delay in ms if the error is an ApiError carrying one, else null. */
+function retryAfterMs(error: unknown): number | null {
+  if (!(error instanceof ApiError)) {
+    return null;
+  }
+  const raw = error.details;
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const value = (raw as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value * 1000 : null;
+}
+
+/**
+ * Backoff with decorrelated jitter, capped, honouring server Retry-After.
+ * Pure of Math.random side effects on the caller: jitter is bounded to the
+ * exponential window so ordering guarantees in tests remain deterministic
+ * enough (tests stub timers/fetch rather than assert exact delays).
+ */
+function backoffDelay(attempt: number, options: RetryOptions, error: unknown): number {
+  const base = Math.max(0, options.baseDelayMs ?? 500);
+  const cap = Math.max(base, options.maxDelayMs ?? 6000);
+  const serverHint = retryAfterMs(error);
+  if (serverHint !== null) {
+    return Math.min(cap, serverHint);
+  }
+  const window = Math.min(cap, base * 2 ** attempt);
+  const jitter = window * (0.5 + Math.random() * 0.5);
+  return Math.min(cap, jitter);
+}
+
+async function withRetry<T>(operation: () => Promise<T>, options: RetryOptions, signal?: AbortSignal): Promise<T> {
   const maxRetries = Math.max(0, options.maxRetries ?? 0);
-  const baseDelayMs = Math.max(0, options.baseDelayMs ?? 1000);
   const retryableStatuses = options.retryableStatuses ?? TRANSIENT_HTTP_STATUSES;
   const retryNetworkErrors = options.retryNetworkErrors ?? true;
 
   let attempt = 0;
-  while (true) {
+  for (;;) {
     try {
       return await operation();
     } catch (error) {
       if (attempt >= maxRetries || !shouldRetryError(error, retryableStatuses, retryNetworkErrors)) {
         throw error;
       }
-      const delayMs = baseDelayMs * 2 ** attempt;
+      await sleep(backoffDelay(attempt, options, error), signal);
       attempt += 1;
-      await sleep(delayMs);
     }
   }
 }
+
+type ApiRequestInit = RequestInit & { retry?: RetryOptions };
 
 function withDefaultCredentials(init?: RequestInit): RequestInit {
   return {
@@ -234,66 +314,84 @@ async function apiOnce<T>(path: string, init?: RequestInit): Promise<T> {
     const message =
       payload?.error?.message ??
       (typeof decoded === "string" && decoded.length > 0 ? decoded : `${response.status} ${response.statusText}`);
-    throw new ApiError(response.status, code, message, payload?.error?.details);
+    let details = payload?.error?.details;
+    const retryAfterHeader = response.headers.get("retry-after");
+    if (retryAfterHeader && /^\d+$/.test(retryAfterHeader)) {
+      details = { ...(typeof details === "object" && details ? details : {}), retryAfterSeconds: Number(retryAfterHeader) };
+    }
+    throw new ApiError(response.status, code, message, details);
   }
 
   return decoded as T;
 }
 
-export async function api<T>(path: string, init?: RequestInit, retryOptions?: RetryOptions): Promise<T> {
-  if (!retryOptions) {
-    return apiOnce<T>(path, init);
+/** Perform an API request with optional retry and cancellation. */
+export async function api<T>(path: string, init?: ApiRequestInit): Promise<T> {
+  const { retry, ...requestInit } = init ?? {};
+  if (!retry) {
+    return apiOnce<T>(path, requestInit);
   }
-  return withRetry(() => apiOnce<T>(path, init), retryOptions);
+  return withRetry(() => apiOnce<T>(path, requestInit), retry, requestInit.signal ?? undefined);
 }
 
-function uploadJsonHeaders(): HeadersInit {
+function jsonMutationHeaders(): HeadersInit {
   return {
     "content-type": "application/json",
     "x-r2e-csrf": "1",
   };
 }
 
-export async function fetchSessionInfo(): Promise<SessionInfoResponse> {
-  return api<SessionInfoResponse>("/api/v2/session/info", undefined, READ_RETRY_OPTIONS);
+export function fetchSessionInfo(signal?: AbortSignal): Promise<SessionInfoResponse> {
+  return api<SessionInfoResponse>("/api/v2/session/info", { retry: READ_RETRY_OPTIONS, signal });
 }
 
-export async function listObjects(prefix: string, cursor?: string, limit = 200): Promise<ListResponse> {
+export function listObjects(
+  prefix: string,
+  cursor?: string,
+  limit = 200,
+  signal?: AbortSignal,
+): Promise<ListResponse> {
   const query = new URLSearchParams();
   query.set("prefix", prefix);
   query.set("limit", String(limit));
   if (cursor) {
     query.set("cursor", cursor);
   }
-  return api<ListResponse>(`/api/v2/list?${query.toString()}`, undefined, READ_RETRY_OPTIONS);
+  return api<ListResponse>(`/api/v2/list?${query.toString()}`, { retry: READ_RETRY_OPTIONS, signal });
 }
 
-export async function createShare(key: string, ttl: string, maxDownloads: number): Promise<ShareCreateResponse> {
+export function createShare(
+  key: string,
+  ttl: string,
+  maxDownloads: number,
+  bucket?: string,
+): Promise<ShareCreateResponse> {
   return api<ShareCreateResponse>("/api/v2/share/create", {
     method: "POST",
-    headers: uploadJsonHeaders(),
+    headers: jsonMutationHeaders(),
     body: JSON.stringify({
       key,
       ttl,
       maxDownloads,
       contentDisposition: "attachment",
+      ...(bucket ? { bucket } : {}),
     }),
   });
 }
 
-export async function listShares(key: string): Promise<ShareListResponse> {
-  const query = new URLSearchParams({
-    bucket: "files",
-    key,
-    limit: "100",
-  });
-  return api<ShareListResponse>(`/api/v2/share/list?${query.toString()}`, undefined, READ_RETRY_OPTIONS);
+export function listShares(
+  key: string,
+  bucket: string = DEFAULT_BUCKET_ALIAS,
+  signal?: AbortSignal,
+): Promise<ShareListResponse> {
+  const query = new URLSearchParams({ bucket, key, limit: "100" });
+  return api<ShareListResponse>(`/api/v2/share/list?${query.toString()}`, { retry: READ_RETRY_OPTIONS, signal });
 }
 
 export async function revokeShare(tokenId: string): Promise<void> {
   await api<{ tokenId: string; revoked: true }>("/api/v2/share/revoke", {
     method: "POST",
-    headers: uploadJsonHeaders(),
+    headers: jsonMutationHeaders(),
     body: JSON.stringify({ tokenId }),
   });
 }
@@ -301,7 +399,7 @@ export async function revokeShare(tokenId: string): Promise<void> {
 export async function moveObject(fromKey: string, toKey: string): Promise<void> {
   await api<{ fromKey: string; toKey: string }>("/api/v2/object/move", {
     method: "POST",
-    headers: uploadJsonHeaders(),
+    headers: jsonMutationHeaders(),
     body: JSON.stringify({ fromKey, toKey }),
   });
 }
@@ -309,189 +407,17 @@ export async function moveObject(fromKey: string, toKey: string): Promise<void> 
 export async function deleteObject(key: string): Promise<void> {
   await api<{ key: string; trashKey: string }>("/api/v2/object/delete", {
     method: "POST",
-    headers: uploadJsonHeaders(),
+    headers: jsonMutationHeaders(),
     body: JSON.stringify({ key }),
   });
 }
 
-export type UploadProgress = {
-  phase: "init" | "sign" | "upload" | "complete";
-  uploadedParts: number;
-  totalParts: number;
+// Shared retry policy + header helper exports for the upload engine.
+export {
+  READ_RETRY_OPTIONS,
+  UPLOAD_PART_RETRY_OPTIONS,
+  jsonMutationHeaders,
+  withRetry,
+  type ApiRequestInit,
+  type RetryOptions,
 };
-
-const FORBIDDEN_BROWSER_UPLOAD_HEADERS = new Set([
-  "content-length",
-  "host",
-  "origin",
-  "referer",
-  "cookie",
-  "set-cookie",
-  "set-cookie2",
-]);
-
-function isForbiddenBrowserUploadHeader(name: string): boolean {
-  if (FORBIDDEN_BROWSER_UPLOAD_HEADERS.has(name)) {
-    return true;
-  }
-  return name.startsWith("sec-") || name.startsWith("proxy-");
-}
-
-function buildUploadRequestHeaders(signedHeaders: Record<string, string> | undefined): Headers {
-  const uploadHeaders = new Headers();
-  if (!signedHeaders) {
-    return uploadHeaders;
-  }
-  for (const [rawName, rawValue] of Object.entries(signedHeaders)) {
-    const name = rawName.trim().toLowerCase();
-    if (name.length === 0 || isForbiddenBrowserUploadHeader(name)) {
-      continue;
-    }
-    uploadHeaders.set(name, rawValue);
-  }
-  return uploadHeaders;
-}
-
-export async function multipartUpload(
-  file: File,
-  prefix: string,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<{ key: string }> {
-  const initPayload = await api<UploadInitResponse>("/api/v2/upload/init", {
-    method: "POST",
-    headers: uploadJsonHeaders(),
-    body: JSON.stringify({
-      filename: file.name,
-      prefix,
-      declaredSize: file.size,
-      contentType: file.type || "application/octet-stream",
-    }),
-  });
-
-  onProgress?.({ phase: "init", uploadedParts: 0, totalParts: 0 });
-
-  const partSize = initPayload.partSizeBytes;
-  const chunks: Array<{ partNumber: number; blob: Blob; size: number }> = [];
-  for (let offset = 0, partNumber = 1; offset < file.size; offset += partSize, partNumber += 1) {
-    const blob = file.slice(offset, offset + partSize);
-    chunks.push({ partNumber, blob, size: blob.size });
-  }
-
-  const totalParts = chunks.length;
-  const partEtagMap = new Map<number, string>();
-  let uploadedParts = 0;
-  const parallel = Math.min(4, Math.max(1, totalParts));
-  let cursor = 0;
-
-  async function uploadPart(partNumber: number, blob: Blob, contentLength: number): Promise<void> {
-    onProgress?.({ phase: "sign", uploadedParts, totalParts });
-    const signed = await api<UploadSignPartResponse>(
-      "/api/v2/upload/sign-part",
-      {
-        method: "POST",
-        headers: uploadJsonHeaders(),
-        body: JSON.stringify({
-          sessionId: initPayload.sessionId,
-          uploadId: initPayload.uploadId,
-          partNumber,
-          contentLength,
-        }),
-      },
-      UPLOAD_PART_RETRY_OPTIONS,
-    );
-
-    const response = await withRetry(async () => {
-      const uploadHeaders = buildUploadRequestHeaders(signed.headers);
-      let partResponse: Response;
-      try {
-        partResponse = await fetch(signed.url, {
-          method: signed.method,
-          headers: uploadHeaders,
-          body: blob,
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new ApiError(
-          0,
-          "upload_part_request_failed",
-          `Part upload request could not be sent for ${partNumber}/${totalParts}: ${detail}`,
-        );
-      }
-
-      if (!partResponse.ok) {
-        const detail = await partResponse.text().catch(() => "");
-        throw new ApiError(
-          partResponse.status,
-          "upload_part_failed",
-          `Part upload failed for ${partNumber}/${totalParts}${detail ? `: ${detail.slice(0, 180)}` : ""}`,
-        );
-      }
-      return partResponse;
-    }, UPLOAD_PART_RETRY_OPTIONS);
-
-    const etag = response.headers.get("etag");
-    if (!etag) {
-      throw new ApiError(
-        500,
-        "missing_etag",
-        "Signed upload response is missing ETag. Ensure R2 bucket CORS exposes ETag.",
-      );
-    }
-
-    partEtagMap.set(partNumber, etag.replace(/^"|"$/g, ""));
-    uploadedParts += 1;
-    onProgress?.({ phase: "upload", uploadedParts, totalParts });
-  }
-
-  async function worker(): Promise<void> {
-    while (true) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= chunks.length) {
-        return;
-      }
-      const chunk = chunks[index];
-      await uploadPart(chunk.partNumber, chunk.blob, chunk.size);
-    }
-  }
-
-  try {
-    await Promise.all(Array.from({ length: parallel }, () => worker()));
-
-    const parts = chunks.map((chunk) => {
-      const etag = partEtagMap.get(chunk.partNumber);
-      if (!etag) {
-        throw new ApiError(500, "missing_part_etag", `Missing uploaded ETag for part ${chunk.partNumber}.`);
-      }
-      return {
-        partNumber: chunk.partNumber,
-        etag,
-      };
-    });
-
-    onProgress?.({ phase: "complete", uploadedParts, totalParts });
-
-    const completed = await api<{ key: string }>("/api/v2/upload/complete", {
-      method: "POST",
-      headers: uploadJsonHeaders(),
-      body: JSON.stringify({
-        sessionId: initPayload.sessionId,
-        uploadId: initPayload.uploadId,
-        finalSize: file.size,
-        parts,
-      }),
-    });
-
-    return completed;
-  } catch (error) {
-    await api<{ ok: true }>("/api/v2/upload/abort", {
-      method: "POST",
-      headers: uploadJsonHeaders(),
-      body: JSON.stringify({
-        sessionId: initPayload.sessionId,
-        uploadId: initPayload.uploadId,
-      }),
-    }).catch(() => undefined);
-    throw error;
-  }
-}

@@ -11,6 +11,7 @@
   releaseBase ? "0.1.0",
 }:
 let
+  r2lib = import ../lib/r2.nix { inherit lib; };
   versionLib = import ../lib/version.nix { inherit lib; };
   packageVersion =
     if derivationVersion != null then
@@ -420,12 +421,13 @@ writeShellApplication {
       load_credentials
       ensure_aws_credentials
 
+      # Credentials are already exported by load_credentials; use env auth so
+      # the secrets never appear on the command line (/proc/<pid>/cmdline).
       exec rclone link \
         --config=/dev/null \
         --s3-provider=Cloudflare \
-        --s3-endpoint="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
-        --s3-access-key-id="$AWS_ACCESS_KEY_ID" \
-        --s3-secret-access-key="$AWS_SECRET_ACCESS_KEY" \
+        --s3-endpoint="${r2lib.mkR2Endpoint "\${R2_ACCOUNT_ID}"}" \
+        --s3-env-auth=true \
         --expire="$expiry" \
         ":s3:$bucket/$key"
     }

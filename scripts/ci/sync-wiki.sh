@@ -16,9 +16,12 @@ trap 'rm -rf "${WIKI_DIR}"' EXIT
 # Clone wiki repository
 # ---------------------------------------------------------------------------
 echo "Cloning wiki repository..."
+# base64 -w0 disables the GNU default 76-column wrapping; a wrapped value
+# breaks the Authorization header for tokens longer than ~55 bytes
+# (fine-grained PATs). Clone stderr stays visible so real git errors surface.
 if ! git clone --depth 1 \
-  --config "http.${WIKI_REMOTE}/.extraheader=Authorization: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64)" \
-  "${WIKI_REMOTE}" "${WIKI_DIR}" 2>/dev/null; then
+  --config "http.${WIKI_REMOTE}/.extraheader=Authorization: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)" \
+  "${WIKI_REMOTE}" "${WIKI_DIR}"; then
   echo "ERROR: Failed to clone wiki repository."
   echo "Ensure the wiki is initialized: create one page via the GitHub UI first."
   exit 1
@@ -63,15 +66,6 @@ declare -A FILE_MAP=(
 )
 
 # ---------------------------------------------------------------------------
-# Helper: title-case an operator filename stem
-#   key-rotation -> Key-Rotation
-# ---------------------------------------------------------------------------
-title_case_stem() {
-  local stem="$1"
-  echo "${stem}" | sed -E 's/(^|-)([a-z])/\1\u\2/g'
-}
-
-# ---------------------------------------------------------------------------
 # Copy files into wiki directory
 # ---------------------------------------------------------------------------
 echo "Copying docs to wiki..."
@@ -96,6 +90,12 @@ build_sed_script() {
 
   # 1) Rewrite backtick references: `docs/<path>` -> [WikiTitle](WikiName)
   for src in "${!FILE_MAP[@]}"; do
+    # The copy loop above already warned about missing sources and skipped
+    # them; skip them here as well so head(1) on a missing file does not
+    # abort the whole sync under set -e before that warn/skip path applies.
+    if [[ ! -f "${DOCS_DIR}/${src}" ]]; then
+      continue
+    fi
     wiki_name="${FILE_MAP[${src}]}"
     # Extract display title from H1 of source file
     local display_title

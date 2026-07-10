@@ -1,6 +1,11 @@
 name = "r2-explorer-web"
 compatibility_date = "2026-03-07"
-main = "./dist/_worker.js"
+# Adapter v14 (Cloudflare vite plugin) resolves this module specifier itself;
+# the plugin rejects a prebuilt-file path here because the config is read
+# before the build produces dist/. Deploys use the resolved config the build
+# emits under dist/ (see the deploy-web app and r2-explorer-deploy.yml).
+main = "@astrojs/cloudflare/entrypoints/server"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 routes = [{ pattern = "files.unsigned.sh/*", zone_name = "unsigned.sh" }]
 
 [assets]

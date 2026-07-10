@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createShare, fetchSessionInfo, multipartUpload } from "../web/src/lib/api";
+import { ApiError, createShare, fetchSessionInfo } from "../web/src/lib/api";
+import { multipartUpload } from "../web/src/lib/upload";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -205,5 +206,175 @@ describe("web api retry behavior", () => {
     const normalizedHeaders = new Headers(uploadHeaders as HeadersInit);
     expect(normalizedHeaders.get("content-type")).toBe("application/octet-stream");
     expect(normalizedHeaders.has("content-length")).toBe(false);
+  });
+
+  it("retries a part PUT after a network error and re-signs each attempt", async () => {
+    vi.useFakeTimers();
+    let partUploadAttempts = 0;
+    let signPartCalls = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+
+      if (url.endsWith("/api/v2/upload/init") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          objectKey: "uploads/archive.bin",
+          uploadId: "upload-1",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          partSizeBytes: 16,
+          maxParts: 10000,
+          signPartTtlSec: 60,
+          allowedMime: [],
+          allowedExt: [],
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/sign-part") && method === "POST") {
+        signPartCalls += 1;
+        return jsonResponse({
+          sessionId: "session-1",
+          uploadId: "upload-1",
+          partNumber: 1,
+          url: `https://upload.example.test/part-1?sig=${signPartCalls}`,
+          method: "PUT",
+          headers: {
+            "content-type": "application/octet-stream",
+          },
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+
+      if (url.startsWith("https://upload.example.test/part-1") && method === "PUT") {
+        partUploadAttempts += 1;
+        if (partUploadAttempts === 1) {
+          // Simulate a dropped connection: fetch rejects before any response.
+          throw new TypeError("network connection lost");
+        }
+        return new Response(null, {
+          status: 200,
+          headers: {
+            etag: "\"etag-1\"",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/complete") && method === "POST") {
+        return jsonResponse({
+          key: "uploads/archive.bin",
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/abort") && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+
+    const uploadPromise = multipartUpload(file, "uploads/");
+    await vi.runAllTimersAsync();
+    const completed = await uploadPromise;
+
+    expect(completed.key).toBe("uploads/archive.bin");
+    // The dropped connection is retried once (part PUTs are idempotent)...
+    expect(partUploadAttempts).toBe(2);
+    // ...and every attempt re-signs, so hoisting signPart out of the retry
+    // loop (expired-URL hazard) fails this assertion.
+    expect(signPartCalls).toBe(2);
+    expect(signPartCalls).toBe(partUploadAttempts);
+  });
+
+  it("waits out a 429 on upload init instead of hard-failing", async () => {
+    vi.useFakeTimers();
+    let initAttempts = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+
+      if (url.endsWith("/api/v2/upload/init") && method === "POST") {
+        initAttempts += 1;
+        if (initAttempts === 1) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: "upload_concurrency_exceeded",
+                message: "Too many active uploads.",
+              },
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "application/json",
+                "retry-after": "1",
+              },
+            },
+          );
+        }
+        return jsonResponse({
+          sessionId: "session-1",
+          objectKey: "uploads/archive.bin",
+          uploadId: "upload-1",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          partSizeBytes: 16,
+          maxParts: 10000,
+          signPartTtlSec: 60,
+          allowedMime: [],
+          allowedExt: [],
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/sign-part") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          uploadId: "upload-1",
+          partNumber: 1,
+          url: "https://upload.example.test/part-1",
+          method: "PUT",
+          headers: {},
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+
+      if (url === "https://upload.example.test/part-1" && method === "PUT") {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            etag: "\"etag-1\"",
+          },
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/complete") && method === "POST") {
+        return jsonResponse({
+          key: "uploads/archive.bin",
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/abort") && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+
+    const uploadPromise = multipartUpload(file, "uploads/");
+    await vi.runAllTimersAsync();
+    const completed = await uploadPromise;
+
+    expect(completed.key).toBe("uploads/archive.bin");
+    expect(initAttempts).toBe(2);
   });
 });

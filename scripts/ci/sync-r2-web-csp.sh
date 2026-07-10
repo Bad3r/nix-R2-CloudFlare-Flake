@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fail() {
-  echo "Error: $*" >&2
-  exit 1
-}
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=scripts/ci/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 
 usage() {
   cat <<'USAGE'
@@ -27,24 +26,6 @@ Environment (optional):
   R2E_WEB_CSP_RULE_DESCRIPTION  Rule description for operator clarity.
   R2E_WEB_CSP_RULE_EXPRESSION   Explicit rule expression override.
 USAGE
-}
-
-require_command() {
-  local name="$1"
-  if ! command -v "${name}" >/dev/null 2>&1; then
-    fail "required command not found: ${name}"
-  fi
-}
-
-require_env() {
-  local name="$1"
-  if [[ -z ${!name:-} ]]; then
-    fail "required environment variable is missing: ${name}"
-  fi
-}
-
-normalize_space() {
-  tr '\n' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ +| +$//g'
 }
 
 read_csp_policy() {

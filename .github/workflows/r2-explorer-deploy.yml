@@ -95,7 +95,7 @@ jobs:
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -129,7 +129,7 @@ jobs:
           ./scripts/ci/check-r2-access-policy.sh "${smoke_host}" "${R2E_ACCESS_AUD_PREVIEW}" "${CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_ID}"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 
@@ -152,8 +152,12 @@ jobs:
         working-directory: r2-explorer
         run: pnpm test
 
-      - name: Build web bundle
+      - name: Build web bundle (preview)
         working-directory: r2-explorer
+        env:
+          # Adapter v14 resolves the wrangler environment during the build;
+          # the emitted dist/server/wrangler.json is preview-specific.
+          CLOUDFLARE_ENV: preview
         run: pnpm run build:web
 
       - name: Sync runtime upload signing secrets (preview)
@@ -232,8 +236,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          cp web/.assetsignore web/dist/.assetsignore
-          pnpm exec wrangler deploy --config web/wrangler.toml --env preview
+          # The build already resolved the preview environment (CLOUDFLARE_ENV)
+          # into dist/server/wrangler.json; no --env at deploy time.
+          pnpm exec wrangler deploy --config web/dist/server/wrangler.json
   smoke-preview:
     name: Smoke preview
     if: >
@@ -258,7 +263,7 @@ jobs:
       CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET: ${{ secrets.CF_PREVIEW_CI_SERVICE_TOKEN_CLIENT_SECRET }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -267,21 +272,14 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            require-sigs = true
-            extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-            extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+      - name: Setup Nix and Cachix
+        uses: ./.github/actions/setup-nix-cachix
 
       - name: Build r2 CLI
         run: nix --accept-flake-config build .#r2
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 
@@ -484,10 +482,15 @@ jobs:
       R2E_CF_ZONE_NAME: ${{ vars.R2E_CF_ZONE_NAME }}
     steps:
       - name: Reject non-main production deploy ref
+        env:
+          # workflow_dispatch inputs are user-controlled; bind through the
+          # environment instead of interpolating ${{ }} into the run: script.
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
         run: |
-          if [[ "${{ github.event.inputs.ref }}" != "main" ]]; then
+          set -euo pipefail
+          if [[ "${DEPLOY_REF}" != "main" ]]; then
             echo "Production deploys require ref=main." >&2
-            echo "Got '${{ github.event.inputs.ref }}'." >&2
+            echo "Got '${DEPLOY_REF}'." >&2
             exit 1
           fi
 
@@ -501,7 +504,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.ref }}
 
@@ -509,7 +512,7 @@ jobs:
         run: ./scripts/ci/render-r2-explorer-wrangler-config.sh r2-explorer/wrangler.ci.toml
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 
@@ -568,5 +571,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          cp web/.assetsignore web/dist/.assetsignore
-          pnpm exec wrangler deploy --config web/wrangler.toml
+          # build:web resolved the production (top-level) environment into
+          # dist/server/wrangler.json, including the adapter's .assetsignore.
+          pnpm exec wrangler deploy --config web/dist/server/wrangler.json

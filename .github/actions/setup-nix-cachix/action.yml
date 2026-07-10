@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+
+name: Setup Nix and Cachix
+description: >-
+  Install Nix (Determinate Systems installer with enterprise features
+  disabled) using the project's pinned substituters and trusted public keys,
+  then configure the project Cachix cache. Shared by ci.yml and release.yml;
+  keep the substituter URLs and keys byte-identical across all consumers.
+
+inputs:
+  cachix-auth-token:
+    description: >-
+      Cachix auth token. Empty configures pull-only access. Callers must pass a
+      non-empty token only on trusted events (push to main, workflow_dispatch),
+      never on pull_request: this composite action is resolved from the
+      checked-out (PR-controlled) tree, so a token handed to a PR run could be
+      exfiltrated by a modified action.
+    required: false
+    default: ""
+  skip-push:
+    description: Whether cachix should skip pushing build results ("true"/"false").
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      with:
+        # Disable Determinate Systems enterprise features for OSS project
+        determinate: false
+        extra-conf: |
+          experimental-features = nix-command flakes
+          require-sigs = true
+          extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
+          extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+
+    - name: Configure Cachix
+      uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+      with:
+        name: nix-r2-cloudflare-flake
+        extraPullNames: wrangler
+        authToken: ${{ inputs.cachix-auth-token }}
+        skipPush: ${{ inputs.skip-push }}

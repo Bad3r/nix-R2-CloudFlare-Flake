@@ -19,11 +19,29 @@ let
   ) cfg.exclude;
   backupPaths = lib.concatMapStringsSep " " (path: lib.escapeShellArg (toString path)) cfg.paths;
 
+  # Shared runtime prelude: resolve the account ID and export the repository.
+  resticRepositoryShell = ''
+    ${resolveAccountIdShell}
+    endpoint="${r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}"}"
+    export RESTIC_REPOSITORY="s3:$endpoint/${cfg.bucket}"
+  '';
+
+  resticInitScript = pkgs.writeShellScript "r2-restic-init" ''
+    set -euo pipefail
+    ${resticRepositoryShell}
+
+    # Initialize the repository on first use so the first backup into an empty
+    # bucket succeeds (mirrors services.restic.backups.*.initialize). Probe
+    # with `cat config` (one object read instead of listing all snapshots) and
+    # keep stderr, so a transient credential/network failure stays visible
+    # instead of silently escalating into `restic init` against a repository
+    # that already exists.
+    ${pkgs.restic}/bin/restic cat config >/dev/null || ${pkgs.restic}/bin/restic init
+  '';
+
   resticBackupScript = pkgs.writeShellScript "r2-restic-backup" ''
     set -euo pipefail
-    ${resolveAccountIdShell}
-    endpoint="https://$R2_RESOLVED_ACCOUNT_ID.r2.cloudflarestorage.com"
-    export RESTIC_REPOSITORY="s3:$endpoint/${cfg.bucket}"
+    ${resticRepositoryShell}
 
     ${pkgs.restic}/bin/restic backup \
       ${excludeFlags} \
@@ -74,6 +92,12 @@ in
       default = "";
       description = "R2 bucket for the restic repository";
       example = "backups";
+    };
+
+    initialize = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether to create the restic repository if it does not exist yet (runs `restic init` before the backup when the `restic cat config` probe fails, matching services.restic.backups.*.initialize)";
     };
 
     paths = lib.mkOption {
@@ -145,6 +169,10 @@ in
         message = "services.r2-restic.bucket must be set when services.r2-restic.enable = true";
       }
       {
+        assertion = cfg.bucket == "" || r2lib.isValidBucketName cfg.bucket;
+        message = "services.r2-restic.bucket must be a valid R2 bucket name (3-63 lowercase letters, digits, or hyphens; must start and end with a letter or digit): got '${cfg.bucket}'";
+      }
+      {
         assertion = cfg.paths != [ ];
         message = "services.r2-restic.paths must contain at least one path when services.r2-restic.enable = true";
       }
@@ -178,6 +206,9 @@ in
         ProtectControlGroups = true;
         RestrictSUIDSGID = true;
         LockPersonality = true;
+      }
+      // lib.optionalAttrs cfg.initialize {
+        ExecStartPre = resticInitScript;
       };
     };
 

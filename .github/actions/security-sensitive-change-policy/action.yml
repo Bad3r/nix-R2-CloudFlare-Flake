@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+
+name: Security Sensitive Change Policy
+description: >-
+  Detect workflow, composite-action, and lockfile changes in a pull request
+  and fail unless the security-review-approved label is present. Shared by
+  ci.yml (all CI events) and security-policy-refresh.yml (label toggles) so
+  both produce the same check logic; on non-pull_request events the check is
+  an informational no-op. Caller contract: jobs running this action on
+  non-pull_request events must publish under a name distinct from the
+  required security-sensitive-change-policy check, so the no-op success
+  cannot supersede a pull_request result on the same head SHA.
+
+runs:
+  using: composite
+  steps:
+    - name: Detect sensitive changes
+      id: detect
+      uses: actions/github-script@v9
+      with:
+        script: |
+          const sensitivePatterns = [
+            /^\.github\/workflows\/.*/,
+            /^\.github\/actions\/.*/,
+            /(^|\/)flake\.lock$/,
+            /(^|\/)pnpm-lock\.yaml$/
+          ];
+
+          if (context.eventName !== "pull_request") {
+            core.info("Sensitive-change policy is enforced on pull_request events.");
+            core.setOutput("sensitive_changed", "false");
+            core.setOutput("matched_files", "");
+            return;
+          }
+
+          const prNumber = context.payload.pull_request.number;
+          const files = await github.paginate(
+            github.rest.pulls.listFiles,
+            {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            }
+          );
+
+          const matched = files
+            .map((f) => f.filename)
+            .filter((filename) =>
+              sensitivePatterns.some((pattern) => pattern.test(filename))
+            );
+
+          core.info(`Sensitive files changed: ${matched.length}`);
+          core.setOutput("sensitive_changed", matched.length > 0 ? "true" : "false");
+          core.setOutput("matched_files", matched.join("\n"));
+
+    - name: Enforce security review label for sensitive changes
+      if: github.event_name == 'pull_request' && steps.detect.outputs.sensitive_changed == 'true'
+      uses: actions/github-script@v9
+      env:
+        # PR-controlled filenames are passed via the environment instead of
+        # being interpolated into the script source; inline ${{ }} inside the
+        # JS template would allow code injection via a crafted filename.
+        MATCHED_FILES: ${{ steps.detect.outputs.matched_files }}
+      with:
+        script: |
+          const requiredLabel = "security-review-approved";
+          const labels = (context.payload.pull_request.labels || []).map((label) => label.name);
+          if (!labels.includes(requiredLabel)) {
+            const changed = process.env.MATCHED_FILES || "";
+            core.setFailed(
+              [
+                `Sensitive file changes detected:\n${changed}`,
+                `Missing required label: ${requiredLabel}`,
+                "Add the label and ensure CODEOWNER approval before merge."
+              ].join("\n\n")
+            );
+          }
