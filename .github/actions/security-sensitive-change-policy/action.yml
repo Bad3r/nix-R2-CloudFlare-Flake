@@ -16,7 +16,7 @@ runs:
   steps:
     - name: Detect sensitive changes
       id: detect
-      uses: actions/github-script@v8
+      uses: actions/github-script@v9
       with:
         script: |
           const sensitivePatterns = [
@@ -56,7 +56,7 @@ runs:
 
     - name: Enforce security review label for sensitive changes
       if: github.event_name == 'pull_request' && steps.detect.outputs.sensitive_changed == 'true'
-      uses: actions/github-script@v8
+      uses: actions/github-script@v9
       env:
         # PR-controlled filenames are passed via the environment instead of
         # being interpolated into the script source; inline ${{ }} inside the
