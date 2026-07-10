@@ -32,17 +32,17 @@ Branch protection on `main` must require these status checks:
   label add/remove can refresh it through
   `.github/workflows/security-policy-refresh.yml` without rerunning CI.
 
-Trusted-base execution: on `pull_request` the policy job checks out
-`github.event.pull_request.base.sha` before invoking
-`.github/actions/security-sensitive-change-policy`, so the enforcement logic
-always runs from the protected base commit, not the PR-controlled merge ref. A
-PR that edits the action to under-report its own sensitive change is ignored:
-the trusted base version runs and reads the PR's changed files and labels from
-the API. Two further controls back this up and must stay in place:
+Self-neutering backstop: the policy check executes the composite action from
+the PR head commit, so a PR could edit its own enforcement logic. Because the
+workflow that runs on `pull_request` is itself the PR's version, pinning the
+action to a trusted base ref cannot close this (the action is repo-local and
+absent on base for the PR that introduces it, and a PR could drop the pin
+anyway). Two out-of-band controls close the hole instead and must stay in
+place:
 
 - `.github/CODEOWNERS` requires owner review for `/.github/workflows/` and
   `/.github/actions/`, so enforcement-surface changes cannot merge on the
-  strength of the green check alone.
+  strength of the (self-evaluated) green check alone.
 - Non-`pull_request` CI runs (push, `workflow_dispatch`) publish the policy
   job under the distinct name `security-sensitive-change-policy
 (informational)`. A dispatched run on a PR branch therefore cannot emit a

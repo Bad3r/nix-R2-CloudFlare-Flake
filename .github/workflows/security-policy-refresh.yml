@@ -33,15 +33,9 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Checkout the trusted base ref for the policy action
+      - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Pin to the protected base commit so the local policy action is the
-          # trusted version, not the PR-controlled merge-ref copy; a PR must not
-          # be able to edit the action to skip its own enforcement. The action
-          # reads changed files and labels from the API, so evaluating from base
-          # still inspects this PR. See ci.yml's policy job for the full note.
-          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
 
       - name: Run sensitive-change policy
