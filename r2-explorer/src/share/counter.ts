@@ -13,6 +13,7 @@ type ConsumeRequest = {
   tokenId: string;
   maxDownloads: number;
   expiresAtMs: number;
+  downloadCount: number;
 };
 
 function parseConsumeRequest(input: unknown): ConsumeRequest {
@@ -32,7 +33,14 @@ function parseConsumeRequest(input: unknown): ConsumeRequest {
   if (typeof expiresAtMs !== "number" || !Number.isFinite(expiresAtMs)) {
     throw new HttpError(400, "validation_error", "expiresAtMs must be a finite epoch-milliseconds number.");
   }
-  return { tokenId, maxDownloads, expiresAtMs };
+  const downloadCount = payload.downloadCount;
+  if (
+    downloadCount !== undefined &&
+    (typeof downloadCount !== "number" || !Number.isInteger(downloadCount) || downloadCount < 0)
+  ) {
+    throw new HttpError(400, "validation_error", "downloadCount must be a non-negative integer when provided.");
+  }
+  return { tokenId, maxDownloads, expiresAtMs, downloadCount: downloadCount ?? 0 };
 }
 
 /**
@@ -71,7 +79,12 @@ export class ShareCounterDurableObject {
 
       // No awaits between the read and the write other than storage calls:
       // the Durable Object input gate keeps this read-modify-write atomic.
-      const current = (await this.state.storage.get<number>(COUNT_STORAGE_KEY)) ?? 0;
+      // On the first consume the DO has no stored count yet, so it seeds from
+      // the KV record's downloadCount: a share migrated from the old KV-only
+      // accounting keeps its already-spent downloads instead of restarting at
+      // zero and regaining its full quota. Afterwards the stored count wins.
+      const stored = await this.state.storage.get<number>(COUNT_STORAGE_KEY);
+      const current = stored ?? body.downloadCount;
       if (body.maxDownloads > 0 && current >= body.maxDownloads) {
         throw new HttpError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
       }

@@ -51,6 +51,9 @@ async function consumeShareDownloadSlot(env: Env, record: ShareRecord): Promise<
       tokenId: record.tokenId,
       maxDownloads: record.maxDownloads,
       expiresAtMs: Date.parse(record.expiresAt),
+      // Seed value for a share migrated from KV-only accounting: the DO uses
+      // it only on its very first consume, then its own stored count wins.
+      downloadCount: record.downloadCount,
     }),
   });
 

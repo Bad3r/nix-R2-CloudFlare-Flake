@@ -33,6 +33,45 @@ describe("ShareCounterDurableObject", () => {
     expect(((await exhausted.json()) as { error: { code: string } }).error.code).toBe("share_expired");
   });
 
+  it("seeds the authoritative count from the KV downloadCount on first consume", async () => {
+    const { state, storage } = createMemoryDurableObjectState();
+    const counter = new ShareCounterDurableObject(state);
+    const expiresAtMs = Date.now() + 3600_000;
+
+    // A share migrated from the old KV-only accounting has already served 2 of
+    // 3 downloads; the fresh DO must not restart at 0 and regrant full quota.
+    const first = await counter.fetch(
+      consumeRequest({ tokenId: "token-migrated", maxDownloads: 3, expiresAtMs, downloadCount: 2 }),
+    );
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { count: number }).count).toBe(3);
+    expect(await storage.get<number>("count")).toBe(3);
+
+    const exhausted = await counter.fetch(
+      consumeRequest({ tokenId: "token-migrated", maxDownloads: 3, expiresAtMs, downloadCount: 2 }),
+    );
+    expect(exhausted.status).toBe(410);
+    expect(((await exhausted.json()) as { error: { code: string } }).error.code).toBe("share_expired");
+  });
+
+  it("ignores the KV seed once the durable object holds its own count", async () => {
+    const { state } = createMemoryDurableObjectState();
+    const counter = new ShareCounterDurableObject(state);
+    const expiresAtMs = Date.now() + 3600_000;
+
+    const first = await counter.fetch(
+      consumeRequest({ tokenId: "token-live", maxDownloads: 5, expiresAtMs, downloadCount: 0 }),
+    );
+    expect(((await first.json()) as { count: number }).count).toBe(1);
+
+    // A later request carrying a stale, higher KV seed must not override the
+    // DO's own stored count.
+    const second = await counter.fetch(
+      consumeRequest({ tokenId: "token-live", maxDownloads: 5, expiresAtMs, downloadCount: 4 }),
+    );
+    expect(((await second.json()) as { count: number }).count).toBe(2);
+  });
+
   it("keeps counting unlimited shares without a cap", async () => {
     const { state } = createMemoryDurableObjectState();
     const counter = new ShareCounterDurableObject(state);
