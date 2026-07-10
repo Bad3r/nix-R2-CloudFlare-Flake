@@ -29,7 +29,7 @@ export function OpsExplorer(): JSX.Element {
   const onAuthRequired = useCallback(() => setAuthRequired(true), [setAuthRequired]);
   const onAuthOk = useCallback(() => setAuthRequired(false), [setAuthRequired]);
 
-  const browser = useObjectBrowser({ log, session, onAuthRequired, onAuthOk });
+  const browser = useObjectBrowser({ log, onAuthRequired, onAuthOk });
 
   // Live mirrors so async callbacks read current values without churny deps.
   const prefixRef = useRef(browser.prefix);

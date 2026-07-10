@@ -9,7 +9,6 @@ import {
   moveObject,
   revokeShare,
   type ObjectMetadata,
-  type SessionInfoResponse,
   type ShareCreateResponse,
   type ShareRecord,
 } from "../lib/api";
@@ -51,7 +50,6 @@ export type ObjectBrowser = {
 
 type BrowserArgs = {
   log: Pick<ActivityLog, "append">;
-  session: SessionInfoResponse | null;
   onAuthRequired: () => void;
   onAuthOk: () => void;
 };
@@ -66,7 +64,7 @@ type BrowserArgs = {
  *   closures that previously reset the selection after a move.
  * - Paging keeps a cursor stack so Back is lossless, not forward-only.
  */
-export function useObjectBrowser({ log, session, onAuthRequired, onAuthOk }: BrowserArgs): ObjectBrowser {
+export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs): ObjectBrowser {
   const { append } = log;
 
   const [prefix, setPrefixState] = useState("");
@@ -93,7 +91,12 @@ export function useObjectBrowser({ log, session, onAuthRequired, onAuthOk }: Bro
   const shareSeqRef = useRef(0);
   const shareAbortRef = useRef<AbortController | null>(null);
 
-  const bucketAlias = session?.buckets?.[0]?.alias ?? DEFAULT_BUCKET_ALIAS;
+  // The object browser always lists FILES_BUCKET (the /api/v2/list route is
+  // hardcoded to it), so share create/list must target the matching "files"
+  // alias. Selecting session.buckets[0] picked the alphabetically-first
+  // configured alias (listBucketBindings sorts by alias), which misrouted
+  // shares to a bucket whose alias sorts before "files".
+  const bucketAlias = DEFAULT_BUCKET_ALIAS;
 
   // Abort in-flight reads on unmount so late responses cannot resolve against
   // a disposed component (mirrors useSessionBootstrap's cleanup).
