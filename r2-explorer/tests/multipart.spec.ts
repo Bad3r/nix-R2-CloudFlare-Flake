@@ -1005,6 +1005,55 @@ describe("multipart upload flow", () => {
     expect(await bucket.get(stagingKey)).toBeNull();
   });
 
+  it("surfaces the validation error even when staged cleanup delete fails", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "report.pdf",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/pdf",
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // PNG magic bytes disagree with the declared application/pdf type, so the
+    // completion is rejected and the staged object is deleted.
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // A transient delete failure during cleanup must not mask the 400
+    // validation error with a 500.
+    const deleteSpy = vi
+      .spyOn(bucket, "delete")
+      .mockRejectedValue(new Error("transient R2 delete failure"));
+
+    const completeResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/complete", {
+        method: "POST",
+        headers: uploadHeaders(),
+        body: JSON.stringify({
+          sessionId: initPayload.sessionId,
+          uploadId: initPayload.uploadId,
+          finalSize: declaredSize,
+          parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+        }),
+      }),
+      env,
+    );
+
+    expect(deleteSpy).toHaveBeenCalledWith(stagingKey);
+    expect(completeResponse.status).toBe(400);
+    expect(((await completeResponse.json()) as ErrorPayload).error?.code).toBe("upload_magic_mismatch");
+
+    deleteSpy.mockRestore();
+  });
+
   it("promotes a valid overwrite from staging onto the target key", async () => {
     const { env, bucket } = await createTestEnv();
     const app = createApp();

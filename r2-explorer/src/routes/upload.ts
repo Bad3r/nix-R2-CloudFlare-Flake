@@ -109,14 +109,19 @@ async function rejectStagedUpload(
   session: UploadSessionRecord,
   error: HttpError,
 ): Promise<never> {
-  await env.FILES_BUCKET.delete(session.stagingKey);
+  await env.FILES_BUCKET.delete(session.stagingKey).catch((deleteError) => {
+    // A transient delete failure (R2 rate limit, network blip) must not mask
+    // the validation error thrown below with a 500. The staged object lives
+    // under the reserved staging prefix and is reclaimed when the session
+    // expires, so log and continue.
+    console.error(`Failed to delete staged object ${session.stagingKey}:`, deleteError);
+  });
   await markUploadSessionAborted(env, actor, {
     sessionId: session.sessionId,
     uploadId: session.uploadId,
   }).catch((abortError) => {
-    // The staged object is already gone; a failed status transition only
-    // leaves the session to expire on its own, so log instead of masking the
-    // validation error below.
+    // A failed status transition only leaves the session to expire on its
+    // own, so log instead of masking the validation error below.
     console.error(`Failed to mark upload session ${session.sessionId} aborted:`, abortError);
   });
   throw error;
