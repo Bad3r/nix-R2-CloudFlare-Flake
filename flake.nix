@@ -282,7 +282,18 @@
               if failed != [ ] then
                 throw "nixos-module-eval check failed assertions: ${failedMessages}"
               else
-                pkgs.writeText "r2-nixos-module-eval" forced;
+                builtins.seq forced (
+                  pkgs.runCommand "r2-nixos-module-eval" { } ''
+                    # Regression guard for the bisync lock-expiry fix: rclone only
+                    # expires a lock orphaned by a crash or shutdown when run with
+                    # --max-lock, so require it in the generated bisync unit.
+                    if ! grep -q -- '--max-lock=' ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
+                      echo "r2-bisync ExecStart is missing --max-lock; an orphaned lock would wedge the service permanently" >&2
+                      exit 1
+                    fi
+                    touch "$out"
+                  ''
+                );
           };
 
           devShells.default = pkgs.mkShell {
