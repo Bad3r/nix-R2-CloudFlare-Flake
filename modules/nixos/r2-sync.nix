@@ -194,22 +194,27 @@ let
 
         printf '%s\n' "$bisync_output" >&2
 
-        # A lock file left by a run that was killed (host shutdown, OOM, crash)
-        # blocks every later run with "prior lock file found". The bisync workdir
-        # is host-local and single-writer, so a lock whose recorded holder PID is
-        # no longer running is a safe orphan to clear, then retry once. --max-lock
-        # auto-expires orphans written after it was set; this branch also recovers
-        # locks written before it, whose stored expiry is far in the future.
-        if [[ "$bisync_output" == *"prior lock file found"* ]]; then
+        # A crash or shutdown can orphan a .lck that then blocks every later run
+        # with "prior lock file found". The workdir is host-local and
+        # single-writer, so clearing a lock whose holder PID is dead and retrying
+        # once is safe. Gated on --max-lock: with maxLock = "" the user opts into
+        # rclone's native never-expire locks, which must be cleared by hand.
+        if [[ -n "${maxLockArg}" ]] \
+          && [[ "$bisync_output" == *"prior lock file found"* ]]; then
           cleared_lock=false
+          # rclone writes .lck as compact JSON with a quoted string PID
+          # ("PID":"12345"); tolerate whitespace and unquoted ints against drift.
+          pid_regex='"PID"[[:space:]]*:[[:space:]]*"?([0-9]+)"?'
           for lock_file in ${workdirArg}/*.lck; do
             [[ -f "$lock_file" ]] || continue
             lock_pid=""
             lock_content="$(< "$lock_file")" || true
-            if [[ "$lock_content" =~ \"PID\":\"([0-9]+)\" ]]; then
+            if [[ "$lock_content" =~ $pid_regex ]]; then
               lock_pid="''${BASH_REMATCH[1]}"
             fi
-            if [[ -z "$lock_pid" ]] || ! kill -0 "$lock_pid" 2>/dev/null; then
+            # /proc/<pid> liveness (Linux-only) avoids kill -0's EPERM misfire
+            # if the unit ever runs non-root. --max-lock is the real expiry.
+            if [[ -z "$lock_pid" ]] || [[ ! -d "/proc/$lock_pid" ]]; then
               echo "Clearing orphaned bisync lock for ${name} (holder PID ''${lock_pid:-unknown} not running): $lock_file" >&2
               ${pkgs.coreutils}/bin/rm -f "$lock_file"
               cleared_lock=true
