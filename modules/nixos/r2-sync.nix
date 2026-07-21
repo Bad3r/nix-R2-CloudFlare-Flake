@@ -130,6 +130,13 @@ let
       remoteTrashArg = lib.escapeShellArg remoteTrashPath;
       remoteCheckPath = ":s3:${layout.path}/${checkFilename}";
       remoteCheckArg = lib.escapeShellArg remoteCheckPath;
+      # rclone bisync records this expiry in each run's lock file and renews it
+      # while the run is alive, so a lock orphaned by a crash or shutdown is
+      # auto-overridden by the next run once it lapses. Empty string omits the
+      # flag (rclone default: locks never expire, wedging the service forever).
+      maxLockArg = lib.optionalString (
+        mount.bisync.maxLock != ""
+      ) "--max-lock=${lib.escapeShellArg mount.bisync.maxLock}";
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
@@ -166,6 +173,9 @@ let
             --backup-dir1=${localTrashArg} \
             --backup-dir2=${remoteTrashArg} \
             --max-delete=${toString mount.bisync.maxDelete} \
+            ${maxLockArg} \
+            --recover \
+            --resilient \
             --workdir=${workdirArg} \
             --check-access \
             --check-filename=${checkFilenameArg} \
@@ -183,6 +193,36 @@ let
         fi
 
         printf '%s\n' "$bisync_output" >&2
+
+        # A lock file left by a run that was killed (host shutdown, OOM, crash)
+        # blocks every later run with "prior lock file found". The bisync workdir
+        # is host-local and single-writer, so a lock whose recorded holder PID is
+        # no longer running is a safe orphan to clear, then retry once. --max-lock
+        # auto-expires orphans written after it was set; this branch also recovers
+        # locks written before it, whose stored expiry is far in the future.
+        if [[ "$bisync_output" == *"prior lock file found"* ]]; then
+          cleared_lock=false
+          for lock_file in ${workdirArg}/*.lck; do
+            [[ -f "$lock_file" ]] || continue
+            lock_pid=""
+            lock_content="$(< "$lock_file")" || true
+            if [[ "$lock_content" =~ \"PID\":\"([0-9]+)\" ]]; then
+              lock_pid="''${BASH_REMATCH[1]}"
+            fi
+            if [[ -z "$lock_pid" ]] || ! kill -0 "$lock_pid" 2>/dev/null; then
+              echo "Clearing orphaned bisync lock for ${name} (holder PID ''${lock_pid:-unknown} not running): $lock_file" >&2
+              ${pkgs.coreutils}/bin/rm -f "$lock_file"
+              cleared_lock=true
+            else
+              echo "Bisync lock for ${name} held by live PID $lock_pid; leaving it in place." >&2
+            fi
+          done
+          if [[ "$cleared_lock" == true ]]; then
+            echo "Retrying bisync for ${name} after clearing orphaned lock." >&2
+            run_bisync "''${resync_flags[@]}"
+            exit 0
+          fi
+        fi
 
         # When a mount path or remote basename changes, old listing files may still
         # exist in workdir and bisync asks for manual --resync recovery.
@@ -358,6 +398,21 @@ in
                 ];
                 default = "path1";
                 description = "Resync preference used automatically on first run (when bisync state is missing).";
+              };
+
+              maxLock = lib.mkOption {
+                type = lib.types.str;
+                default = "15m";
+                example = "5m";
+                description = ''
+                  Lock-file expiry passed to rclone bisync as --max-lock. rclone
+                  renews the lock while a run is alive, so a run orphaned by a
+                  crash or shutdown is auto-overridden by the next run once this
+                  expiry lapses. The empty string omits --max-lock, restoring
+                  rclone's default where locks never expire and an orphaned lock
+                  wedges the service until cleared by hand. rclone enforces a 2m
+                  minimum when the flag is set.
+                '';
               };
             };
           };
