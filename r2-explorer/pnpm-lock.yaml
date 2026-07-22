@@ -47,10 +47,10 @@ importers:
     dependencies:
       '@fontsource-variable/martian-mono':
         specifier: ^5.2.7
-        version: 5.2.7
+        version: 5.3.0
       '@fontsource-variable/spline-sans-mono':
         specifier: ^5.2.8
-        version: 5.2.8
+        version: 5.3.0
       astro:
         specifier: ^7.0.7
         version: 7.1.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(aws4fetch@1.0.20)(rollup@4.62.2)(yaml@2.9.0)
@@ -658,11 +658,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@fontsource-variable/martian-mono@5.2.7':
-    resolution: {integrity: sha512-tchlJXmyjMLQLbhYh5kCwZIVXsTxfvfTAZ32nIrszWCJnEIqTpRloMvJPOpQA9BBCaOvvV5k0nI633dlqJsPRw==}
+  '@fontsource-variable/martian-mono@5.3.0':
+    resolution: {integrity: sha512-0wVODx9ILwNnaYC4XCuSaFRYtj1Prd89MRVaSuv2ng6zLiQkS4SepaWEPefs7vqCZS8sbEOA8jb/4F5KNMnGdg==}
 
-  '@fontsource-variable/spline-sans-mono@5.2.8':
-    resolution: {integrity: sha512-Z1yYiEtP+8Gll5BJaR9dICK/ZTxoTWH+ZBH6rOTMWajPSOxwl7IZplkwX2J1QhMxqulhhdMrkRx6SkkLM+jLQw==}
+  '@fontsource-variable/spline-sans-mono@5.3.0':
+    resolution: {integrity: sha512-dH/qBj/MCE4ObiuCwlA9X1o3AftMO9dwfFgoRVYjy6VCPYkpWAlEtK/RjeyICgsR8rW763IAQARskVgShBY5JA==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3350,9 +3350,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@fontsource-variable/martian-mono@5.2.7': {}
+  '@fontsource-variable/martian-mono@5.3.0': {}
 
-  '@fontsource-variable/spline-sans-mono@5.2.8': {}
+  '@fontsource-variable/spline-sans-mono@5.3.0': {}
 
   '@img/colour@1.1.0': {}
 
