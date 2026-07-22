@@ -9,24 +9,25 @@ Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 
 ## Options
 
-| Option                                                    | Type                                                         | Default       | Required when enabled                 | Notes                                                         |
-| --------------------------------------------------------- | ------------------------------------------------------------ | ------------- | ------------------------------------- | ------------------------------------------------------------- |
-| `services.r2-sync.enable`                                 | boolean                                                      | `false`       | no                                    | Enables service and timer generation.                         |
-| `services.r2-sync.credentialsFile`                        | `null` or path                                               | `null`        | yes                                   | Environment file loaded by systemd units.                     |
-| `services.r2-sync.accountId`                              | string                                                       | `""`          | yes (if file unset)                   | Used to build `https://<accountId>.r2.cloudflarestorage.com`. |
-| `services.r2-sync.accountIdFile`                          | `null` or path                                               | `null`        | yes (if literal unset)                | File-based account ID source.                                 |
-| `services.r2-sync.mounts`                                 | attrset of submodules                                        | `{}`          | yes (must contain at least one mount) | One mount profile per attr key.                               |
-| `services.r2-sync.mounts.<name>.bucket`                   | string                                                       | none          | yes                                   | Remote bucket name; must be non-empty.                        |
-| `services.r2-sync.mounts.<name>.remotePrefix`             | string                                                       | `""`          | yes                                   | Remote subpath inside the bucket (mount/sync root).           |
-| `services.r2-sync.mounts.<name>.mountPoint`               | path                                                         | none          | yes                                   | Local mount location for `rclone mount`.                      |
-| `services.r2-sync.mounts.<name>.localPath`                | `null` or path                                               | `null`        | no                                    | Local bisync side; falls back to `mountPoint`.                |
-| `services.r2-sync.mounts.<name>.syncInterval`             | string                                                       | `"5m"`        | no                                    | `OnUnitActiveSec` value for bisync timer.                     |
-| `services.r2-sync.mounts.<name>.bisync.maxDelete`         | integer                                                      | `100000`      | no                                    | Passed to `rclone bisync --max-delete`.                       |
-| `services.r2-sync.mounts.<name>.bisync.checkFilename`     | string                                                       | `".r2-check"` | no                                    | Used for `--check-access` safety.                             |
-| `services.r2-sync.mounts.<name>.bisync.initialResyncMode` | enum `path1`, `path2`, `newer`, `older`, `larger`, `smaller` | `"path1"`     | no                                    | Used on first run to seed bisync state.                       |
-| `services.r2-sync.mounts.<name>.vfsCache.mode`            | enum `off`, `minimal`, `writes`, `full`                      | `"full"`      | no                                    | Passed to `--vfs-cache-mode`.                                 |
-| `services.r2-sync.mounts.<name>.vfsCache.maxSize`         | string                                                       | `"10G"`       | no                                    | Passed to `--vfs-cache-max-size`.                             |
-| `services.r2-sync.mounts.<name>.vfsCache.maxAge`          | string                                                       | `"24h"`       | no                                    | Passed to `--vfs-cache-max-age`.                              |
+| Option                                                    | Type                                                         | Default       | Required when enabled                 | Notes                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------ | ------------- | ------------------------------------- | -------------------------------------------------------------------------- |
+| `services.r2-sync.enable`                                 | boolean                                                      | `false`       | no                                    | Enables service and timer generation.                                      |
+| `services.r2-sync.credentialsFile`                        | `null` or path                                               | `null`        | yes                                   | Environment file loaded by systemd units.                                  |
+| `services.r2-sync.accountId`                              | string                                                       | `""`          | yes (if file unset)                   | Used to build `https://<accountId>.r2.cloudflarestorage.com`.              |
+| `services.r2-sync.accountIdFile`                          | `null` or path                                               | `null`        | yes (if literal unset)                | File-based account ID source.                                              |
+| `services.r2-sync.mounts`                                 | attrset of submodules                                        | `{}`          | yes (must contain at least one mount) | One mount profile per attr key.                                            |
+| `services.r2-sync.mounts.<name>.bucket`                   | string                                                       | none          | yes                                   | Remote bucket name; must be non-empty.                                     |
+| `services.r2-sync.mounts.<name>.remotePrefix`             | string                                                       | `""`          | yes                                   | Remote subpath inside the bucket (mount/sync root).                        |
+| `services.r2-sync.mounts.<name>.mountPoint`               | path                                                         | none          | yes                                   | Local mount location for `rclone mount`.                                   |
+| `services.r2-sync.mounts.<name>.localPath`                | `null` or path                                               | `null`        | no                                    | Local bisync side; falls back to `mountPoint`.                             |
+| `services.r2-sync.mounts.<name>.syncInterval`             | string                                                       | `"5m"`        | no                                    | `OnUnitActiveSec` value for bisync timer.                                  |
+| `services.r2-sync.mounts.<name>.bisync.maxDelete`         | integer                                                      | `100000`      | no                                    | Passed to `rclone bisync --max-delete`.                                    |
+| `services.r2-sync.mounts.<name>.bisync.checkFilename`     | string                                                       | `".r2-check"` | no                                    | Used for `--check-access` safety.                                          |
+| `services.r2-sync.mounts.<name>.bisync.initialResyncMode` | enum `path1`, `path2`, `newer`, `older`, `larger`, `smaller` | `"path1"`     | no                                    | Used on first run to seed bisync state.                                    |
+| `services.r2-sync.mounts.<name>.bisync.maxLock`           | string                                                       | `"15m"`       | no                                    | Passed to `rclone bisync --max-lock`; `""` omits it so locks never expire. |
+| `services.r2-sync.mounts.<name>.vfsCache.mode`            | enum `off`, `minimal`, `writes`, `full`                      | `"full"`      | no                                    | Passed to `--vfs-cache-mode`.                                              |
+| `services.r2-sync.mounts.<name>.vfsCache.maxSize`         | string                                                       | `"10G"`       | no                                    | Passed to `--vfs-cache-max-size`.                                          |
+| `services.r2-sync.mounts.<name>.vfsCache.maxAge`          | string                                                       | `"24h"`       | no                                    | Passed to `--vfs-cache-max-age`.                                           |
 
 ## Mount vs Bisync (How to Use the Two Paths)
 
@@ -75,6 +76,14 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - If prior listing cache exists but no longer matches the current local/remote
   basename pair (for example, path case changes), the wrapper retries once with
   `--resync --resync-mode <initialResyncMode>` automatically.
+- Bisync passes `--max-lock` (default `15m`) so a run orphaned by a crash or
+  shutdown self-expires and the next run can take over; rclone renews the lock
+  while a run is alive and clamps values under 2m up to 2m. Interrupted runs
+  self-heal via `--recover`/`--resilient` rather than needing a manual
+  `--resync`. As a fast-path the wrapper also clears a `.lck` whose recorded
+  holder PID is no longer running and retries once. Setting `maxLock = ""` omits
+  `--max-lock` and disables that cleanup, restoring rclone's native behavior
+  where an orphaned lock blocks every later run until removed by hand.
 
 ## Generated runtime artifacts
 
