@@ -15,6 +15,14 @@ let
   };
   hasMounts = cfg.mounts != { };
 
+  # Mirrors rclone's --compare parser (cmd/bisync/compare.go, setFromCompareFlag):
+  # split on ",", trim, lowercase; each part must be size, modtime or checksum.
+  isValidCompare =
+    value:
+    lib.all (
+      part: builtins.match "[[:space:]]*(size|modtime|checksum)[[:space:]]*" (lib.toLower part) != null
+    ) (lib.splitString "," value);
+
   # Endpoint resolved at service runtime from the account ID env/file.
   runtimeEndpoint = r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}";
 
@@ -137,6 +145,24 @@ let
       maxLockArg = lib.optionalString (
         mount.bisync.maxLock != ""
       ) "--max-lock=${lib.escapeShellArg mount.bisync.maxLock}";
+      compareArg = lib.optionalString (
+        mount.bisync.compare != null
+      ) "--compare=${lib.escapeShellArg mount.bisync.compare}";
+      excludeArgs = lib.concatMapStringsSep " " (
+        pattern: "--exclude=${lib.escapeShellArg pattern}"
+      ) mount.bisync.excludes;
+      extraArgs = lib.escapeShellArgs mount.bisync.extraArgs;
+      # rclone requires --resync after a filter change and recommends it after
+      # a --compare change, but only guards --filters-file itself (an .md5
+      # written next to the file, impossible from the store). The inline flags
+      # are recorded in the workdir after each successful run so a change
+      # forces the resync instead of a listing that silently drops files or
+      # lacks the compared attribute. extraArgs is verbatim and untracked.
+      trackedFlags =
+        lib.optional (mount.bisync.compare != null) "--compare=${mount.bisync.compare}"
+        ++ map (pattern: "--exclude=${pattern}") mount.bisync.excludes;
+      trackedFlagsArg = lib.escapeShellArg (lib.concatStringsSep "\n" trackedFlags);
+      flagsFileArg = lib.escapeShellArg "${workdirPath}/.r2-bisync-flags";
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
@@ -163,6 +189,23 @@ let
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
+        # Compare/exclude flags recorded by the last successful run. A missing
+        # file reads as the empty flag set, which is what every run before the
+        # file existed used, so an unchanged default config never resyncs.
+        current_flags=${trackedFlagsArg}
+        stored_flags=""
+        if [[ -f ${flagsFileArg} ]]; then
+          stored_flags="$(< ${flagsFileArg})"
+        fi
+        if [[ "$has_bisync_state" == true ]] && [[ "$stored_flags" != "$current_flags" ]]; then
+          echo "Bisync compare/exclude flags for ${name} changed since the last successful run; running --resync as rclone requires after a filter change." >&2
+          resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
+        fi
+
+        record_flags() {
+          printf '%s\n' "$current_flags" > ${flagsFileArg}
+        }
+
         run_bisync() {
           ${pkgs.rclone}/bin/rclone bisync \
             --config=/dev/null \
@@ -179,6 +222,9 @@ let
             --workdir=${workdirArg} \
             --check-access \
             --check-filename=${checkFilenameArg} \
+            ${compareArg} \
+            ${excludeArgs} \
+            ${extraArgs} \
             "$@"
         }
 
@@ -189,6 +235,7 @@ let
 
         if [[ "$bisync_status" -eq 0 ]]; then
           printf '%s\n' "$bisync_output"
+          record_flags
           exit 0
         fi
 
@@ -225,6 +272,7 @@ let
           if [[ "$cleared_lock" == true ]]; then
             echo "Retrying bisync for ${name} after clearing orphaned lock." >&2
             run_bisync "''${resync_flags[@]}"
+            record_flags
             exit 0
           fi
         fi
@@ -236,6 +284,7 @@ let
           && { [[ "$bisync_output" == *"cannot find prior Path1 or Path2 listings"* ]] || [[ "$bisync_output" == *"Must run --resync to recover"* ]]; }; then
           echo "Detected stale bisync listing state for ${name}; retrying once with --resync." >&2
           run_bisync --resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode}
+          record_flags
           exit 0
         fi
 
@@ -419,6 +468,55 @@ in
                   minimum when the flag is set.
                 '';
               };
+
+              compare = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "size,checksum";
+                description = ''
+                  Comma-separated attributes bisync compares, passed as
+                  --compare (any of size, modtime, checksum). null keeps
+                  rclone's default of size,modtime. On S3-class backends the
+                  modtime lives in object metadata and costs one HEAD request
+                  per object on every listing, so "size,checksum" turns the
+                  listing of a large prefix into a plain object walk (the ETag
+                  is the MD5 for single-part uploads) at the price of hashing
+                  the local tree each run. Changing this on a mount with
+                  existing bisync state triggers one automatic --resync.
+                '';
+              };
+
+              excludes = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                example = [
+                  "node_modules/**"
+                  ".venv/**"
+                ];
+                description = ''
+                  rclone filter patterns, each passed as --exclude=<pattern>
+                  to every bisync run (rclone filtering syntax, relative to the
+                  sync root). Changing this on a mount with existing bisync
+                  state triggers one automatic --resync, which rclone requires
+                  after a filter change.
+                '';
+              };
+
+              extraArgs = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                example = [
+                  "--fast-list"
+                  "--checkers"
+                  "16"
+                ];
+                description = ''
+                  Extra arguments appended verbatim to every rclone bisync
+                  invocation after the module-managed flags, one argv element
+                  per entry. Filter flags placed here are not tracked for the
+                  automatic --resync; use excludes for those.
+                '';
+              };
             };
           };
         }
@@ -468,7 +566,11 @@ in
         assertion = normalized != ".trash" && !lib.hasPrefix ".trash/" normalized;
         message = "services.r2-sync.mounts.${name}.remotePrefix must not be '.trash' or nested under it (the bisync remote backup-dir '<bucket>/.trash/<remotePrefix>' must stay outside the sync root): got '${mount.remotePrefix}'";
       }
-    ) cfg.mounts;
+    ) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = mount.bisync.compare == null || isValidCompare mount.bisync.compare;
+      message = "services.r2-sync.mounts.${name}.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '${toString mount.bisync.compare}'";
+    }) cfg.mounts;
 
     environment.systemPackages = [
       pkgs.rclone

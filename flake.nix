@@ -241,6 +241,18 @@
                           remotePrefix = "documents";
                           mountPoint = "/data/r2/mount/documents";
                           localPath = "/data/r2/documents";
+                          bisync = {
+                            compare = "size,checksum";
+                            excludes = [
+                              "node_modules/**"
+                              ".venv/**"
+                            ];
+                            extraArgs = [
+                              "--fast-list"
+                              "--checkers"
+                              "16"
+                            ];
+                          };
                         };
                       };
                       services.r2-restic = {
@@ -291,6 +303,21 @@
                       echo "r2-bisync ExecStart is missing --max-lock; an orphaned lock would wedge the service permanently" >&2
                       exit 1
                     fi
+                    # Regression guard for per-mount bisync tuning (issue #150):
+                    # compare, excludes and extraArgs must reach the rclone
+                    # command line, and compare/exclude changes must be tracked
+                    # in the workdir so they force the --resync rclone requires.
+                    for needle in \
+                      '--compare=size,checksum' \
+                      "--exclude='node_modules/**'" \
+                      "--exclude='.venv/**'" \
+                      '--fast-list --checkers 16' \
+                      '.r2-bisync-flags'; do
+                      if ! grep -qF -- "$needle" ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
+                        echo "r2-bisync ExecStart is missing $needle; bisync.compare/excludes/extraArgs are not reaching rclone" >&2
+                        exit 1
+                      fi
+                    done
                     touch "$out"
                   ''
                 );
