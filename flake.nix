@@ -309,8 +309,9 @@
                     # in the workdir so they force the --resync rclone requires.
                     for needle in \
                       '--compare=size,checksum' \
-                      "--exclude='node_modules/**'" \
-                      "--exclude='.venv/**'" \
+                      "--filter='+ /.r2-check'" \
+                      "--filter='- node_modules/**'" \
+                      "--filter='- .venv/**'" \
                       '--fast-list --checkers 16' \
                       '.r2-bisync-flags'; do
                       if ! grep -qF -- "$needle" ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
@@ -318,6 +319,16 @@
                         exit 1
                       fi
                     done
+                    # --filter rules apply in command-line order with the first
+                    # match winning, so the check-file include must lead or a
+                    # pattern such as ".*" hides it from --check-access.
+                    first_rule="$(grep -o -- "--filter='[^']*'" ${
+                      units."r2-bisync-documents".serviceConfig.ExecStart
+                    } | head -1)"
+                    if [[ "$first_rule" != "--filter='+ /.r2-check'" ]]; then
+                      echo "r2-bisync ExecStart must pin the check file ahead of user excludes; first filter rule is $first_rule" >&2
+                      exit 1
+                    fi
                     touch "$out"
                   ''
                 );

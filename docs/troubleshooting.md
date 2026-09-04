@@ -393,7 +393,8 @@ Verify:
 - The first run after the change completes and `journalctl` shows a
   `Bisync successful` line.
 - `/var/lib/r2-sync-<name>/bisync/` contains `.lst` files and
-  `.r2-bisync-flags` listing the configured `--compare` and `--exclude` flags.
+  `.r2-bisync-flags` listing the configured `--compare` flag and exclude filter
+  rules.
 
 ## 4) `restic`
 

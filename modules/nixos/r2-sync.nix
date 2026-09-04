@@ -148,9 +148,27 @@ let
       compareArg = lib.optionalString (
         mount.bisync.compare != null
       ) "--compare=${lib.escapeShellArg mount.bisync.compare}";
-      excludeArgs = lib.concatMapStringsSep " " (
-        pattern: "--exclude=${lib.escapeShellArg pattern}"
-      ) mount.bisync.excludes;
+      # rclone evaluates every --exclude before any --filter and gives --include
+      # an implied trailing "- **", so the access-check file can only be pinned
+      # ahead of user excludes when all rules share the --filter flag, where
+      # the first matching rule wins.
+      checkFileRule = "+ /${
+        lib.escape [
+          "\\"
+          "*"
+          "?"
+          "["
+          "]"
+          "{"
+          "}"
+        ] checkFilename
+      }";
+      excludeRules = map (pattern: "- ${pattern}") mount.bisync.excludes;
+      filterArgs = lib.optionalString (mount.bisync.excludes != [ ]) (
+        lib.concatMapStringsSep " " (rule: "--filter=${lib.escapeShellArg rule}") (
+          [ checkFileRule ] ++ excludeRules
+        )
+      );
       extraArgs = lib.escapeShellArgs mount.bisync.extraArgs;
       # rclone requires --resync after a filter change and recommends it after
       # a --compare change, but only guards --filters-file itself (an .md5
@@ -160,7 +178,7 @@ let
       # lacks the compared attribute. extraArgs is verbatim and untracked.
       trackedFlags =
         lib.optional (mount.bisync.compare != null) "--compare=${mount.bisync.compare}"
-        ++ map (pattern: "--exclude=${pattern}") mount.bisync.excludes;
+        ++ map (rule: "--filter=${rule}") excludeRules;
       trackedFlagsArg = lib.escapeShellArg (lib.concatStringsSep "\n" trackedFlags);
       flagsFileArg = lib.escapeShellArg "${workdirPath}/.r2-bisync-flags";
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
@@ -223,7 +241,7 @@ let
             --check-access \
             --check-filename=${checkFilenameArg} \
             ${compareArg} \
-            ${excludeArgs} \
+            ${filterArgs} \
             ${extraArgs} \
             "$@"
         }
@@ -494,11 +512,13 @@ in
                   ".venv/**"
                 ];
                 description = ''
-                  rclone filter patterns, each passed as --exclude=<pattern>
-                  to every bisync run (rclone filtering syntax, relative to the
-                  sync root). Changing this on a mount with existing bisync
-                  state triggers one automatic --resync, which rclone requires
-                  after a filter change.
+                  rclone filter patterns (rclone filtering syntax, relative to
+                  the sync root). Each entry becomes a "- <pattern>" filter
+                  rule on every bisync run, evaluated after a
+                  "+ /<checkFilename>" rule that keeps the access-check file in
+                  both listings whatever the patterns match. Changing this on a
+                  mount with existing bisync state triggers one automatic
+                  --resync, which rclone requires after a filter change.
                 '';
               };
 
