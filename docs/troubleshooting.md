@@ -343,6 +343,59 @@ Escalate:
 
 - `docs/sync.md` for template-specific expected paths.
 
+### B. First run of a large prefix never completes
+
+Failure signature:
+
+- Every run of `r2-bisync-<name>` is killed by a consumer-side
+  `TimeoutStartSec` (`start operation timed out. Terminating.`) or simply runs
+  for a very long time, with little CPU, no disk writes, and steady small-request
+  network traffic.
+- `/var/lib/r2-sync-<name>/bisync/` holds only `.lst-new` headers and a `.lck`
+  after the kill; the next timer run clears the orphaned lock and starts over.
+
+Confirm:
+
+```bash
+journalctl -u r2-bisync-<name> -n 50 --no-pager
+ls -la /var/lib/r2-sync-<name>/bisync/
+find <localPath> -type f | wc -l
+find <localPath> -type f -path '*/node_modules/*' -o -type f -path '*/.venv/*' | wc -l
+```
+
+Likely root causes:
+
+- rclone's default comparison is `size,modtime`. On S3-class backends the
+  modtime lives in object metadata, so every listing costs one HEAD request per
+  object, and bisync writes its listings only after the whole walk finishes.
+  Lengthening the unit bound hides the cost; every later run pays it again.
+- Build and dependency trees (`node_modules`, `.venv`, caches) dominate the
+  object count and do not belong in the sync.
+
+Repair (see `docs/reference/services-r2-sync.md`, "Sizing a mount for a large
+prefix"):
+
+```nix
+services.r2-sync.mounts.<name>.bisync = {
+  compare = "size,checksum";
+  excludes = [ "node_modules/**" ".venv/**" ];
+  extraArgs = [ "--fast-list" "--checkers" "16" ];
+};
+```
+
+A `compare` or `excludes` change on a mount that already has listing state
+makes the next run perform one automatic `--resync`, which rclone requires
+after a filter change. Filter flags passed through `extraArgs` are not tracked;
+keep them in `excludes`.
+
+Verify:
+
+- The first run after the change completes and `journalctl` shows a
+  `Bisync successful` line.
+- `/var/lib/r2-sync-<name>/bisync/` contains `.lst` files and
+  `.r2-bisync-flags` listing the configured `--compare` flag and exclude filter
+  rules.
+
 ## 4) `restic`
 
 ### A. Backup unit fails (`repository does not exist`, auth failure, wrong password)

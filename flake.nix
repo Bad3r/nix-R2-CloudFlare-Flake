@@ -241,6 +241,18 @@
                           remotePrefix = "documents";
                           mountPoint = "/data/r2/mount/documents";
                           localPath = "/data/r2/documents";
+                          bisync = {
+                            compare = "size,checksum";
+                            excludes = [
+                              "node_modules/**"
+                              ".venv/**"
+                            ];
+                            extraArgs = [
+                              "--fast-list"
+                              "--checkers"
+                              "16"
+                            ];
+                          };
                         };
                       };
                       services.r2-restic = {
@@ -289,6 +301,32 @@
                     # --max-lock, so require it in the generated bisync unit.
                     if ! grep -q -- '--max-lock=' ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
                       echo "r2-bisync ExecStart is missing --max-lock; an orphaned lock would wedge the service permanently" >&2
+                      exit 1
+                    fi
+                    # Regression guard for per-mount bisync tuning (issue #150):
+                    # compare, excludes and extraArgs must reach the rclone
+                    # command line, and compare/exclude changes must be tracked
+                    # in the workdir so they force the --resync rclone requires.
+                    for needle in \
+                      '--compare=size,checksum' \
+                      "--filter='+ /.r2-check'" \
+                      "--filter='- node_modules/**'" \
+                      "--filter='- .venv/**'" \
+                      '--fast-list --checkers 16' \
+                      '.r2-bisync-flags'; do
+                      if ! grep -qF -- "$needle" ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
+                        echo "r2-bisync ExecStart is missing $needle; bisync.compare/excludes/extraArgs are not reaching rclone" >&2
+                        exit 1
+                      fi
+                    done
+                    # --filter rules apply in command-line order with the first
+                    # match winning, so the check-file include must lead or a
+                    # pattern such as ".*" hides it from --check-access.
+                    first_rule="$(grep -o -- "--filter='[^']*'" ${
+                      units."r2-bisync-documents".serviceConfig.ExecStart
+                    } | head -1)"
+                    if [[ "$first_rule" != "--filter='+ /.r2-check'" ]]; then
+                      echo "r2-bisync ExecStart must pin the check file ahead of user excludes; first filter rule is $first_rule" >&2
                       exit 1
                     fi
                     touch "$out"

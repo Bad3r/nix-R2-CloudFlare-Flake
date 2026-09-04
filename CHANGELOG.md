@@ -15,6 +15,14 @@ and this project follows Conventional Commits.
 - `maxDelete` (integer `--max-delete`)
 - `checkFilename` (remote check file for `--check-access`)
 - `initialResyncMode` (auto `--resync` behavior on first run)
+- `services.r2-sync.mounts.*.bisync.compare`, `bisync.excludes` and
+  `bisync.extraArgs`: per-mount `rclone bisync --compare`, exclude filter
+  rules (kept behind a `+ /<checkFilename>` rule so they cannot hide the
+  access-check file) and verbatim extra arguments, so a large S3 prefix can
+  skip the per-object modtime HEAD requests and keep build trees out of the
+  listing (#150). A `compare` or `excludes` change on a mount with existing
+  bisync state triggers one automatic `--resync`, which rclone requires after
+  a filter change.
 
 ### Changed
 
