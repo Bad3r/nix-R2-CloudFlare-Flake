@@ -377,4 +377,331 @@ describe("web api retry behavior", () => {
     expect(completed.key).toBe("uploads/archive.bin");
     expect(initAttempts).toBe(2);
   });
+
+  it("turns an HTML error body into a short routing hint, never the raw markup", async () => {
+    const html = "<!doctype html><html><body><h1>404 Not Found</h1><p>nginx</p></body></html>";
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(html, {
+        status: 404,
+        statusText: "Not Found",
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await fetchSessionInfo().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    const apiError = error as ApiError;
+    expect(apiError.code).toBe("request_failed");
+    expect(apiError.message).not.toMatch(/<html/i);
+    expect(apiError.message).toBe(
+      "The request did not reach the API. This usually means a routing or Cloudflare Access problem.",
+    );
+    expect(apiError.details).toMatchObject({ snippet: expect.stringContaining("404 Not Found") });
+  });
+
+  it("falls back to '<status> <statusText>' for a non-HTML non-JSON error body", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response("internal failure, contact ops", {
+        status: 400,
+        statusText: "Bad Request",
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await fetchSessionInfo().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    const apiError = error as ApiError;
+    expect(apiError.message).toBe("400 Bad Request");
+    expect(apiError.details).toMatchObject({ snippet: "internal failure, contact ops" });
+  });
+
+  it("retries a part PUT that returns 403 (expired presigned URL) and completes the upload", async () => {
+    vi.useFakeTimers();
+    let partUploadAttempts = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+
+      if (url.endsWith("/api/v2/upload/init") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          objectKey: "uploads/archive.bin",
+          uploadId: "upload-1",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          partSizeBytes: 16,
+          maxParts: 10000,
+          signPartTtlSec: 60,
+          allowedMime: [],
+          allowedExt: [],
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/sign-part") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          uploadId: "upload-1",
+          partNumber: 1,
+          url: "https://upload.example.test/part-1",
+          method: "PUT",
+          headers: {},
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+
+      if (url === "https://upload.example.test/part-1" && method === "PUT") {
+        partUploadAttempts += 1;
+        if (partUploadAttempts === 1) {
+          return new Response("SignatureDoesNotMatch", { status: 403 });
+        }
+        return new Response(null, { status: 200, headers: { etag: '"etag-1"' } });
+      }
+
+      if (url.endsWith("/api/v2/upload/complete") && method === "POST") {
+        return jsonResponse({ key: "uploads/archive.bin" });
+      }
+
+      if (url.endsWith("/api/v2/upload/abort") && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+
+    const uploadPromise = multipartUpload(file, "uploads/");
+    await vi.runAllTimersAsync();
+    const completed = await uploadPromise;
+
+    expect(completed.key).toBe("uploads/archive.bin");
+    expect(partUploadAttempts).toBe(2);
+  });
+
+  it("retries a transient upload/complete failure instead of failing the whole upload", async () => {
+    vi.useFakeTimers();
+    let completeAttempts = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+
+      if (url.endsWith("/api/v2/upload/init") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          objectKey: "uploads/archive.bin",
+          uploadId: "upload-1",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          partSizeBytes: 16,
+          maxParts: 10000,
+          signPartTtlSec: 60,
+          allowedMime: [],
+          allowedExt: [],
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/sign-part") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          uploadId: "upload-1",
+          partNumber: 1,
+          url: "https://upload.example.test/part-1",
+          method: "PUT",
+          headers: {},
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+
+      if (url === "https://upload.example.test/part-1" && method === "PUT") {
+        return new Response(null, { status: 200, headers: { etag: '"etag-1"' } });
+      }
+
+      if (url.endsWith("/api/v2/upload/complete") && method === "POST") {
+        completeAttempts += 1;
+        if (completeAttempts === 1) {
+          return jsonResponse({ error: { code: "temporary_failure", message: "please retry" } }, 503);
+        }
+        return jsonResponse({ key: "uploads/archive.bin" });
+      }
+
+      if (url.endsWith("/api/v2/upload/abort") && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+
+    const uploadPromise = multipartUpload(file, "uploads/");
+    await vi.runAllTimersAsync();
+    const completed = await uploadPromise;
+
+    expect(completed.key).toBe("uploads/archive.bin");
+    expect(completeAttempts).toBe(2);
+  });
+
+  it("surfaces upload/init's object_exists 409 with the conflicting key, making no retry", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            code: "object_exists",
+            message: "An object already exists at the target key.",
+            details: { key: "uploads/archive.bin" },
+          },
+        },
+        409,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+
+    const error = await multipartUpload(file, "uploads/").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    const apiError = error as ApiError;
+    expect(apiError.status).toBe(409);
+    expect(apiError.code).toBe("object_exists");
+    expect(apiError.details).toMatchObject({ key: "uploads/archive.bin" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends overwrite: true on both init and complete when the overwrite option is set", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
+
+      if (url.endsWith("/api/v2/upload/init") && method === "POST") {
+        expect(body?.overwrite).toBe(true);
+        return jsonResponse({
+          sessionId: "session-1",
+          objectKey: "uploads/archive.bin",
+          uploadId: "upload-1",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          partSizeBytes: 16,
+          maxParts: 10000,
+          signPartTtlSec: 60,
+          allowedMime: [],
+          allowedExt: [],
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/sign-part") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          uploadId: "upload-1",
+          partNumber: 1,
+          url: "https://upload.example.test/part-1",
+          method: "PUT",
+          headers: {},
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+
+      if (url === "https://upload.example.test/part-1" && method === "PUT") {
+        return new Response(null, { status: 200, headers: { etag: '"etag-1"' } });
+      }
+
+      if (url.endsWith("/api/v2/upload/complete") && method === "POST") {
+        expect(body?.overwrite).toBe(true);
+        return jsonResponse({ key: "uploads/archive.bin" });
+      }
+
+      if (url.endsWith("/api/v2/upload/abort") && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin", {
+      type: "application/octet-stream",
+    });
+
+    const completed = await multipartUpload(file, "uploads/", { overwrite: true });
+    expect(completed.key).toBe("uploads/archive.bin");
+  });
+
+  it("rejects a zero-byte file before any network call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File([], "empty.txt", { type: "text/plain" });
+    const error = await multipartUpload(file, "uploads/").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("upload_empty_file");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("omits contentType on init when the browser reports none, instead of defaulting to octet-stream", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+
+      if (url.endsWith("/api/v2/upload/init") && method === "POST") {
+        const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+        expect(body.contentType).toBeUndefined();
+        return jsonResponse({
+          sessionId: "session-1",
+          objectKey: "uploads/archive.bin",
+          uploadId: "upload-1",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          partSizeBytes: 16,
+          maxParts: 10000,
+          signPartTtlSec: 60,
+          allowedMime: [],
+          allowedExt: [],
+        });
+      }
+
+      if (url.endsWith("/api/v2/upload/sign-part") && method === "POST") {
+        return jsonResponse({
+          sessionId: "session-1",
+          uploadId: "upload-1",
+          partNumber: 1,
+          url: "https://upload.example.test/part-1",
+          method: "PUT",
+          headers: {},
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+
+      if (url === "https://upload.example.test/part-1" && method === "PUT") {
+        return new Response(null, { status: 200, headers: { etag: '"etag-1"' } });
+      }
+
+      if (url.endsWith("/api/v2/upload/complete") && method === "POST") {
+        return jsonResponse({ key: "uploads/archive.bin" });
+      }
+
+      if (url.endsWith("/api/v2/upload/abort") && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // No `type` given: File.type defaults to "", the "browser reported nothing" case.
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "archive.bin");
+
+    const completed = await multipartUpload(file, "uploads/");
+    expect(completed.key).toBe("uploads/archive.bin");
+  });
 });

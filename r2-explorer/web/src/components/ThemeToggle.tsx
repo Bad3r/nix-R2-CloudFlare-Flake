@@ -1,26 +1,17 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useState } from "preact/hooks";
 import type { JSX } from "preact";
-
-type Theme = "dark" | "light";
-
-function readTheme(): Theme {
-  if (typeof document === "undefined") {
-    return "dark";
-  }
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
+import { readTheme, type Theme } from "../lib/theme";
 
 /**
- * Toggles the document theme and persists the choice. The initial theme is set
- * pre-paint by an inline script in ConsoleLayout, so this only reflects and
- * mutates that state.
+ * Toggles the document theme and persists the choice. The initial theme is
+ * set pre-paint by an inline script in ConsoleLayout, and this island hydrates
+ * with client:load, so the lazy initializer reads the already-correct DOM
+ * value at hydration time instead of assuming "dark" and correcting a frame
+ * later (which flashed the wrong icon/label and could no-op a click made
+ * during that window).
  */
 export function ThemeToggle(): JSX.Element {
-  const [theme, setTheme] = useState<Theme>("dark");
-
-  useEffect(() => {
-    setTheme(readTheme());
-  }, []);
+  const [theme, setTheme] = useState<Theme>(() => readTheme());
 
   const toggle = useCallback(() => {
     setTheme((current) => {

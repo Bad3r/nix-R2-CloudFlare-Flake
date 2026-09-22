@@ -6,8 +6,12 @@ import { Badge, PanelHead, ProgressBar } from "./primitives";
 type UploadPanelProps = {
   uploads: UploadItem[];
   prefix: string;
+  /** HTML accept attribute derived from the session's allowed types; empty means no restriction. */
+  accept: string;
   onEnqueue: (file: File) => void;
   onCancel: (id: number) => void;
+  onRetryOverwrite: (id: number) => void;
+  onSkip: (id: number) => void;
   onClearFinished: () => void;
 };
 
@@ -25,7 +29,16 @@ function statusTone(status: UploadItem["status"]): "ok" | "danger" | "warn" | "n
 }
 
 /** Drag-and-drop upload queue targeting the current prefix. */
-export function UploadPanel({ uploads, prefix, onEnqueue, onCancel, onClearFinished }: UploadPanelProps): JSX.Element {
+export function UploadPanel({
+  uploads,
+  prefix,
+  accept,
+  onEnqueue,
+  onCancel,
+  onRetryOverwrite,
+  onSkip,
+  onClearFinished,
+}: UploadPanelProps): JSX.Element {
   const [dragging, setDragging] = useState(false);
 
   const handleFiles = (files: FileList | null | undefined): void => {
@@ -65,6 +78,7 @@ export function UploadPanel({ uploads, prefix, onEnqueue, onCancel, onClearFinis
           <input
             type="file"
             multiple
+            accept={accept || undefined}
             style={{ display: "none" }}
             onChange={(event) => {
               handleFiles(event.currentTarget.files);
@@ -97,6 +111,16 @@ export function UploadPanel({ uploads, prefix, onEnqueue, onCancel, onClearFinis
                 {item.uploadedParts}/{item.totalParts || "-"} parts
               </span>
             </div>
+            {item.status === "conflict" ? (
+              <div class="row">
+                <button type="button" class="btn danger tiny" onClick={() => onRetryOverwrite(item.id)}>
+                  Overwrite
+                </button>
+                <button type="button" class="btn ghost tiny" onClick={() => onSkip(item.id)}>
+                  Skip
+                </button>
+              </div>
+            ) : null}
             {item.status === "uploading" ? (
               <button type="button" class="btn ghost tiny" onClick={() => onCancel(item.id)}>
                 Cancel
