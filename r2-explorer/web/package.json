@@ -12,7 +12,7 @@
   "dependencies": {
     "@fontsource-variable/martian-mono": "^5.2.7",
     "@fontsource-variable/spline-sans-mono": "^5.2.8",
-    "astro": "^7.0.7",
+    "astro": "^7.2.8",
     "preact": "^10.29.5"
   },
   "devDependencies": {
