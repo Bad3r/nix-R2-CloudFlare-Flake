@@ -22,7 +22,6 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
@@ -96,7 +95,7 @@
               # CLOUDFLARE_ACCOUNT_ID for multi-account tokens) or run
               # `wrangler login` beforehand.
               ${locateCheckoutSnippet}
-              pnpm install
+              pnpm install --frozen-lockfile
               wrangler deploy "$@"
             '';
           };
@@ -111,7 +110,7 @@
               # CLOUDFLARE_ACCOUNT_ID for multi-account tokens) or run
               # `wrangler login` beforehand.
               ${locateCheckoutSnippet}
-              pnpm install
+              pnpm install --frozen-lockfile
               # Adapter v14 resolves the target environment at build time
               # (set CLOUDFLARE_ENV before running for non-production) and
               # emits the deployable config + .assetsignore under dist/.

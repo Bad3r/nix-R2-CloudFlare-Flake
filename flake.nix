@@ -1,5 +1,5 @@
 {
-  description = "Standalone Cloudflare R2 flake (Phase 1 scaffold)";
+  description = "Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing";
   nixConfig = {
     extra-substituters = [
       "https://nix-r2-cloudflare-flake.cachix.org"
@@ -43,7 +43,6 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
 

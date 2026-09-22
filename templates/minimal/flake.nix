@@ -4,7 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     # Replace with your fork if needed.
-    r2-cloud.url = "github:Bad3r/nix-R2-CloudFlare-Flake?ref=main";
+    r2-cloud = {
+      url = "github:Bad3r/nix-R2-CloudFlare-Flake?ref=main";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -23,7 +26,9 @@
           r2-cloud.nixosModules.default
           {
             system.stateVersion = "25.05";
-            # Eval-only defaults so `nix flake check` passes in generated repos.
+            # Placeholder only, for `nix flake check`: never activate this
+            # config as-is. Copy the service blocks below into your existing
+            # host configuration instead; see docs/quickstart.md.
             fileSystems."/" = {
               device = "tmpfs";
               fsType = "tmpfs";
