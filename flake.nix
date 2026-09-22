@@ -158,23 +158,21 @@
               name = "lefthook-treefmt";
               runtimeInputs = [
                 pkgs.coreutils
-                pkgs.git
                 pkgs.treefmt
               ];
               text = ''
                 set -euo pipefail
 
-                mapfile -t changed < <(
-                  {
-                    git diff --name-only HEAD --diff-filter=ACM 2>/dev/null || true
-                    git ls-files --others --exclude-standard 2>/dev/null || true
-                  } | sort -u
-                )
-                if [ "''${#changed[@]}" -eq 0 ]; then
+                # lefthook resolves {files} (staged/changed files by default, or
+                # every git-tracked file under --all-files) and passes it here;
+                # with no args (a direct, non-lefthook invocation) check the
+                # whole tree, matching lefthook-statix's no-args behavior.
+                if [ "$#" -eq 0 ]; then
+                  treefmt --fail-on-change
                   exit 0
                 fi
 
-                treefmt --fail-on-change "''${changed[@]}"
+                treefmt --fail-on-change "$@"
               '';
             };
             lefthook-statix = pkgs.writeShellApplication {
