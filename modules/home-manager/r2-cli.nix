@@ -33,22 +33,27 @@ let
     passthru.version = r2DerivationVersion;
     text = ''
       set -euo pipefail
+
+      # help/version and a bare invocation must reach the inner CLI without
+      # resolving an account ID or reading any file: a missing or broken
+      # secret must not block `r2 help`.
+      first_arg="''${1:-}"
+      if [[ "$#" -eq 0 || "$first_arg" =~ ^(help|-h|--help|version|--version)$ ]]; then
+        exec ${cfg.package}/bin/r2 "$@"
+      fi
+
+      ${r2lib.sourceEnvFileShellFunction}
+
       export R2_CREDENTIALS_FILE=${lib.escapeShellArg (toString cfg.credentialsFile)}
       export R2_RCLONE_CONFIG=${lib.escapeShellArg (toString cfg.rcloneConfigPath)}
 
       if [[ -r "$R2_CREDENTIALS_FILE" ]]; then
-        set -a
-        # shellcheck source=/dev/null
-        source "$R2_CREDENTIALS_FILE"
-        set +a
+        r2_source_env_file "$R2_CREDENTIALS_FILE"
       fi
 
       explorer_env_file=${lib.escapeShellArg explorerEnvFileValue}
       if [[ -n "$explorer_env_file" && -r "$explorer_env_file" ]]; then
-        set -a
-        # shellcheck source=/dev/null
-        source "$explorer_env_file"
-        set +a
+        r2_source_env_file "$explorer_env_file"
       fi
 
       ${resolveAccountIdShell}
@@ -159,6 +164,15 @@ in
       {
         assertion = (!cfg.enableRcloneRemote) || (cfg.rcloneRemoteName != "");
         message = "programs.r2-cloud.rcloneRemoteName must be a non-empty string when programs.r2-cloud.enableRcloneRemote = true";
+      }
+      {
+        # Endpoint-less mode exports RCLONE_CONFIG_<REMOTE>_ENDPOINT, and rclone's
+        # fs.ConfigToEnv only uppercases the name, so it must be a shell identifier.
+        assertion =
+          (!cfg.enableRcloneRemote)
+          || (cfg.accountId != "")
+          || (builtins.match "[A-Za-z0-9_]+" cfg.rcloneRemoteName != null);
+        message = "programs.r2-cloud.rcloneRemoteName must be env-var-safe ([A-Za-z0-9_]+) when programs.r2-cloud.enableRcloneRemote = true and programs.r2-cloud.accountId is empty, because it is exported as RCLONE_CONFIG_<REMOTE>_ENDPOINT";
       }
     ];
 
