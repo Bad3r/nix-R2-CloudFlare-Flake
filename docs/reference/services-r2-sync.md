@@ -7,6 +7,12 @@ Activation condition: `services.r2-sync.enable = true`.
 Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 `secrets/r2.yaml` via sops templates).
 
+Every `mounts.<name>.bucket` must already exist: every rclone invocation
+(mount, the bisync check-file preflight, and bisync itself) passes
+`--s3-no-check-bucket`, required for least-privilege R2 "Object Read & Write"
+tokens (which cannot create buckets), so rclone never attempts to check or
+create the bucket before writing to it.
+
 ## Options
 
 | Option                                                    | Type                                                         | Default       | Required when enabled                 | Notes                                                                                                                 |
@@ -15,19 +21,19 @@ Credentials are expected in `/run/secrets/r2/credentials.env` (rendered from
 | `services.r2-sync.credentialsFile`                        | `null` or path                                               | `null`        | yes                                   | Environment file loaded by systemd units.                                                                             |
 | `services.r2-sync.accountId`                              | string                                                       | `""`          | yes (if file unset)                   | Used to build `https://<accountId>.r2.cloudflarestorage.com`.                                                         |
 | `services.r2-sync.accountIdFile`                          | `null` or path                                               | `null`        | yes (if literal unset)                | File-based account ID source.                                                                                         |
-| `services.r2-sync.mounts`                                 | attrset of submodules                                        | `{}`          | yes (must contain at least one mount) | One mount profile per attr key.                                                                                       |
+| `services.r2-sync.mounts`                                 | attrset of submodules                                        | `{}`          | yes (must contain at least one mount) | One mount profile per attr key. Each key must match `[A-Za-z0-9_.-]+` (used verbatim in systemd unit names).          |
 | `services.r2-sync.mounts.<name>.bucket`                   | string                                                       | none          | yes                                   | Remote bucket name; must be non-empty.                                                                                |
 | `services.r2-sync.mounts.<name>.remotePrefix`             | string                                                       | `""`          | yes                                   | Remote subpath inside the bucket (mount/sync root).                                                                   |
 | `services.r2-sync.mounts.<name>.mountPoint`               | path                                                         | none          | yes                                   | Local mount location for `rclone mount`.                                                                              |
-| `services.r2-sync.mounts.<name>.localPath`                | `null` or path                                               | `null`        | no                                    | Local bisync side; falls back to `mountPoint`.                                                                        |
+| `services.r2-sync.mounts.<name>.localPath`                | `null` or path                                               | `null`        | yes                                   | Local bisync side; must be a directory different from `mountPoint` (enforced by assertion).                           |
 | `services.r2-sync.mounts.<name>.syncInterval`             | string                                                       | `"5m"`        | no                                    | `OnUnitActiveSec` value for bisync timer.                                                                             |
-| `services.r2-sync.mounts.<name>.bisync.maxDelete`         | integer                                                      | `100000`      | no                                    | Passed to `rclone bisync --max-delete`.                                                                               |
+| `services.r2-sync.mounts.<name>.bisync.maxDelete`         | integer (0-100)                                              | `50`          | no                                    | Percentage of files allowed to be deleted per run before bisync aborts; passed to `rclone bisync --max-delete`.       |
 | `services.r2-sync.mounts.<name>.bisync.checkFilename`     | string                                                       | `".r2-check"` | no                                    | Used for `--check-access` safety.                                                                                     |
 | `services.r2-sync.mounts.<name>.bisync.initialResyncMode` | enum `path1`, `path2`, `newer`, `older`, `larger`, `smaller` | `"path1"`     | no                                    | Used on first run to seed bisync state.                                                                               |
 | `services.r2-sync.mounts.<name>.bisync.maxLock`           | string                                                       | `"15m"`       | no                                    | Passed to `rclone bisync --max-lock`; `""` omits it so locks never expire.                                            |
 | `services.r2-sync.mounts.<name>.bisync.compare`           | `null` or string                                             | `null`        | no                                    | Passed to `rclone bisync --compare` (`size`, `modtime`, `checksum`); `null` keeps rclone's `size,modtime`.            |
 | `services.r2-sync.mounts.<name>.bisync.excludes`          | list of strings                                              | `[]`          | no                                    | Each entry becomes a `- <pattern>` filter rule, behind a `+ /<checkFilename>` rule that keeps the check file visible. |
-| `services.r2-sync.mounts.<name>.bisync.extraArgs`         | list of strings                                              | `[]`          | no                                    | Appended verbatim to every bisync run, one argv element per entry.                                                    |
+| `services.r2-sync.mounts.<name>.bisync.extraArgs`         | list of strings                                              | `[]`          | no                                    | Appended verbatim to every bisync run, one argv element per entry. Filter-shaped flags are rejected; use `excludes`.  |
 | `services.r2-sync.mounts.<name>.vfsCache.mode`            | enum `off`, `minimal`, `writes`, `full`                      | `"full"`      | no                                    | Passed to `--vfs-cache-mode`.                                                                                         |
 | `services.r2-sync.mounts.<name>.vfsCache.maxSize`         | string                                                       | `"10G"`       | no                                    | Passed to `--vfs-cache-max-size`.                                                                                     |
 | `services.r2-sync.mounts.<name>.vfsCache.maxAge`          | string                                                       | `"24h"`       | no                                    | Passed to `--vfs-cache-max-age`.                                                                                      |
@@ -52,6 +58,17 @@ Typical usage patterns:
 - Drive “streaming” style: rely on `mountPoint` (still uses caching) and accept
   online-only behavior.
 
+## Running as a non-root user
+
+`r2-mount-<name>.service` passes `--allow-other` to `rclone mount`
+unconditionally so the mount is visible outside the service's own session.
+FUSE enforces `user_allow_other` (see `mount.fuse3(8)`) for non-root mounts;
+NixOS controls that kernel-level flag through `programs.fuse.userAllowOther`
+(default `false`). Setting
+`systemd.services."r2-mount-<name>".serviceConfig.User` to a non-root user
+without also setting `programs.fuse.userAllowOther = true` fails an
+assertion at eval time instead of a runtime FUSE mount failure.
+
 ## Failure semantics
 
 When `enable = true`, evaluation fails if any assertion below is violated:
@@ -60,8 +77,21 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-sync.accountId or services.r2-sync.accountIdFile must be set when services.r2-sync.enable = true`
 - `services.r2-sync.mounts must define at least one mount when services.r2-sync.enable = true`
 - `services.r2-sync.mounts.<name>.bucket must be a non-empty string`
-- `services.r2-sync.mounts.<name>.remotePrefix must be non-empty (required for bisync trash backup-dir outside sync root)`
-- `services.r2-sync.mounts.<name>.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag)`
+- `services.r2-sync.mounts.<name>.bucket must be a valid R2 bucket name (3-63 lowercase letters, digits, or hyphens; must start and end with a letter or digit): got '<bucket>'`
+- `services.r2-sync.mounts.<name>.remotePrefix must be non-empty after normalization (required for bisync trash backup-dir outside sync root): got '<remotePrefix>'`
+- `services.r2-sync.mounts.<name>.remotePrefix must not be '.trash' or nested under it (the bisync remote backup-dir '<bucket>/.trash/<remotePrefix>' must stay outside the sync root): got '<remotePrefix>'`
+- `services.r2-sync.mounts.<name>.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '<compare>'`
+- `services.r2-sync.mounts.<name> is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name): got '<name>'`
+- `services.r2-sync.mounts.<name>.localPath must not equal or be nested with mountPoint (bisync must not run against or through the live FUSE mount): set services.r2-sync.mounts.<name>.localPath to a separate local directory`
+- `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain filter flags (--filter, --filter-from, --exclude, --exclude-from, --exclude-if-present, --include, --include-from, --filters-file, --files-from, --files-from-raw, or -f): use services.r2-sync.mounts.<name>.bisync.excludes instead so the change is tracked for the automatic --resync`
+- `services.r2-sync.mounts.<name> runs r2-mount-<name>.service as non-root user '<user>' without programs.fuse.userAllowOther = true (rclone mount passes --allow-other unconditionally, which requires user_allow_other for non-root mounts): set programs.fuse.userAllowOther = true`
+- `services.r2-sync.mounts.<name-a> and services.r2-sync.mounts.<name-b> both target bucket '<bucket>' prefix '<prefix>': two mounts must not target the same remote tree`
+- `services.r2-sync.mounts.<name-a> (bucket '<bucket>' prefix '<prefix-a>') and services.r2-sync.mounts.<name-b> (prefix '<prefix-b>') have nested remote prefixes in the same bucket: concurrent bisync runs must not overlap trees`
+- `services.r2-sync.mounts.<name-a>.<mountPoint|localPath> ('<path-a>') and services.r2-sync.mounts.<name-b>.<mountPoint|localPath> ('<path-b>') overlap: each mount must use independent mountPoint and localPath directories`
+
+Cross-mount checks (the last three above) compare every pair of mounts once,
+so each pair that violates more than one rule can surface more than one of
+these messages at the same time.
 
 ## Trash and safety behavior
 
@@ -69,6 +99,16 @@ When `enable = true`, evaluation fails if any assertion below is violated:
   `.r2-check`). The module ensures the file exists locally and creates it on
   the remote only if missing (it does not update the file once present, since
   changing the check file forces a manual `--resync` recovery).
+- Bisync passes `bisync.maxDelete` (default `50`) as a percentage (0-100) of
+  the tracked files: if a run would delete more than that percentage (for
+  example because a listing came back empty), bisync aborts without touching
+  anything on either side. rclone silently clamps any value above 100 to
+  100, which disables the check entirely, so the option's type rejects
+  out-of-range values at eval time instead of forwarding them. Recovery from
+  a legitimate mass delete that trips the check is a deliberate manual
+  `rclone bisync ... --force` run (same `--workdir`, `--backup-dir1`,
+  `--backup-dir2`, and local/remote paths as the generated unit) after
+  inspecting why so many deletes were expected.
 - Bisync uses backup dirs for soft-delete style recovery:
   - local backup dir: sibling of `localPath`, under `<dirOf(localPath)>/.trash/<name>`
   - remote backup dir: at the bucket root, under `.trash/<remotePrefix>`
@@ -87,7 +127,13 @@ When `enable = true`, evaluation fails if any assertion below is violated:
   `--resync`. As a fast-path the wrapper also clears a `.lck` whose recorded
   holder PID is no longer running and retries once. Setting `maxLock = ""` omits
   `--max-lock` and disables that cleanup, restoring rclone's native behavior
-  where an orphaned lock blocks every later run until removed by hand.
+  where an orphaned lock blocks every later run until removed by hand. This
+  fast-path lock clear and the stale-listing retry below both match rclone's
+  literal log text (upstream `cmd/bisync/lockfile.go` and
+  `cmd/bisync/operations.go`, named next to each match in
+  `modules/nixos/r2-sync.nix`). A future rclone version that rewords that text
+  disables the self-heal with no test failure, so re-check it against the
+  `pkgs.rclone` source on every version bump.
 - `bisync.compare` and `bisync.excludes` are recorded in the workdir as
   `.r2-bisync-flags` after each successful run. When either changes on a mount
   that already has listing state, the next run performs one automatic
@@ -95,13 +141,26 @@ When `enable = true`, evaluation fails if any assertion below is violated:
   filter change (prior listings would otherwise show the newly excluded files
   as deleted) and recommends it after a compare change (prior listings lack
   the newly compared attribute). rclone only guards its own `--filters-file`
-  this way, so the module tracks the inline flags itself. Filter flags passed
-  through `extraArgs` are not tracked.
+  this way, so the module tracks the inline flags itself. Filter-shaped flags
+  are rejected in `extraArgs` by assertion (see "Failure semantics") so they
+  cannot bypass this tracking; use `excludes` instead.
 - Exclude patterns are rendered as `--filter '- <pattern>'` rules behind a
   leading `--filter '+ /<checkFilename>'` rule. rclone evaluates every
   `--exclude` before any `--filter` and gives `--include` an implied trailing
   `- **`, so this is the only flag form in which a pattern such as `.*` cannot
   hide the access-check file from `--check-access`.
+
+## Service timeouts
+
+- `r2-bisync-<name>.service` sets `TimeoutStartSec = "infinity"`: a `oneshot`
+  resync of an arbitrarily large prefix has no natural systemd-level
+  deadline, and systemd's 90s default would otherwise SIGTERM a first run
+  before it can seed bisync state (see "Sizing a mount for a large prefix"
+  below for ways to shorten that first run).
+- `r2-bisync-<name>.service` sets `TimeoutStopSec = "2min"`: rclone bisync's
+  own graceful-shutdown budget is up to 90s (a 30s grace period plus a 60s
+  cancel-and-save window), so this keeps a margin over systemd's matching
+  90s default before a `systemctl stop` or shutdown SIGKILLs a run mid-save.
 
 ## Sizing a mount for a large prefix
 
@@ -148,6 +207,10 @@ For each mount name (example: `documents`):
 - systemd service: `r2-bisync-documents.service`
 - systemd timer: `r2-bisync-documents.timer`
 
+The bisync timer adds a fixed 30s `RandomizedDelaySec` on top of
+`OnUnitActiveSec` so multiple mounts sharing the same `syncInterval` do not
+fire in lockstep against the R2 API.
+
 ## Minimal snippet
 
 ```nix
@@ -161,6 +224,7 @@ For each mount name (example: `documents`):
       bucket = "files";
       remotePrefix = "documents";
       mountPoint = "/mnt/r2/documents";
+      localPath = "/var/lib/r2-sync/documents";
     };
   };
 }
