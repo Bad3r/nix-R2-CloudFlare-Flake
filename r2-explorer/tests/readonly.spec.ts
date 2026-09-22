@@ -41,4 +41,29 @@ describe("readonly middleware", () => {
     );
     expect(listResponse.status).toBe(200);
   });
+
+  it("fails fast instead of silently disabling readonly mode on an unrecognized R2E_READONLY value", async () => {
+    const { env, bucket } = await createTestEnv();
+    env.R2E_READONLY = "tru";
+    await bucket.put("docs/typo.txt", "still here");
+    const app = createApp();
+
+    const deleteResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/object/delete", {
+        method: "POST",
+        headers: {
+          ...accessHeaders(),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ key: "docs/typo.txt" }),
+      }),
+      env,
+    );
+    const payload = (await deleteResponse.json()) as { error: { code: string; message: string } };
+    expect(deleteResponse.status).toBe(500);
+    expect(payload.error.code).toBe("config_invalid");
+    expect(payload.error.message).toContain("R2E_READONLY");
+    // The delete must not have gone through while config was rejected.
+    expect(await bucket.get("docs/typo.txt")).not.toBeNull();
+  });
 });

@@ -26,29 +26,118 @@ export async function getObject(bucket: R2Bucket, key: string): Promise<R2Object
   return object;
 }
 
-export async function softDeleteObject(bucket: R2Bucket, key: string): Promise<{ trashKey: string }> {
-  const object = await getObject(bucket, key);
-  const stamped = new Date().toISOString().replace(/[:]/g, "-");
-  const trashKey = `.trash/${stamped}/${key}`;
+/**
+ * Result of getObjectForRead: a body on success, object metadata only on a
+ * failed onlyIf, or just the size for an unsatisfiable range. `kind` is the
+ * discriminant (status alone does not narrow reliably here since 200/206 and
+ * 304/412 each group two literals on the same field).
+ */
+export type RangedObjectResult =
+  | { kind: "ok"; status: 200 | 206; object: R2ObjectBody }
+  | { kind: "precondition_failed"; status: 304 | 412; object: R2Object }
+  | { kind: "unsatisfiable_range"; status: 416; size: number };
 
-  await bucket.put(trashKey, object.body, {
-    httpMetadata: object.httpMetadata,
-    customMetadata: object.customMetadata,
-  });
-  await bucket.delete(key);
-  return { trashKey };
+type SingleByteRange = { offset: number; end?: number } | { suffix: number };
+
+/**
+ * Parse a single-range `Range: bytes=...` header for a post-hoc satisfiability
+ * check. Returns null for anything that is not a single well-formed byte
+ * range (absent, multi-range, wrong unit, non-numeric, or inverted bounds);
+ * R2 already serves the full object for all of those when Range is passed as
+ * Headers, which is the desired fallback for them.
+ */
+function parseSingleByteRange(value: string): SingleByteRange | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const [, startText, endText] = match;
+  if (startText === "") {
+    if (endText === "") {
+      return null;
+    }
+    const suffix = Number.parseInt(endText, 10);
+    return suffix > 0 ? { suffix } : null;
+  }
+  const offset = Number.parseInt(startText, 10);
+  if (endText === "") {
+    return { offset };
+  }
+  const end = Number.parseInt(endText, 10);
+  return end >= offset ? { offset, end } : null;
 }
 
-export async function moveObject(bucket: R2Bucket, fromKey: string, toKey: string): Promise<void> {
-  if (fromKey === toKey) {
-    throw new HttpError(400, "invalid_move", "Source and destination keys must be different.");
+function isRangeSatisfiable(range: SingleByteRange, size: number): boolean {
+  if ("suffix" in range) {
+    return size > 0;
   }
-  const object = await getObject(bucket, fromKey);
-  await bucket.put(toKey, object.body, {
-    httpMetadata: object.httpMetadata,
-    customMetadata: object.customMetadata,
+  return range.offset < size;
+}
+
+/**
+ * Determine whether a failed onlyIf check (R2 returned an object without a
+ * body) is a 304 (If-None-Match / If-Modified-Since) or a 412 (If-Match /
+ * If-Unmodified-Since). R2 reports only pass/fail, not which header failed,
+ * so the 412-class headers are re-checked alone: per RFC 7232 section 6 they
+ * are evaluated first, so if that narrower check also fails, this is a 412;
+ * otherwise the original failure came from a 304-class header. Mirrors the
+ * pattern in Cloudflare's own miniflare public R2 endpoint
+ * (packages/miniflare/src/workers/r2/public.worker.ts).
+ */
+async function resolvePreconditionStatus(bucket: R2Bucket, key: string, requestHeaders: Headers): Promise<304 | 412> {
+  const preconditionHeaders = new Headers();
+  const ifMatch = requestHeaders.get("if-match");
+  const ifUnmodifiedSince = requestHeaders.get("if-unmodified-since");
+  if (ifMatch !== null) {
+    preconditionHeaders.set("if-match", ifMatch);
+  }
+  if (ifUnmodifiedSince !== null) {
+    preconditionHeaders.set("if-unmodified-since", ifUnmodifiedSince);
+  }
+  if ([...preconditionHeaders.keys()].length === 0) {
+    return 304;
+  }
+  const recheck = await bucket.get(key, { onlyIf: preconditionHeaders });
+  // recheck cannot be null: the outer get() already proved the key exists,
+  // and narrowing onlyIf further cannot turn a hit into a miss.
+  return recheck && !("body" in recheck) ? 412 : 304;
+}
+
+/**
+ * Read an object honoring Range and conditional request headers, for
+ * /api/v2/download and /api/v2/preview. Pass allowRange: false for a HEAD
+ * request: bucket.head() cannot evaluate onlyIf (it takes only a key), so
+ * HEAD still calls bucket.get() and the caller discards the body, but never
+ * requests a Range slice, since a HEAD response describes the whole
+ * resource regardless of Range.
+ */
+export async function getObjectForRead(
+  bucket: R2Bucket,
+  key: string,
+  requestHeaders: Headers,
+  options: { allowRange: boolean },
+): Promise<RangedObjectResult> {
+  const rangeHeaderValue = options.allowRange ? requestHeaders.get("range") : null;
+  const object = await bucket.get(key, {
+    onlyIf: requestHeaders,
+    range: rangeHeaderValue ? requestHeaders : undefined,
   });
-  await bucket.delete(fromKey);
+  if (!object) {
+    throw new HttpError(404, "object_not_found", `Object not found: ${key}`);
+  }
+  if (!("body" in object)) {
+    const status = await resolvePreconditionStatus(bucket, key, requestHeaders);
+    return { kind: "precondition_failed", status, object };
+  }
+  // The real binding always populates object.range (offset 0, full length for
+  // a plain read) and serves the full object for an unsatisfiable, multi, or
+  // malformed Range, so the status must come from the parsed request header.
+  const requested = rangeHeaderValue ? parseSingleByteRange(rangeHeaderValue) : null;
+  if (requested && !isRangeSatisfiable(requested, object.size)) {
+    await object.body.cancel();
+    return { kind: "unsatisfiable_range", status: 416, size: object.size };
+  }
+  return { kind: "ok", status: requested ? 206 : 200, object };
 }
 
 export type PromoteObjectLimits = {
@@ -60,7 +149,9 @@ export type PromoteObjectLimits = {
   /**
    * Ranged-read size re-uploaded as one part during a multipart-copy promote.
    * Must satisfy R2's uniform-part rules (>= 5 MiB, all parts but the last the
-   * same size); at 128 MiB the 10000-part ceiling allows ~1.2 TiB objects.
+   * same size); at 128 MiB the 10000-part ceiling allows ~1.2 TiB objects, but
+   * only because wrangler.toml raises limits.subrequests (2 subrequests per
+   * copy part); at the Workers default (10000) promotion caps out around half that.
    */
   copyPartSizeBytes: number;
 };
@@ -70,33 +161,125 @@ const DEFAULT_PROMOTE_LIMITS: PromoteObjectLimits = {
   copyPartSizeBytes: 128 * 1024 * 1024,
 };
 
+/** Overrides merged over a copy source's own metadata; only set fields replace the source's. */
+export type CopyObjectOptions = {
+  httpMetadata?: R2HTTPMetadata;
+  /**
+   * Fail the copy with 409 object_exists instead of overwriting when toKey
+   * already exists at write time. Closes the check-then-act race between an
+   * earlier existence check and this copy's own write: on the single-put
+   * path this is a conditional put (If-None-Match: *); on the multipart-copy
+   * path, which has no conditional complete(), this is a head() re-check
+   * immediately before complete(), aborting the upload if the key appeared.
+   */
+  createOnlyIfAbsent?: boolean;
+};
+
+/**
+ * Copy an object from fromKey to toKey, preserving metadata: a single put()
+ * for sources within limits.singlePutLimitBytes, a ranged multipart copy
+ * above it, so callers have no practical size cap. Shared by softDeleteObject,
+ * moveObject, and promoteObject, all of which must copy before removing the
+ * source; none of them may stream a source above R2's single-put limit
+ * through one bucket.put() call. options.httpMetadata is merged over the
+ * source's own httpMetadata, so a caller can correct one field (for example
+ * contentType) without needing to know the rest of the source's metadata.
+ */
+async function copyObject(
+  bucket: R2Bucket,
+  fromKey: string,
+  toKey: string,
+  limits: PromoteObjectLimits,
+  options?: CopyObjectOptions,
+): Promise<R2Object> {
+  const source = await bucket.head(fromKey);
+  if (!source) {
+    throw new HttpError(404, "object_not_found", `Object not found: ${fromKey}`);
+  }
+  const httpMetadata: R2HTTPMetadata | undefined = options?.httpMetadata
+    ? { ...source.httpMetadata, ...options.httpMetadata }
+    : source.httpMetadata;
+  const createOnlyIfAbsent = options?.createOnlyIfAbsent === true;
+
+  const stored =
+    source.size <= limits.singlePutLimitBytes
+      ? await promoteViaSinglePut(bucket, fromKey, toKey, httpMetadata, source.customMetadata, createOnlyIfAbsent)
+      : await promoteViaMultipartCopy(
+          bucket,
+          fromKey,
+          toKey,
+          source,
+          limits.copyPartSizeBytes,
+          httpMetadata,
+          createOnlyIfAbsent,
+        );
+  if (!stored) {
+    if (createOnlyIfAbsent) {
+      throw new HttpError(409, "object_exists", `An object already exists at the target key: ${toKey}`, { key: toKey });
+    }
+    throw new HttpError(500, "object_copy_failed", `Failed to copy object to key: ${toKey}`);
+  }
+  return stored;
+}
+
+/**
+ * Copy key to a fresh, uniquely timestamped .trash/ key without deleting the
+ * source: a pure backup, safe to call even if a caller's subsequent write to
+ * key fails, since key is never touched here. softDeleteObject below is this
+ * plus the delete, kept as the actual delete-with-recovery entry point.
+ */
+export async function backupObjectToTrash(
+  bucket: R2Bucket,
+  key: string,
+  limits: PromoteObjectLimits = DEFAULT_PROMOTE_LIMITS,
+): Promise<{ trashKey: string }> {
+  const stamped = new Date().toISOString().replace(/[:]/g, "-");
+  const trashKey = `.trash/${stamped}/${key}`;
+  await copyObject(bucket, key, trashKey, limits);
+  return { trashKey };
+}
+
+export async function softDeleteObject(
+  bucket: R2Bucket,
+  key: string,
+  limits: PromoteObjectLimits = DEFAULT_PROMOTE_LIMITS,
+): Promise<{ trashKey: string }> {
+  const { trashKey } = await backupObjectToTrash(bucket, key, limits);
+  await bucket.delete(key);
+  return { trashKey };
+}
+
+export async function moveObject(
+  bucket: R2Bucket,
+  fromKey: string,
+  toKey: string,
+  limits: PromoteObjectLimits = DEFAULT_PROMOTE_LIMITS,
+  options?: CopyObjectOptions,
+): Promise<void> {
+  if (fromKey === toKey) {
+    throw new HttpError(400, "invalid_move", "Source and destination keys must be different.");
+  }
+  await copyObject(bucket, fromKey, toKey, limits, options);
+  await bucket.delete(fromKey);
+}
+
 /**
  * Promote a validated staged object to its final key, preserving metadata,
  * then delete the staged source. R2 has no server-side rename, so the copy
- * streams through the Worker: sources within the single-put limit copy with
- * one put(), larger sources stream through a fresh multipart upload at the
- * target key so promotion has no practical size cap. The target key is only
- * written on success (put or complete), so a failed promotion leaves any
- * pre-existing target object untouched.
+ * streams through the Worker via copyObject. The target key is only written
+ * on success, so a failed promotion leaves any pre-existing target object
+ * untouched. options.httpMetadata overrides the staged object's own metadata
+ * (see copyObject) for a caller that resolved a more accurate value (for
+ * example a magic-byte-detected Content-Type) after the source was staged.
  */
 export async function promoteObject(
   bucket: R2Bucket,
   fromKey: string,
   toKey: string,
   limits: PromoteObjectLimits = DEFAULT_PROMOTE_LIMITS,
+  options?: CopyObjectOptions,
 ): Promise<R2Object> {
-  const source = await bucket.head(fromKey);
-  if (!source) {
-    throw new HttpError(404, "object_not_found", `Object not found: ${fromKey}`);
-  }
-
-  const stored =
-    source.size <= limits.singlePutLimitBytes
-      ? await promoteViaSinglePut(bucket, fromKey, toKey)
-      : await promoteViaMultipartCopy(bucket, fromKey, toKey, source, limits.copyPartSizeBytes);
-  if (!stored) {
-    throw new HttpError(500, "upload_promote_failed", `Failed to promote staged upload to key: ${toKey}`);
-  }
+  const stored = await copyObject(bucket, fromKey, toKey, limits, options);
   // The staged copy is redundant once the final key is written. A failed
   // cleanup only leaks a staging object (later removed by session pruning),
   // so log it instead of failing the completed upload.
@@ -108,11 +291,28 @@ export async function promoteObject(
   return stored;
 }
 
-async function promoteViaSinglePut(bucket: R2Bucket, fromKey: string, toKey: string): Promise<R2Object | null> {
+async function promoteViaSinglePut(
+  bucket: R2Bucket,
+  fromKey: string,
+  toKey: string,
+  httpMetadata: R2HTTPMetadata | undefined,
+  customMetadata: Record<string, string> | undefined,
+  createOnlyIfAbsent: boolean,
+): Promise<R2Object | null> {
   const object = await getObject(bucket, fromKey);
+  if (createOnlyIfAbsent) {
+    // Wildcard If-None-Match: R2's conditional put resolves to null instead
+    // of throwing when the destination already exists, mirroring the
+    // gateway logic in @cloudflare/workers-sdk's miniflare R2 validator.
+    return bucket.put(toKey, object.body, {
+      httpMetadata,
+      customMetadata,
+      onlyIf: new Headers({ "if-none-match": "*" }),
+    });
+  }
   return bucket.put(toKey, object.body, {
-    httpMetadata: object.httpMetadata,
-    customMetadata: object.customMetadata,
+    httpMetadata,
+    customMetadata,
   });
 }
 
@@ -122,9 +322,11 @@ async function promoteViaMultipartCopy(
   toKey: string,
   source: R2Object,
   partSizeBytes: number,
-): Promise<R2Object> {
+  httpMetadata: R2HTTPMetadata | undefined,
+  createOnlyIfAbsent: boolean,
+): Promise<R2Object | null> {
   const upload = await bucket.createMultipartUpload(toKey, {
-    httpMetadata: source.httpMetadata,
+    httpMetadata,
     customMetadata: source.customMetadata,
   });
   try {
@@ -136,6 +338,18 @@ async function promoteViaMultipartCopy(
         throw new HttpError(500, "upload_promote_failed", `Staged object vanished during promotion: ${fromKey}`);
       }
       parts.push(await upload.uploadPart(parts.length + 1, chunk.body));
+    }
+    if (createOnlyIfAbsent) {
+      // No conditional complete() exists on R2MultipartUpload, so the
+      // closest available guard is a re-check immediately before completing:
+      // this cannot make the window zero, but it matches copyObject's other
+      // path in refusing a copy that would otherwise silently overwrite a
+      // key that appeared during the (much longer, part-by-part) copy.
+      const appeared = await bucket.head(toKey);
+      if (appeared) {
+        await upload.abort();
+        return null;
+      }
     }
     return await upload.complete(parts);
   } catch (error) {

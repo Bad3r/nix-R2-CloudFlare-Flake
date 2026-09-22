@@ -69,6 +69,12 @@ curl -I "https://files.unsigned.sh/share/<token-id>"
 
 - Create/revoke still succeeds in readonly mode:
   - env var not applied to active deployment.
+  - `R2E_READONLY` set to an unrecognized value: only `1/true/yes/on` and
+    `0/false/no/off` (case-insensitive) are accepted. Any other non-empty
+    value (a typo such as `tru`, or a placeholder like `enabled`) now fails
+    the deployment with `500 config_invalid` naming `R2E_READONLY` instead of
+    silently behaving as `false`; check `wrangler tail` or the deploy logs for
+    that error if requests unexpectedly return 500 after a readonly toggle.
 - All routes fail after readonly deploy:
   - broader deploy/config regression, not readonly-only behavior.
 - Inconsistent behavior across requests:

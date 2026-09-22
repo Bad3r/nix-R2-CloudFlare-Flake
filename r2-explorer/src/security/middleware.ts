@@ -96,7 +96,7 @@ export function registerSecurityMiddleware(app: Hono<AppContext>): void {
 
   app.use("/api/v2/*", async (c, next) => {
     const method = c.req.method.toUpperCase();
-    if (envBool(c.env.R2E_READONLY, false) && method !== "GET" && method !== "HEAD") {
+    if (envBool("R2E_READONLY", c.env.R2E_READONLY, false) && method !== "GET" && method !== "HEAD") {
       throw new HttpError(403, "readonly_mode", "This explorer is in readonly mode.");
     }
     await next();
