@@ -110,6 +110,9 @@ trap cleanup EXIT INT TERM
 require_command "curl"
 require_command "grep"
 
+WEB_CHECK_TIMEOUT_SEC="$(resolve_positive_int_env "WEB_CHECK_TIMEOUT_SEC" "60")"
+WEB_CHECK_CONNECT_TIMEOUT_SEC="$(resolve_positive_int_env "WEB_CHECK_CONNECT_TIMEOUT_SEC" "10")"
+
 base_url="$1"
 expected_csp_file="$2"
 
@@ -157,6 +160,8 @@ fi
 
 http_code="$(
   curl -sS --location "${curl_headers[@]}" \
+    --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
+    --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
     --dump-header "${headers_file}" \
     --output "${body_file}" \
     --write-out '%{http_code}' \
@@ -190,6 +195,8 @@ if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflarei
   # Zaraz/Web Analytics may be injected at runtime by Cloudflare and absent from raw curl HTML.
   zaraz_probe_status="$(
     curl -sS --location "${curl_headers[@]}" \
+      --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
+      --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
       --output /dev/null \
       --write-out '%{http_code}' \
       "${request_url%/}/cdn-cgi/zaraz/s.js"

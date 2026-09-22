@@ -23,12 +23,19 @@ regression.
 - Last known-good Worker revision identifier.
 - Last known-good values for:
   - `R2E_READONLY`
-  - Access verification variables (`R2E_ACCESS_TEAM_DOMAIN`, `R2E_ACCESS_AUD`,
-    optional JWKS/scope overrides)
+  - Access verification variables (`R2E_ACCESS_TEAM_DOMAIN`,
+    `R2E_ACCESS_TEAM_DOMAIN_PREVIEW`, `R2E_ACCESS_AUD`,
+    `R2E_ACCESS_AUD_PREVIEW`, optional JWKS/scope overrides)
   - bound KV namespace and bucket configuration (`R2E_FILES_BUCKET`,
     `R2E_FILES_BUCKET_PREVIEW`, `R2E_SHARES_KV_ID`,
     `R2E_SHARES_KV_ID_PREVIEW`)
 - Target domain for verification (`https://files.unsigned.sh`)
+
+`scripts/ci/render-r2-explorer-wrangler-config.sh` (step 4 below) hard-requires
+`R2E_ACCESS_TEAM_DOMAIN`, `R2E_ACCESS_TEAM_DOMAIN_PREVIEW`, `R2E_ACCESS_AUD`,
+`R2E_ACCESS_AUD_PREVIEW`, `R2E_FILES_BUCKET`, `R2E_FILES_BUCKET_PREVIEW`,
+`R2E_SHARES_KV_ID`, and `R2E_SHARES_KV_ID_PREVIEW`. The `_PREVIEW` pair for
+Access is easy to miss because the target domain in step 4 is production.
 
 ## Procedure (CLI-first)
 
@@ -47,11 +54,17 @@ wrangler deploy --config wrangler.ci.toml
 5. Validate lifecycle and route behavior:
 
 ```bash
-r2 share worker create files documents/test.txt 1h --max-downloads 1
+r2 share worker create files documents/test.txt 1h --max-downloads 2
 r2 share worker list files documents/test.txt
 curl -I https://files.unsigned.sh/api/v2/list
-curl -I https://files.unsigned.sh/share/<token-id>
+curl -s -o /dev/null -w 'share GET status: %{http_code}\n' https://files.unsigned.sh/share/<token-id>
 ```
+
+The GET above consumes one download slot, which is why the test share uses
+`--max-downloads 2`: it leaves a download for the operator's own follow-up
+check. Current Worker versions never count a HEAD request (`curl -I`), but the
+version being rolled back to may still count HEAD like GET, so keep the GET
+probe and the spare slot during a rollback.
 
 ## Verification
 

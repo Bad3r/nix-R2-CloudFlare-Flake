@@ -45,6 +45,8 @@ cf_api() {
   if [[ -n ${payload_file} ]]; then
     http_code="$(
       curl -sS \
+        --max-time "${CF_API_TIMEOUT_SEC}" \
+        --connect-timeout "${CF_API_CONNECT_TIMEOUT_SEC}" \
         --request "${method}" \
         --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
         --header "Content-Type: application/json" \
@@ -56,6 +58,8 @@ cf_api() {
   else
     http_code="$(
       curl -sS \
+        --max-time "${CF_API_TIMEOUT_SEC}" \
+        --connect-timeout "${CF_API_CONNECT_TIMEOUT_SEC}" \
         --request "${method}" \
         --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
         --header "Content-Type: application/json" \
@@ -93,6 +97,8 @@ ensure_response_headers_ruleset() {
   response_file="$(mktemp "${tmp_dir}/entrypoint-response.XXXXXX.json")"
   http_code="$(
     curl -sS \
+      --max-time "${CF_API_TIMEOUT_SEC}" \
+      --connect-timeout "${CF_API_CONNECT_TIMEOUT_SEC}" \
       --request GET \
       --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
       --header "Content-Type: application/json" \

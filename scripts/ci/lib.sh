@@ -30,13 +30,64 @@ normalize_space() {
   tr '\n' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ +| +$//g'
 }
 
+# Resolves a positive-integer env var with a default, failing loudly on an
+# invalid (non-positive-integer) override.
+resolve_positive_int_env() {
+  local name="$1"
+  local default="$2"
+  local value="${!name:-${default}}"
+  if [[ ! ${value} =~ ^[0-9]+$ ]] || [[ ${value} -le 0 ]]; then
+    fail "${name} must be a positive integer (got '${value}')"
+  fi
+  printf '%s' "${value}"
+}
+
+# Cloudflare API request bounds shared by every scripts/ci/*.sh caller of the
+# helpers below, overridable per the convention worker-share-smoke.sh already
+# uses (SMOKE_TIMEOUT_SEC / SMOKE_CONNECT_TIMEOUT_SEC).
+CF_API_TIMEOUT_SEC="$(resolve_positive_int_env "CF_API_TIMEOUT_SEC" "60")"
+CF_API_CONNECT_TIMEOUT_SEC="$(resolve_positive_int_env "CF_API_CONNECT_TIMEOUT_SEC" "10")"
+
 # Cloudflare account-scoped GET.
 # Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the environment.
 cf_api_get() {
   local path="$1"
-  curl -fsS \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-    "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}${path}"
+  local response_file http_code
+
+  response_file="$(mktemp "${TMPDIR:-/tmp}/cf-api-get.XXXXXX.json")"
+  # Callers capture this function with $(...), where errexit is off: a curl
+  # transport failure must be turned into an explicit failure here.
+  if ! http_code="$(
+    curl -sS \
+      --max-time "${CF_API_TIMEOUT_SEC}" \
+      --connect-timeout "${CF_API_CONNECT_TIMEOUT_SEC}" \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      --output "${response_file}" \
+      --write-out '%{http_code}' \
+      "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}${path}"
+  )"; then
+    rm -f "${response_file}"
+    fail "Cloudflare API request did not complete (GET ${path}, limit ${CF_API_TIMEOUT_SEC}s); see the curl error above"
+  fi
+
+  if [[ ! ${http_code} =~ ^[0-9]{3}$ ]]; then
+    rm -f "${response_file}"
+    fail "unexpected HTTP status while calling ${path}: ${http_code}"
+  fi
+
+  if ((http_code >= 400)); then
+    echo "Cloudflare API error (GET ${path}, HTTP ${http_code}):" >&2
+    if jq -e . "${response_file}" >/dev/null 2>&1; then
+      jq -r '.errors // .' "${response_file}" >&2
+    else
+      cat "${response_file}" >&2
+    fi
+    rm -f "${response_file}"
+    fail "Cloudflare API request failed"
+  fi
+
+  cat "${response_file}"
+  rm -f "${response_file}"
 }
 
 # Collect all pages of a Cloudflare list endpoint into one JSON array.
@@ -59,7 +110,9 @@ cf_api_get_paginated_results() {
     local success
     success="$(jq -r '.success' <<<"${response}")"
     if [[ ${success} != "true" ]]; then
-      fail "Cloudflare ${resource_name} API returned success=${success} (page ${page})"
+      echo "Cloudflare ${resource_name} API returned success=false (page ${page}):" >&2
+      jq -r '.errors // .' <<<"${response}" >&2
+      fail "Cloudflare ${resource_name} API request failed"
     fi
 
     local page_results
