@@ -27,12 +27,14 @@ import { isGenericOrMissingContentType, magicMimeMatchesDeclared, uploadedMagicM
 import { extractExtension, getUploadPolicy, normalizeUploadPrefix, R2_MAX_PART_SIZE_BYTES } from "../upload/policy";
 import { signMultipartUploadPart } from "../upload-signing";
 import {
+  PROMOTION_LEASE_MS,
   acquirePromotionLease,
   createUploadSession,
   markUploadSessionAborted,
   markUploadSessionCompleted,
   recordUploadSessionSignedPart,
   releasePromotionLease,
+  renewPromotionLease,
   requireUploadSession,
   type UploadSessionRecord,
 } from "../upload-sessions";
@@ -122,6 +124,42 @@ async function wrapUploadStorageError<T>(promise: Promise<T>, code: string, acti
     }
     throw new HttpError(500, code, `Failed to ${action}: ${error instanceof Error ? error.message : String(error)}.`);
   }
+}
+
+/** True when object at the target key is this session's own promoted upload (marker set at /init). */
+function promotedBySession(object: R2Object, sessionId: string): boolean {
+  return object.customMetadata?.uploadSessionId === sessionId;
+}
+
+/** Session store payload carrying the lease token the session was last seen with. */
+function leasePayload(session: UploadSessionRecord): {
+  sessionId: string;
+  uploadId: string;
+  promotionLeaseToken?: string;
+} {
+  return {
+    sessionId: session.sessionId,
+    uploadId: session.uploadId,
+    ...(session.promotionLeaseToken ? { promotionLeaseToken: session.promotionLeaseToken } : {}),
+  };
+}
+
+/**
+ * copyObject beforeWrite hook for a held promotion lease: renews once less
+ * than half the lease window is left, so a copy loop that outlives the
+ * window keeps its lease, and surfaces the store's 409 when a retry has taken
+ * the lease over, which aborts the copy before it can write a stale part or
+ * complete a target that the new holder now owns.
+ */
+function promotionLeaseRenewer(env: Env, actor: string, session: UploadSessionRecord): () => Promise<void> {
+  let leaseExpiresMs = session.promotionLeaseExpiresAt ? Date.parse(session.promotionLeaseExpiresAt) : Number.NaN;
+  return async () => {
+    if (Number.isFinite(leaseExpiresMs) && Date.now() < leaseExpiresMs - PROMOTION_LEASE_MS / 2) {
+      return;
+    }
+    const renewed = await renewPromotionLease(env, actor, leasePayload(session));
+    leaseExpiresMs = renewed.promotionLeaseExpiresAt ? Date.parse(renewed.promotionLeaseExpiresAt) : Number.NaN;
+  };
 }
 
 /**
@@ -251,6 +289,10 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
       contentType,
       customMetadata: {
         originalFilename: filename,
+        // Travels with the bytes through promotion (copyObject preserves
+        // customMetadata), so a retry can tell its own promoted object from
+        // an unrelated one at the target key; see promotedBySession.
+        uploadSessionId: sessionId,
         ...(body.sha256 ? { declaredSha256: body.sha256 } : {}),
       },
     });
@@ -278,6 +320,7 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
       signedParts: {},
       overwrite,
       promotionLeaseExpiresAt: null,
+      promotionLeaseToken: null,
     };
 
     try {
@@ -435,6 +478,21 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
     const overwriteRequested = session.overwrite === true || body.overwrite === true;
     let stagedSize: number;
 
+    // Records completion (the store deletes the staged object once that is
+    // durable) and builds the response. Reads `session` at call time so the
+    // lease token acquired below reaches the store.
+    const recordCompletion = async (finalObject: R2Object, contentType: string): Promise<Response> => {
+      await markUploadSessionCompleted(c.env, actor, leasePayload(session));
+      return jsonValidated(uploadCompleteResponseSchema, {
+        key: session.objectKey,
+        etag: finalObject.etag,
+        uploaded: finalObject.uploaded ? finalObject.uploaded.toISOString() : null,
+        size: finalObject.size,
+        contentType,
+        originalFilename: session.filename,
+      });
+    };
+
     if (session.status === "active") {
       validateCompleteParts(body.parts, session.maxParts);
 
@@ -493,6 +551,20 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
       // staged object instead of re-running completion.
       const staged = await headObject(c.env.FILES_BUCKET, session.stagingKey);
       if (!staged) {
+        // The store deletes the staged object only after recording
+        // completion, so its absence here means either a leftover from a
+        // release without that ordering or a hand-deleted object. The prior
+        // attempt may still have promoted it: check the target for this
+        // session's own bytes, under the lease so a promoter that is still
+        // running for this session is waited out rather than raced.
+        session = await acquirePromotionLease(c.env, actor, leasePayload(session));
+        const promoted = await headObject(c.env.FILES_BUCKET, session.objectKey);
+        if (promoted && promotedBySession(promoted, session.sessionId)) {
+          return await recordCompletion(promoted, promoted.httpMetadata?.contentType ?? session.contentType);
+        }
+        await releasePromotionLease(c.env, actor, leasePayload(session)).catch((releaseError) => {
+          console.error(`Failed to release promotion lease for session ${session.sessionId}:`, releaseError);
+        });
         throw new HttpError(
           410,
           "upload_staged_object_missing",
@@ -621,6 +693,7 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
     // not allowed fails the same way the pre-assembly gate above does, leaving
     // the staged upload retryable.
     let finalObject: R2Object;
+    let responseContentType = effectiveContentType;
     if (session.stagingKey === session.objectKey) {
       const legacyFinal = await headObject(c.env.FILES_BUCKET, session.objectKey);
       if (!legacyFinal) {
@@ -644,10 +717,7 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
       // this point while this attempt is still in flight must not be able to
       // see this attempt's own promoted object as "existing" and soft-delete
       // it out from under this attempt.
-      session = await acquirePromotionLease(c.env, actor, {
-        sessionId: session.sessionId,
-        uploadId: session.uploadId,
-      });
+      session = await acquirePromotionLease(c.env, actor, leasePayload(session));
 
       try {
         const existing = await wrapUploadStorageError(
@@ -655,60 +725,56 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
           "upload_promotion_precheck_failed",
           `check whether an object already exists at ${session.objectKey}`,
         );
-        if (existing) {
-          if (!overwriteRequested) {
-            throw new HttpError(409, "object_exists", "An object already exists at the target key.", {
-              key: session.objectKey,
-            });
+        if (existing && promotedBySession(existing, session.sessionId)) {
+          // A prior attempt promoted this exact session and crashed before
+          // recording completion: the target already holds these bytes, so
+          // copying again (or treating them as a conflict) is wrong; only
+          // the completion record is missing.
+          finalObject = existing;
+          responseContentType = existing.httpMetadata?.contentType ?? effectiveContentType;
+        } else {
+          if (existing) {
+            if (!overwriteRequested) {
+              throw new HttpError(409, "object_exists", "An object already exists at the target key.", {
+                key: session.objectKey,
+              });
+            }
+            // Back up without deleting: promoteObject's own write below
+            // replaces the target atomically, so a promotion failure after
+            // this point leaves the original object exactly as it was (plus a
+            // redundant, harmless trash copy) instead of an empty target key.
+            await wrapUploadStorageError(
+              backupObjectToTrash(c.env.FILES_BUCKET, session.objectKey),
+              "upload_overwrite_backup_failed",
+              `back up the existing object at ${session.objectKey} to trash before overwrite`,
+            );
           }
-          // Back up without deleting: promoteObject's own write below
-          // replaces the target atomically, so a promotion failure after
-          // this point leaves the original object exactly as it was (plus a
-          // redundant, harmless trash copy) instead of an empty target key.
-          await wrapUploadStorageError(
-            backupObjectToTrash(c.env.FILES_BUCKET, session.objectKey),
-            "upload_overwrite_backup_failed",
-            `back up the existing object at ${session.objectKey} to trash before overwrite`,
+          finalObject = await wrapUploadStorageError(
+            promoteObject(c.env.FILES_BUCKET, session.stagingKey, session.objectKey, undefined, {
+              ...contentTypeOverride,
+              // Only when overwrite is not allowed: closes the same
+              // check-then-act race the head check above cannot, by itself,
+              // rule out between that check and this write.
+              createOnlyIfAbsent: !overwriteRequested,
+              beforeWrite: promotionLeaseRenewer(c.env, actor, session),
+            }),
+            "upload_promotion_failed",
+            `promote staged upload to ${session.objectKey}`,
           );
         }
-        finalObject = await wrapUploadStorageError(
-          promoteObject(c.env.FILES_BUCKET, session.stagingKey, session.objectKey, undefined, {
-            ...contentTypeOverride,
-            // Only when overwrite is not allowed: closes the same
-            // check-then-act race the head check above cannot, by itself,
-            // rule out between that check and this write.
-            createOnlyIfAbsent: !overwriteRequested,
-          }),
-          "upload_promotion_failed",
-          `promote staged upload to ${session.objectKey}`,
-        );
       } catch (error) {
         // Release immediately so a client that retries right away (or after
         // fixing the conflict, for example with overwrite: true) resumes
-        // without waiting out the lease TTL.
-        await releasePromotionLease(c.env, actor, {
-          sessionId: session.sessionId,
-          uploadId: session.uploadId,
-        }).catch((releaseError) => {
+        // without waiting out the lease TTL. A stale token makes this a
+        // no-op on the store side, so a lease a retry now holds survives.
+        await releasePromotionLease(c.env, actor, leasePayload(session)).catch((releaseError) => {
           console.error(`Failed to release promotion lease for session ${session.sessionId}:`, releaseError);
         });
         throw error;
       }
     }
 
-    await markUploadSessionCompleted(c.env, actor, {
-      sessionId: session.sessionId,
-      uploadId: session.uploadId,
-    });
-
-    return jsonValidated(uploadCompleteResponseSchema, {
-      key: session.objectKey,
-      etag: finalObject.etag,
-      uploaded: finalObject.uploaded ? finalObject.uploaded.toISOString() : null,
-      size: finalObject.size,
-      contentType: effectiveContentType,
-      originalFilename: session.filename,
-    });
+    return await recordCompletion(finalObject, responseContentType);
   });
 
   app.post("/api/v2/upload/abort", async (c) => {

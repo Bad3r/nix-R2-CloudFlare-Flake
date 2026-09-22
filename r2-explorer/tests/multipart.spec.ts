@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
+import { HttpError } from "../src/http";
 import { completeMultipartUpload, promoteObject } from "../src/r2";
 import { stagingObjectKey } from "../src/routes/upload";
 import { acquirePromotionLease, releasePromotionLease } from "../src/upload-sessions";
 import {
   MemoryR2Bucket,
+  type MemoryUploadSessionNamespace,
   accessHeaders,
   accessSessionCookie,
   createAccessJwt,
@@ -1595,7 +1597,7 @@ describe("upload completion resilience (UPS-001, UPS-005)", () => {
     await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
       { partNumber: 1, etag: uploadedPart.etag },
     ]);
-    await acquirePromotionLease(env, "engineer@example.com", {
+    const leased = await acquirePromotionLease(env, "engineer@example.com", {
       sessionId: initPayload.sessionId,
       uploadId: initPayload.uploadId,
     });
@@ -1614,10 +1616,11 @@ describe("upload completion resilience (UPS-001, UPS-005)", () => {
     // The staged object survives: abort touched neither R2 nor the session.
     expect(await bucket.get(stagingKey)).not.toBeNull();
 
-    // Once the lease is released (or expires), abort works normally.
+    // Once the holder releases the lease (or it expires), abort works normally.
     await releasePromotionLease(env, "engineer@example.com", {
       sessionId: initPayload.sessionId,
       uploadId: initPayload.uploadId,
+      promotionLeaseToken: leased.promotionLeaseToken ?? undefined,
     });
     const secondAbort = await abortUpload(app, env, {
       sessionId: initPayload.sessionId,
@@ -2047,7 +2050,8 @@ describe("promoteObject", () => {
     expect(new Uint8Array(await target!.arrayBuffer())).toEqual(payload);
     expect(target?.httpMetadata?.contentType).toBe("application/octet-stream");
     expect(target?.customMetadata).toEqual({ source: "staged" });
-    expect(await bucket.get(".r2e-staging/session/big.bin")).toBeNull();
+    // The staged source stays until the session store records completion.
+    expect(await bucket.get(".r2e-staging/session/big.bin")).not.toBeNull();
   });
 
   it("keeps the single-put fast path for objects within the limit", async () => {
@@ -2068,6 +2072,115 @@ describe("promoteObject", () => {
     expect(directPutKeys).toEqual(["docs/small.bin"]);
     const target = await bucket.get("docs/small.bin");
     expect(new Uint8Array(await target!.arrayBuffer())).toEqual(payload);
-    expect(await bucket.get(".r2e-staging/session/small.bin")).toBeNull();
+    expect(await bucket.get(".r2e-staging/session/small.bin")).not.toBeNull();
+  });
+});
+
+describe("promotion crash-window recovery and lease fencing", () => {
+  useAccessJwksFetchMock();
+
+  it("finalizes a session whose earlier attempt promoted the object but crashed before recording completion", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "crash-after-promote.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, new Uint8Array(declaredSize).fill(9));
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    // The session store's completion write fails once, after promotion has
+    // already written the target key.
+    const namespace = env.R2E_UPLOAD_SESSIONS as unknown as MemoryUploadSessionNamespace;
+    const originalGet = namespace.get.bind(namespace);
+    let failedOnce = false;
+    const getSpy = vi.spyOn(namespace, "get").mockImplementation((id) => {
+      const stub = originalGet(id);
+      return {
+        fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          if (url.endsWith("/complete") && !failedOnce) {
+            failedOnce = true;
+            return new Response(
+              JSON.stringify({ error: { code: "upload_session_error", message: "simulated store outage" } }),
+              { status: 503, headers: { "content-type": "application/json" } },
+            );
+          }
+          return stub.fetch(input, init);
+        },
+      } as unknown as DurableObjectStub;
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const firstComplete = await completeUpload(app, env, completeBody);
+      expect(firstComplete.status).toBe(503);
+      // Promotion landed, and the staged object is still there: nothing is
+      // deleted before completion is durable.
+      expect(await bucket.get("uploads/crash-after-promote.bin")).not.toBeNull();
+      expect(await bucket.get(stagingKey)).not.toBeNull();
+
+      // The crashed attempt's lease lapses; the client retries after it.
+      vi.setSystemTime(Date.now() + 16 * 60 * 1000);
+      const retry = await completeUpload(app, env, completeBody);
+      expect(retry.status).toBe(200);
+      const payload = (await retry.json()) as { key: string; size: number };
+      expect(payload.key).toBe("uploads/crash-after-promote.bin");
+      expect(payload.size).toBe(declaredSize);
+    } finally {
+      vi.useRealTimers();
+      getSpy.mockRestore();
+    }
+
+    expect(await bucket.get(stagingKey)).toBeNull();
+    // Recognized as its own promoted object: no conflict, no second copy,
+    // nothing moved to trash.
+    const trashed = await bucket.list({ prefix: ".trash/" });
+    expect(trashed.objects).toHaveLength(0);
+    const target = await bucket.get("uploads/crash-after-promote.bin");
+    expect(target?.customMetadata?.uploadSessionId).toBe(initPayload.sessionId);
+  });
+
+  it("aborts a multipart promotion copy and writes nothing once the lease is lost mid-copy", async () => {
+    const bucket = new MemoryR2Bucket();
+    const payload = Uint8Array.from({ length: 21 }, (_, index) => index);
+    await bucket.put(".r2e-staging/session/lost.bin", payload);
+    const lostLease = new HttpError(409, "upload_promotion_in_progress", "Another request took over promoting this upload.", {
+      reason: "lease_lost",
+      retryAfterSeconds: 1,
+    });
+    let writes = 0;
+
+    await expect(
+      promoteObject(
+        bucket as unknown as R2Bucket,
+        ".r2e-staging/session/lost.bin",
+        "docs/lost.bin",
+        { singlePutLimitBytes: 8, copyPartSizeBytes: 4 },
+        {
+          beforeWrite: async () => {
+            writes += 1;
+            if (writes === 2) {
+              throw lostLease;
+            }
+          },
+        },
+      ),
+    ).rejects.toBe(lostLease);
+
+    expect(writes).toBe(2);
+    expect(await bucket.get("docs/lost.bin")).toBeNull();
+    expect(await bucket.get(".r2e-staging/session/lost.bin")).not.toBeNull();
   });
 });

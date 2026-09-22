@@ -359,11 +359,24 @@ and this project follows Conventional Commits.
 - Uploading a declared zero-byte file now returns the specific
   `upload_empty_file` error instead of a generic `validation_error`.
 - A concurrent or retried multipart upload `complete` can no longer race a
-  still-promoting request into losing the newly uploaded object (a 15
-  minute promotion lease now serializes the
-  existence-check/soft-delete/promote sequence; a competing request gets
-  `409 upload_promotion_in_progress` with `error.details.retryAfterSeconds`
-  instead).
+  still-promoting request into losing the newly uploaded object: a
+  promotion lease serializes the existence-check/soft-delete/promote
+  sequence, and a competing request gets `409 upload_promotion_in_progress`
+  with `error.details.retryAfterSeconds` instead. The promoter renews the
+  lease before every write of its copy loop, so a promotion longer than the
+  15 minute window keeps it, and the lease carries a fencing token: a
+  promoter whose lease lapsed and was taken over by a retry can no longer
+  release that lease, record completion, or write another part (its copy is
+  aborted, and its 409 carries `error.details.reason` `lease_lost`).
+- An upload session no longer expires while its promotion lease is live:
+  acquiring or renewing the lease defers `expiresAt` one lease window past
+  the lease, so the expiry alarm cannot delete a staged object that is still
+  being copied to its final key.
+- The staged object is deleted only after the session store has recorded
+  completion (and reclaimed at expiry if that delete never ran), and a
+  retried `complete` recognizes its own already-promoted object at the target
+  key (`uploadSessionId` custom metadata, set at `init`) instead of failing
+  with `upload_staged_object_missing` or `409 object_exists`.
 - Retrying `/api/v2/upload/complete` after a crash mid-completion (the
   server confirmed multipart assembly but never recorded it) now resumes
   instead of returning a bare `500 internal_error`.

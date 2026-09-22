@@ -51,9 +51,10 @@ const UPLOAD_COMPLETE_RETRY_OPTIONS: RetryOptions = {
 // honors the server's retryAfterSeconds but never below 1s or above 30s.
 const PROMOTION_WAIT_MIN_MS = 1000;
 const PROMOTION_WAIT_MAX_MS = 30000;
-// The server's promotion lease (upload-sessions Durable Object) lives 15
-// minutes; bound the total wait a bit past that so the client only gives up
-// after the server itself would have let a fresh complete take over the lease.
+// The server renews its promotion lease while it copies, so a very large
+// promotion can legitimately outlast the 15 minute lease window. This bounds
+// how long the client keeps polling before it reports the upload as still
+// finalizing server-side (the object appears once the server finishes).
 const PROMOTION_WAIT_BOUND_MS = 20 * 60 * 1000;
 
 export type UploadProgress = {

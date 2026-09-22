@@ -47,6 +47,13 @@ type SessionStorageRecord = {
    * with it.
    */
   promotionLeaseExpiresAt: string | null;
+  /**
+   * Fencing token issued with the current promotion lease. Only the holder
+   * can renew or release the lease or record completion, so a promoter whose
+   * lease lapsed and was re-acquired by a retry can no longer mutate the
+   * session, however long its own copy loop keeps running.
+   */
+  promotionLeaseToken: string | null;
 };
 
 type CreateSessionRequest = {
@@ -62,6 +69,8 @@ type SessionRequest = {
 type UpdateSessionRequest = {
   sessionId: string;
   uploadId: string;
+  /** Lease holder's fencing token; required by renew, release and complete while a lease is held. */
+  promotionLeaseToken?: string;
 };
 
 type RecordSignedPartRequest = {
@@ -79,16 +88,13 @@ type SessionResponse = {
 const SESSION_PREFIX = "session:";
 const EXPIRED_RETENTION_MS = 24 * 60 * 60 * 1000;
 /**
- * Bounds how long a crashed promotion invocation can block a retry. Sized to
- * cover the worst-case promotion: the 10000-part copy-part ceiling needs
- * 20000 R2 subrequests (2 per part), which fits this window as long as each
- * subrequest averages under ~45ms, comfortably above typical R2 latency. A
- * promotion that legitimately runs longer than this is rare enough that
- * losing the lease to a retry (which itself re-acquires it) is an acceptable
- * tradeoff against a stuck lease blocking every retry for the session's
- * entire remaining TTL.
+ * Bounds how long a crashed promotion invocation can block a retry. A live
+ * promoter renews the lease (see /renew-promotion-lease) before each write of
+ * its copy loop, so this only needs to cover the gap between two writes of a
+ * healthy promotion, not the whole promotion; a promoter that stops renewing
+ * has crashed and loses the lease to the next retry after this window.
  */
-const PROMOTION_LEASE_MS = 15 * 60 * 1000;
+export const PROMOTION_LEASE_MS = 15 * 60 * 1000;
 
 function storageKey(sessionId: string): string {
   return `${SESSION_PREFIX}${sessionId}`;
@@ -256,6 +262,7 @@ function parseSessionRecord(input: unknown): SessionStorageRecord {
     signedParts: parseSignedPartsMap(record.signedParts),
     overwrite: asOptionalBoolean(record.overwrite, "session.overwrite"),
     promotionLeaseExpiresAt: asOptionalNullableString(record.promotionLeaseExpiresAt, "session.promotionLeaseExpiresAt"),
+    promotionLeaseToken: asOptionalNullableString(record.promotionLeaseToken, "session.promotionLeaseToken"),
   };
 }
 
@@ -286,6 +293,7 @@ function parseUpdateRequest(input: unknown): UpdateSessionRequest {
   return {
     sessionId: asString(payload.sessionId, "sessionId"),
     uploadId: asString(payload.uploadId, "uploadId"),
+    promotionLeaseToken: asOptionalString(payload.promotionLeaseToken, "promotionLeaseToken"),
   };
 }
 
@@ -307,8 +315,30 @@ function assertIsoTimestamp(value: string, field: string): void {
   }
 }
 
+function hasLivePromotionLease(session: SessionStorageRecord, nowMs: number): boolean {
+  const leaseExpiresMs = session.promotionLeaseExpiresAt ? Date.parse(session.promotionLeaseExpiresAt) : Number.NaN;
+  return Number.isFinite(leaseExpiresMs) && leaseExpiresMs > nowMs;
+}
+
+/**
+ * A live promotion lease defers expiry: reclaiming the staged object while
+ * its promoter is still copying it would break that promotion, and the lease
+ * itself already extends expiresAt (see deferExpiryForLease), so this only
+ * matters for a lease acquired before that extension was written.
+ */
 function isExpired(session: SessionStorageRecord, nowMs: number): boolean {
-  return Date.parse(session.expiresAt) <= nowMs;
+  return Date.parse(session.expiresAt) <= nowMs && !hasLivePromotionLease(session, nowMs);
+}
+
+/**
+ * Keep the session alive for one more lease window past the lease itself, so
+ * a promoter that crashes right before its lease lapses still leaves the
+ * retrying client a full window to resume from the staged object before the
+ * alarm reclaims it.
+ */
+function deferExpiryForLease(session: SessionStorageRecord, leaseExpiresAt: string): string {
+  const deferredMs = Date.parse(leaseExpiresAt) + PROMOTION_LEASE_MS;
+  return Date.parse(session.expiresAt) >= deferredMs ? session.expiresAt : new Date(deferredMs).toISOString();
 }
 
 function isInFlight(session: SessionStorageRecord): boolean {
@@ -442,7 +472,26 @@ export async function releasePromotionLease(
   return session;
 }
 
-/** Transition an active or staged upload session to completed. */
+/**
+ * Extend the held promotion lease by another PROMOTION_LEASE_MS. Rejects with
+ * upload_promotion_in_progress (details.reason "lease_lost") when a retry has
+ * taken the lease over, which is the caller's signal to stop writing.
+ */
+export async function renewPromotionLease(
+  env: Env,
+  ownerId: string,
+  payload: UpdateSessionRequest,
+): Promise<SessionStorageRecord> {
+  const result = await callSessionStore<SessionResponse>(env, ownerId, "/renew-promotion-lease", payload);
+  const session = parseSessionRecord(result.session);
+  assertSessionOwner(session, ownerId);
+  return session;
+}
+
+/**
+ * Transition an active or staged upload session to completed. The store
+ * deletes the staged object itself once the transition is durable.
+ */
 export async function markUploadSessionCompleted(
   env: Env,
   ownerId: string,
@@ -492,12 +541,52 @@ export class UploadSessionDurableObject {
    */
   private assertNoLivePromotionLease(session: SessionStorageRecord, sessionId: string): void {
     const nowMs = Date.now();
-    const leaseExpiresMs = session.promotionLeaseExpiresAt ? Date.parse(session.promotionLeaseExpiresAt) : Number.NaN;
-    if (Number.isFinite(leaseExpiresMs) && leaseExpiresMs > nowMs) {
+    if (hasLivePromotionLease(session, nowMs)) {
       throw new HttpError(409, "upload_promotion_in_progress", "Another request is already promoting this upload.", {
         sessionId,
-        retryAfterSeconds: Math.max(1, Math.ceil((leaseExpiresMs - nowMs) / 1000)),
+        retryAfterSeconds: Math.max(1, Math.ceil((Date.parse(session.promotionLeaseExpiresAt!) - nowMs) / 1000)),
       });
+    }
+  }
+
+  /**
+   * Fence renew, release and complete on the lease token: a caller whose
+   * lease lapsed and was re-acquired by a retry presents a stale token and is
+   * told to wait like any other bystander, so it cannot release the retry's
+   * lease or record completion of a promotion it no longer owns. Sessions
+   * that never acquired a lease (legacy direct-to-target uploads) carry no
+   * token and are not fenced.
+   */
+  private assertLeaseHolder(session: SessionStorageRecord, body: UpdateSessionRequest): void {
+    if (session.promotionLeaseToken === null || body.promotionLeaseToken === session.promotionLeaseToken) {
+      return;
+    }
+    const nowMs = Date.now();
+    const retryAfterSeconds = hasLivePromotionLease(session, nowMs)
+      ? Math.max(1, Math.ceil((Date.parse(session.promotionLeaseExpiresAt!) - nowMs) / 1000))
+      : 1;
+    throw new HttpError(409, "upload_promotion_in_progress", "Another request took over promoting this upload.", {
+      sessionId: body.sessionId,
+      reason: "lease_lost",
+      retryAfterSeconds,
+    });
+  }
+
+  /**
+   * Delete the staged object left by a session, never the target key itself:
+   * legacy sessions staged directly at objectKey, where the key may hold a
+   * previously stored object. Failures are logged; the object sits under the
+   * reserved staging prefix and the next expiry pass retries the delete.
+   */
+  private async reclaimStagedObject(session: SessionStorageRecord): Promise<void> {
+    const stagingKey = session.stagingKey ?? session.objectKey;
+    if (stagingKey === session.objectKey) {
+      return;
+    }
+    try {
+      await this.env.FILES_BUCKET.delete(stagingKey);
+    } catch (error) {
+      console.error(`Failed to delete staged object ${stagingKey} for session ${session.sessionId}:`, error);
     }
   }
 
@@ -523,15 +612,7 @@ export class UploadSessionDurableObject {
         );
       }
     }
-    // Never delete the target key itself: legacy sessions staged directly at
-    // objectKey, where the key may hold a previously stored object.
-    if (stagingKey !== session.objectKey) {
-      try {
-        await this.env.FILES_BUCKET.delete(stagingKey);
-      } catch (error) {
-        console.error(`Failed to delete staged object ${stagingKey} for session ${session.sessionId}:`, error);
-      }
-    }
+    await this.reclaimStagedObject(session);
   }
 
   private async pruneExpiredSessions(nowMs: number): Promise<void> {
@@ -547,6 +628,10 @@ export class UploadSessionDurableObject {
       if (value.status !== "expired") {
         if (isInFlight(value)) {
           await this.releaseExpiredUploadResources(value);
+        } else if (value.status === "completed") {
+          // /complete deletes the staged object after recording completion;
+          // this catches a delete that failed or a Worker evicted in between.
+          await this.reclaimStagedObject(value);
         }
         updates.set(key, {
           ...value,
@@ -803,10 +888,45 @@ export class UploadSessionDurableObject {
         // no intervening await, so the Durable Object's input gate serializes
         // this check-and-set against any other concurrent request for the
         // same session: a second caller cannot observe the pre-lease state.
+        const promotionLeaseExpiresAt = new Date(Date.now() + PROMOTION_LEASE_MS).toISOString();
         const updated: SessionStorageRecord = {
           ...session,
           status: "staged",
-          promotionLeaseExpiresAt: new Date(Date.now() + PROMOTION_LEASE_MS).toISOString(),
+          expiresAt: deferExpiryForLease(session, promotionLeaseExpiresAt),
+          promotionLeaseExpiresAt,
+          promotionLeaseToken: crypto.randomUUID(),
+        };
+        await this.state.storage.put(storageKey(body.sessionId), updated);
+        return this.createSessionResponse(updated);
+      }
+
+      if (url.pathname === "/renew-promotion-lease") {
+        const body = parseUpdateRequest(parseJsonText(rawBody));
+        const session = await this.loadSession(body.sessionId);
+
+        if (session.uploadId !== body.uploadId) {
+          throw new HttpError(409, "upload_session_mismatch", "Upload session uploadId mismatch.", {
+            sessionId: body.sessionId,
+          });
+        }
+
+        if (session.status !== "staged" || session.promotionLeaseExpiresAt === null) {
+          throw new HttpError(409, "upload_session_not_active", "Upload session holds no promotion lease.", {
+            sessionId: body.sessionId,
+            status: session.status,
+          });
+        }
+
+        // The holder may renew a lease that already lapsed as long as no
+        // retry took it over in the meantime: the token, not the clock, is
+        // what decides ownership.
+        this.assertLeaseHolder(session, body);
+
+        const promotionLeaseExpiresAt = new Date(Date.now() + PROMOTION_LEASE_MS).toISOString();
+        const updated: SessionStorageRecord = {
+          ...session,
+          expiresAt: deferExpiryForLease(session, promotionLeaseExpiresAt),
+          promotionLeaseExpiresAt,
         };
         await this.state.storage.put(storageKey(body.sessionId), updated);
         return this.createSessionResponse(updated);
@@ -822,13 +942,19 @@ export class UploadSessionDurableObject {
           });
         }
 
-        if (session.promotionLeaseExpiresAt === null) {
+        // Idempotent for the holder; a stale holder must not clear the lease
+        // a retry now owns, so for it this is a no-op as well.
+        if (
+          session.promotionLeaseExpiresAt === null ||
+          (session.promotionLeaseToken !== null && body.promotionLeaseToken !== session.promotionLeaseToken)
+        ) {
           return this.createSessionResponse(session);
         }
 
         const updated: SessionStorageRecord = {
           ...session,
           promotionLeaseExpiresAt: null,
+          promotionLeaseToken: null,
         };
         await this.state.storage.put(storageKey(body.sessionId), updated);
         return this.createSessionResponse(updated);
@@ -851,13 +977,21 @@ export class UploadSessionDurableObject {
           });
         }
 
+        this.assertLeaseHolder(session, body);
+
         const updated: SessionStorageRecord = {
           ...session,
           status: "completed",
           completedAt: new Date().toISOString(),
           promotionLeaseExpiresAt: null,
+          promotionLeaseToken: null,
         };
         await this.state.storage.put(storageKey(body.sessionId), updated);
+        // Only now, with completion durable, are the staged bytes redundant:
+        // a retry after a crash anywhere before this write still finds them
+        // (or the promoted target) and can finish instead of failing with
+        // upload_staged_object_missing.
+        await this.reclaimStagedObject(updated);
         return this.createSessionResponse(updated);
       }
 
@@ -899,6 +1033,7 @@ export class UploadSessionDurableObject {
           status: "aborted",
           abortedAt: new Date().toISOString(),
           promotionLeaseExpiresAt: null,
+          promotionLeaseToken: null,
         };
         await this.state.storage.put(storageKey(body.sessionId), updated);
         return this.createSessionResponse(updated);

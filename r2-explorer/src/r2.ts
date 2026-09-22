@@ -173,6 +173,13 @@ export type CopyObjectOptions = {
    * immediately before complete(), aborting the upload if the key appeared.
    */
   createOnlyIfAbsent?: boolean;
+  /**
+   * Awaited immediately before every write to the target (each copied part,
+   * the multipart complete, or the single put). A caller holding a lease on
+   * the target renews it here and throws when the lease was lost, which
+   * aborts the copy before it can land a stale write.
+   */
+  beforeWrite?: () => Promise<void>;
 };
 
 /**
@@ -201,9 +208,19 @@ async function copyObject(
     : source.httpMetadata;
   const createOnlyIfAbsent = options?.createOnlyIfAbsent === true;
 
+  const beforeWrite = options?.beforeWrite;
+
   const stored =
     source.size <= limits.singlePutLimitBytes
-      ? await promoteViaSinglePut(bucket, fromKey, toKey, httpMetadata, source.customMetadata, createOnlyIfAbsent)
+      ? await promoteViaSinglePut(
+          bucket,
+          fromKey,
+          toKey,
+          httpMetadata,
+          source.customMetadata,
+          createOnlyIfAbsent,
+          beforeWrite,
+        )
       : await promoteViaMultipartCopy(
           bucket,
           fromKey,
@@ -212,6 +229,7 @@ async function copyObject(
           limits.copyPartSizeBytes,
           httpMetadata,
           createOnlyIfAbsent,
+          beforeWrite,
         );
   if (!stored) {
     if (createOnlyIfAbsent) {
@@ -264,13 +282,16 @@ export async function moveObject(
 }
 
 /**
- * Promote a validated staged object to its final key, preserving metadata,
- * then delete the staged source. R2 has no server-side rename, so the copy
- * streams through the Worker via copyObject. The target key is only written
- * on success, so a failed promotion leaves any pre-existing target object
- * untouched. options.httpMetadata overrides the staged object's own metadata
- * (see copyObject) for a caller that resolved a more accurate value (for
- * example a magic-byte-detected Content-Type) after the source was staged.
+ * Promote a validated staged object to its final key, preserving metadata.
+ * R2 has no server-side rename, so the copy streams through the Worker via
+ * copyObject. The target key is only written on success, so a failed
+ * promotion leaves any pre-existing target object untouched. The staged
+ * source is deliberately left in place: the upload session store deletes it
+ * once completion is recorded, so a crash between this copy and that record
+ * leaves a retry something to resume from. options.httpMetadata overrides
+ * the staged object's own metadata (see copyObject) for a caller that
+ * resolved a more accurate value (for example a magic-byte-detected
+ * Content-Type) after the source was staged.
  */
 export async function promoteObject(
   bucket: R2Bucket,
@@ -279,16 +300,7 @@ export async function promoteObject(
   limits: PromoteObjectLimits = DEFAULT_PROMOTE_LIMITS,
   options?: CopyObjectOptions,
 ): Promise<R2Object> {
-  const stored = await copyObject(bucket, fromKey, toKey, limits, options);
-  // The staged copy is redundant once the final key is written. A failed
-  // cleanup only leaks a staging object (later removed by session pruning),
-  // so log it instead of failing the completed upload.
-  try {
-    await bucket.delete(fromKey);
-  } catch (error) {
-    console.error(`Failed to delete staged object ${fromKey} after promotion:`, error);
-  }
-  return stored;
+  return copyObject(bucket, fromKey, toKey, limits, options);
 }
 
 async function promoteViaSinglePut(
@@ -298,7 +310,9 @@ async function promoteViaSinglePut(
   httpMetadata: R2HTTPMetadata | undefined,
   customMetadata: Record<string, string> | undefined,
   createOnlyIfAbsent: boolean,
+  beforeWrite?: () => Promise<void>,
 ): Promise<R2Object | null> {
+  await beforeWrite?.();
   const object = await getObject(bucket, fromKey);
   if (createOnlyIfAbsent) {
     // Wildcard If-None-Match: R2's conditional put resolves to null instead
@@ -324,6 +338,7 @@ async function promoteViaMultipartCopy(
   partSizeBytes: number,
   httpMetadata: R2HTTPMetadata | undefined,
   createOnlyIfAbsent: boolean,
+  beforeWrite?: () => Promise<void>,
 ): Promise<R2Object | null> {
   const upload = await bucket.createMultipartUpload(toKey, {
     httpMetadata,
@@ -332,6 +347,7 @@ async function promoteViaMultipartCopy(
   try {
     const parts: R2UploadedPart[] = [];
     for (let offset = 0; offset < source.size; offset += partSizeBytes) {
+      await beforeWrite?.();
       const length = Math.min(partSizeBytes, source.size - offset);
       const chunk = await bucket.get(fromKey, { range: { offset, length } });
       if (!chunk) {
@@ -339,6 +355,9 @@ async function promoteViaMultipartCopy(
       }
       parts.push(await upload.uploadPart(parts.length + 1, chunk.body));
     }
+    // The complete() below is the write that makes the target visible, so it
+    // gets its own check even when every part passed.
+    await beforeWrite?.();
     if (createOnlyIfAbsent) {
       // No conditional complete() exists on R2MultipartUpload, so the
       // closest available guard is a re-check immediately before completing:

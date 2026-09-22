@@ -2,6 +2,7 @@ import { createHash, createSign, generateKeyPairSync, randomBytes, sign as nodeS
 import { afterEach, beforeEach } from "vitest";
 import { resetAuthSigningKeyCache } from "../../src/auth";
 import type { Env } from "../../src/types";
+import { UploadSessionDurableObject } from "../../src/upload-sessions";
 
 type KVEntry = {
   value: string;
@@ -24,38 +25,6 @@ type MultipartUpload = {
   parts: Map<number, { etag: string; bytes: Uint8Array }>;
 };
 
-type UploadSessionRecord = {
-  sessionId: string;
-  ownerId: string;
-  bucket: string;
-  uploadId: string;
-  objectKey: string;
-  stagingKey: string;
-  filename: string;
-  contentType: string;
-  declaredSize: number;
-  sha256: string | null;
-  prefix: string;
-  maxParts: number;
-  maxFileBytes: number;
-  partSizeBytes: number;
-  createdAt: string;
-  expiresAt: string;
-  status: "init" | "active" | "staged" | "completed" | "aborted" | "expired";
-  completedAt: string | null;
-  abortedAt: string | null;
-  signedParts: Record<
-    string,
-    {
-      partNumber: number;
-      issuedAt: string;
-      contentLength: number;
-      contentMd5: string | null;
-    }
-  >;
-  overwrite: boolean;
-  promotionLeaseExpiresAt: string | null;
-};
 
 function isReadableStreamLike(value: unknown): value is ReadableStream {
   return typeof value === "object" && value !== null && "getReader" in value;
@@ -544,8 +513,16 @@ function doError(status: number, code: string, message: string, details?: unknow
   );
 }
 
+/**
+ * Routes upload-session store calls to a real UploadSessionDurableObject per
+ * owner, backed by in-memory storage, so route tests exercise the lease,
+ * expiry and completion logic the Worker deploys instead of a
+ * re-implementation that can drift from it.
+ */
 export class MemoryUploadSessionNamespace {
-  private readonly sessionsByOwner = new Map<string, Map<string, UploadSessionRecord>>();
+  private readonly objectsByOwner = new Map<string, UploadSessionDurableObject>();
+
+  constructor(private readonly bucket: MemoryR2Bucket) {}
 
   idFromName(name: string): DurableObjectId {
     return {
@@ -556,279 +533,19 @@ export class MemoryUploadSessionNamespace {
 
   get(id: DurableObjectId): DurableObjectStub {
     const owner = ((id as unknown as MemoryDurableObjectId).name ?? String(id)).toLowerCase();
+    let durable = this.objectsByOwner.get(owner);
+    if (!durable) {
+      const { state } = createMemoryDurableObjectState();
+      durable = new UploadSessionDurableObject(state, {
+        FILES_BUCKET: this.bucket as unknown as R2Bucket,
+      } as unknown as Env);
+      this.objectsByOwner.set(owner, durable);
+    }
+    const target = durable;
     return {
       fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url =
-          typeof input === "string"
-            ? new URL(input)
-            : input instanceof URL
-              ? input
-              : new URL(input.url);
-        if ((init?.method || "GET").toUpperCase() !== "POST") {
-          return doError(405, "method_not_allowed", "Only POST is supported.");
-        }
-        const raw = typeof init?.body === "string" ? init.body : "";
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw || "{}");
-        } catch (error) {
-          return doError(400, "bad_request", "Request body must be valid JSON.", { cause: String(error) });
-        }
-
-        const ownerSessions = this.sessionsByOwner.get(owner) ?? new Map<string, UploadSessionRecord>();
-        this.sessionsByOwner.set(owner, ownerSessions);
-        const nowMs = Date.now();
-        for (const [sessionId, session] of ownerSessions.entries()) {
-          if (Date.parse(session.expiresAt) <= nowMs) {
-            ownerSessions.set(sessionId, {
-              ...session,
-              status: "expired",
-            });
-          }
-        }
-
-        const asObject =
-          parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : null;
-        if (!asObject) {
-          return doError(400, "validation_error", "Request payload must be a JSON object.");
-        }
-
-        if (url.pathname === "/create") {
-          const sessionRaw =
-            asObject.session && typeof asObject.session === "object" && !Array.isArray(asObject.session)
-              ? (asObject.session as UploadSessionRecord)
-              : null;
-          if (!sessionRaw || typeof sessionRaw.sessionId !== "string" || sessionRaw.sessionId.length === 0) {
-            return doError(400, "validation_error", "session.sessionId is required.");
-          }
-          const maxConcurrentUploads =
-            typeof asObject.maxConcurrentUploads === "number" && Number.isInteger(asObject.maxConcurrentUploads)
-              ? asObject.maxConcurrentUploads
-              : 0;
-          if (maxConcurrentUploads > 0) {
-            let activeCount = 0;
-            for (const value of ownerSessions.values()) {
-              if (value.status === "active" && Date.parse(value.expiresAt) > nowMs) {
-                activeCount += 1;
-              }
-            }
-            if (activeCount >= maxConcurrentUploads) {
-              return doError(429, "upload_concurrency_limit", "Maximum concurrent uploads reached.");
-            }
-          }
-          if (ownerSessions.has(sessionRaw.sessionId)) {
-            return doError(409, "upload_session_exists", "Upload session already exists.");
-          }
-          for (const value of ownerSessions.values()) {
-            if (
-              value.status === "active" &&
-              Date.parse(value.expiresAt) > nowMs &&
-              value.objectKey === sessionRaw.objectKey
-            ) {
-              return doError(409, "upload_object_key_in_use", "An active upload session already targets this key.");
-            }
-          }
-          if (sessionRaw.status !== "init" && sessionRaw.status !== "active") {
-            return doError(409, "upload_session_invalid_state", "Upload session must start in init or active state.");
-          }
-          const activeSession: UploadSessionRecord = {
-            ...sessionRaw,
-            status: "active",
-          };
-          ownerSessions.set(sessionRaw.sessionId, activeSession);
-          return new Response(JSON.stringify({ session: activeSession }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/get") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const requireActive = asObject.requireActive === true;
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.status === "expired") {
-            return doError(410, "upload_session_expired", "Upload session has expired.");
-          }
-          if (requireActive && session.status !== "active") {
-            return doError(409, "upload_session_not_active", "Upload session is not active.");
-          }
-          return new Response(JSON.stringify({ session }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/record-signed-part") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const uploadId = typeof asObject.uploadId === "string" ? asObject.uploadId : "";
-          const partNumber =
-            typeof asObject.partNumber === "number" && Number.isInteger(asObject.partNumber)
-              ? asObject.partNumber
-              : 0;
-          const contentLength =
-            typeof asObject.contentLength === "number" && Number.isInteger(asObject.contentLength)
-              ? asObject.contentLength
-              : 0;
-          const contentMd5 =
-            typeof asObject.contentMd5 === "string" && asObject.contentMd5.length > 0 ? asObject.contentMd5 : null;
-
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.uploadId !== uploadId) {
-            return doError(409, "upload_session_mismatch", "Upload session uploadId mismatch.");
-          }
-          if (session.status !== "active") {
-            return doError(409, "upload_session_not_active", "Upload session is not active.");
-          }
-          if (partNumber <= 0 || contentLength <= 0) {
-            return doError(400, "validation_error", "partNumber and contentLength must be positive integers.");
-          }
-
-          const updated: UploadSessionRecord = {
-            ...session,
-            signedParts: {
-              ...session.signedParts,
-              [String(partNumber)]: {
-                partNumber,
-                issuedAt: new Date().toISOString(),
-                contentLength,
-                contentMd5,
-              },
-            },
-          };
-          ownerSessions.set(sessionId, updated);
-          return new Response(JSON.stringify({ session: updated }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/acquire-promotion-lease") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const uploadId = typeof asObject.uploadId === "string" ? asObject.uploadId : "";
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.uploadId !== uploadId) {
-            return doError(409, "upload_session_mismatch", "Upload session uploadId mismatch.");
-          }
-          if (session.status !== "active" && session.status !== "staged") {
-            return doError(409, "upload_session_not_active", "Upload session is not active.");
-          }
-          const nowMs = Date.now();
-          const existingExpiresMs = session.promotionLeaseExpiresAt ? Date.parse(session.promotionLeaseExpiresAt) : NaN;
-          if (Number.isFinite(existingExpiresMs) && existingExpiresMs > nowMs) {
-            return doError(409, "upload_promotion_in_progress", "Another request is already promoting this upload.", {
-              retryAfterSeconds: Math.max(1, Math.ceil((existingExpiresMs - nowMs) / 1000)),
-            });
-          }
-          const staged: UploadSessionRecord = {
-            ...session,
-            status: "staged",
-            promotionLeaseExpiresAt: new Date(nowMs + 15 * 60 * 1000).toISOString(),
-          };
-          ownerSessions.set(sessionId, staged);
-          return new Response(JSON.stringify({ session: staged }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/release-promotion-lease") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const uploadId = typeof asObject.uploadId === "string" ? asObject.uploadId : "";
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.uploadId !== uploadId) {
-            return doError(409, "upload_session_mismatch", "Upload session uploadId mismatch.");
-          }
-          if (session.promotionLeaseExpiresAt === null) {
-            return new Response(JSON.stringify({ session }), {
-              status: 200,
-              headers: { "content-type": "application/json; charset=utf-8" },
-            });
-          }
-          const released: UploadSessionRecord = { ...session, promotionLeaseExpiresAt: null };
-          ownerSessions.set(sessionId, released);
-          return new Response(JSON.stringify({ session: released }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/complete" || url.pathname === "/abort") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const uploadId = typeof asObject.uploadId === "string" ? asObject.uploadId : "";
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.uploadId !== uploadId) {
-            return doError(409, "upload_session_mismatch", "Upload session uploadId mismatch.");
-          }
-          if (session.status === "expired") {
-            return doError(410, "upload_session_expired", "Upload session has expired.");
-          }
-
-          if (url.pathname === "/complete") {
-            if (session.status !== "active" && session.status !== "staged") {
-              return doError(409, "upload_session_not_active", "Upload session is not active.");
-            }
-            const updated: UploadSessionRecord = {
-              ...session,
-              status: "completed",
-              completedAt: new Date().toISOString(),
-              promotionLeaseExpiresAt: null,
-            };
-            ownerSessions.set(sessionId, updated);
-            return new Response(JSON.stringify({ session: updated }), {
-              status: 200,
-              headers: { "content-type": "application/json; charset=utf-8" },
-            });
-          }
-
-          if (session.status === "completed") {
-            return doError(409, "upload_session_already_completed", "Upload session is already completed.");
-          }
-          if (session.status === "aborted") {
-            return new Response(JSON.stringify({ session }), {
-              status: 200,
-              headers: { "content-type": "application/json; charset=utf-8" },
-            });
-          }
-          {
-            const nowMs = Date.now();
-            const leaseExpiresMs = session.promotionLeaseExpiresAt ? Date.parse(session.promotionLeaseExpiresAt) : NaN;
-            if (Number.isFinite(leaseExpiresMs) && leaseExpiresMs > nowMs) {
-              return doError(409, "upload_promotion_in_progress", "Another request is already promoting this upload.", {
-                retryAfterSeconds: Math.max(1, Math.ceil((leaseExpiresMs - nowMs) / 1000)),
-              });
-            }
-          }
-          const updated: UploadSessionRecord = {
-            ...session,
-            status: "aborted",
-            abortedAt: new Date().toISOString(),
-            promotionLeaseExpiresAt: null,
-          };
-          ownerSessions.set(sessionId, updated);
-          return new Response(JSON.stringify({ session: updated }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        return doError(404, "not_found", "Upload session route not found.");
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        return target.fetch(new Request(url, init));
       },
     } as unknown as DurableObjectStub;
   }
@@ -1271,7 +988,7 @@ export async function createTestEnv(): Promise<{
   const bucket = new MemoryR2Bucket();
   const photosBucket = new MemoryR2Bucket();
   const sharesKv = new MemoryKV();
-  const uploadSessions = new MemoryUploadSessionNamespace();
+  const uploadSessions = new MemoryUploadSessionNamespace(bucket);
   const shareCounters = new MemoryShareCounterNamespace();
 
   const env: Env = {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/types";
-import { UploadSessionDurableObject, type UploadSessionRecord } from "../src/upload-sessions";
+import { PROMOTION_LEASE_MS, UploadSessionDurableObject, type UploadSessionRecord } from "../src/upload-sessions";
 import { createMemoryDurableObjectState, MemoryR2Bucket } from "./helpers/memory";
 
 const EXPIRED_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -36,6 +36,7 @@ function makeSessionRecord(overrides: Partial<UploadSessionRecord>): UploadSessi
     signedParts: {},
     overwrite: false,
     promotionLeaseExpiresAt: null,
+    promotionLeaseToken: null,
     ...overrides,
   };
 }
@@ -377,16 +378,17 @@ describe("UploadSessionDurableObject staged transition and promotion lease (UPS-
     const session = makeSessionRecord({ sessionId: "sess-release", uploadId: "upload-release" });
     await storage.put("session:sess-release", session);
 
-    await durable.fetch(
+    const acquireResponse = await durable.fetch(
       new Request("https://upload-sessions/acquire-promotion-lease", {
         method: "POST",
         body: JSON.stringify({ sessionId: "sess-release", uploadId: "upload-release" }),
       }),
     );
+    const { promotionLeaseToken } = ((await acquireResponse.json()) as { session: UploadSessionRecord }).session;
     const releaseResponse = await durable.fetch(
       new Request("https://upload-sessions/release-promotion-lease", {
         method: "POST",
-        body: JSON.stringify({ sessionId: "sess-release", uploadId: "upload-release" }),
+        body: JSON.stringify({ sessionId: "sess-release", uploadId: "upload-release", promotionLeaseToken }),
       }),
     );
     expect(releaseResponse.status).toBe(200);
@@ -470,16 +472,21 @@ describe("UploadSessionDurableObject staged transition and promotion lease (UPS-
     });
     await storage.put("session:sess-abort-after-release", session);
 
-    await durable.fetch(
+    const acquireResponse = await durable.fetch(
       new Request("https://upload-sessions/acquire-promotion-lease", {
         method: "POST",
         body: JSON.stringify({ sessionId: "sess-abort-after-release", uploadId: "upload-abort-after-release" }),
       }),
     );
+    const { promotionLeaseToken } = ((await acquireResponse.json()) as { session: UploadSessionRecord }).session;
     await durable.fetch(
       new Request("https://upload-sessions/release-promotion-lease", {
         method: "POST",
-        body: JSON.stringify({ sessionId: "sess-abort-after-release", uploadId: "upload-abort-after-release" }),
+        body: JSON.stringify({
+          sessionId: "sess-abort-after-release",
+          uploadId: "upload-abort-after-release",
+          promotionLeaseToken,
+        }),
       }),
     );
 
@@ -584,6 +591,8 @@ describe("UploadSessionDurableObject staged transition and promotion lease (UPS-
       }),
     );
     expect(leaseResponse.status).toBe(200);
+    const firstLeaseToken = ((await leaseResponse.json()) as { session: UploadSessionRecord }).session
+      .promotionLeaseToken;
 
     const second = makeSessionRecord({
       sessionId: "sess-rw2-second",
@@ -604,7 +613,11 @@ describe("UploadSessionDurableObject staged transition and promotion lease (UPS-
     const completeFirst = await durable.fetch(
       new Request("https://upload-sessions/complete", {
         method: "POST",
-        body: JSON.stringify({ sessionId: "sess-rw2-first", uploadId: "upload-rw2-first" }),
+        body: JSON.stringify({
+          sessionId: "sess-rw2-first",
+          uploadId: "upload-rw2-first",
+          promotionLeaseToken: firstLeaseToken,
+        }),
       }),
     );
     expect(completeFirst.status).toBe(200);
@@ -616,5 +629,194 @@ describe("UploadSessionDurableObject staged transition and promotion lease (UPS-
       }),
     );
     expect(createThird.status).toBe(200);
+  });
+});
+
+describe("UploadSessionDurableObject lease renewal, fencing and expiry deferral", () => {
+  const call = (durable: UploadSessionDurableObject, path: string, body: Record<string, unknown>) =>
+    durable.fetch(new Request(`https://upload-sessions${path}`, { method: "POST", body: JSON.stringify(body) }));
+  const sessionOf = async (response: Response): Promise<UploadSessionRecord> =>
+    ((await response.json()) as { session: UploadSessionRecord }).session;
+
+  it("acquiring the lease issues a fencing token and defers session expiry past the lease", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    // An upload that used almost all of its TTL before calling complete.
+    await storage.put(
+      "session:sess-defer",
+      makeSessionRecord({
+        sessionId: "sess-defer",
+        uploadId: "upload-defer",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    );
+
+    const leased = await sessionOf(
+      await call(durable, "/acquire-promotion-lease", { sessionId: "sess-defer", uploadId: "upload-defer" }),
+    );
+    expect(leased.promotionLeaseToken).toEqual(expect.any(String));
+    expect(Date.parse(leased.expiresAt)).toBeGreaterThanOrEqual(
+      Date.parse(leased.promotionLeaseExpiresAt!) + PROMOTION_LEASE_MS,
+    );
+  });
+
+  it("does not reclaim a staged object while its promotion lease is live", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    await bucket.put(".r2e-staging/sess-live/uploads/live.bin", "mid-copy bytes");
+    // A lease written before expiry deferral existed: expiresAt has passed
+    // while the lease is still live.
+    await storage.put(
+      "session:sess-live",
+      makeSessionRecord({
+        sessionId: "sess-live",
+        uploadId: "upload-live",
+        objectKey: "uploads/live.bin",
+        stagingKey: ".r2e-staging/sess-live/uploads/live.bin",
+        status: "staged",
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+        promotionLeaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        promotionLeaseToken: "holder",
+      }),
+    );
+
+    await call(durable, "/gc-expired", {});
+    expect((await call(durable, "/get", { sessionId: "sess-live" })).status).toBe(200);
+    expect((await storage.get<UploadSessionRecord>("session:sess-live"))?.status).toBe("staged");
+    expect(await bucket.get(".r2e-staging/sess-live/uploads/live.bin")).not.toBeNull();
+  });
+
+  it("renews the lease for the holder and rejects a stale token", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    await storage.put("session:sess-renew", makeSessionRecord({ sessionId: "sess-renew", uploadId: "upload-renew" }));
+    const leased = await sessionOf(
+      await call(durable, "/acquire-promotion-lease", { sessionId: "sess-renew", uploadId: "upload-renew" }),
+    );
+
+    const stale = await call(durable, "/renew-promotion-lease", {
+      sessionId: "sess-renew",
+      uploadId: "upload-renew",
+      promotionLeaseToken: "someone-else",
+    });
+    expect(stale.status).toBe(409);
+    const stalePayload = (await stale.json()) as {
+      error: { code: string; details?: { reason?: string; retryAfterSeconds?: number } };
+    };
+    expect(stalePayload.error.code).toBe("upload_promotion_in_progress");
+    expect(stalePayload.error.details?.reason).toBe("lease_lost");
+    expect(stalePayload.error.details?.retryAfterSeconds).toBeGreaterThan(0);
+
+    const renewed = await call(durable, "/renew-promotion-lease", {
+      sessionId: "sess-renew",
+      uploadId: "upload-renew",
+      promotionLeaseToken: leased.promotionLeaseToken,
+    });
+    expect(renewed.status).toBe(200);
+    const renewedSession = await sessionOf(renewed);
+    expect(renewedSession.promotionLeaseToken).toBe(leased.promotionLeaseToken);
+    expect(Date.parse(renewedSession.promotionLeaseExpiresAt!)).toBeGreaterThanOrEqual(
+      Date.parse(leased.promotionLeaseExpiresAt!),
+    );
+    expect(Date.parse(renewedSession.expiresAt)).toBeGreaterThanOrEqual(
+      Date.parse(renewedSession.promotionLeaseExpiresAt!) + PROMOTION_LEASE_MS,
+    );
+  });
+
+  it("fences release and completion on the lease token and deletes the staged object on completion", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    await bucket.put(".r2e-staging/sess-fence/uploads/fence.bin", "staged bytes");
+    await storage.put(
+      "session:sess-fence",
+      makeSessionRecord({
+        sessionId: "sess-fence",
+        uploadId: "upload-fence",
+        objectKey: "uploads/fence.bin",
+        stagingKey: ".r2e-staging/sess-fence/uploads/fence.bin",
+      }),
+    );
+    const leased = await sessionOf(
+      await call(durable, "/acquire-promotion-lease", { sessionId: "sess-fence", uploadId: "upload-fence" }),
+    );
+
+    // A stale holder's release is a no-op: the live lease survives.
+    const staleRelease = await call(durable, "/release-promotion-lease", {
+      sessionId: "sess-fence",
+      uploadId: "upload-fence",
+      promotionLeaseToken: "stale",
+    });
+    expect(staleRelease.status).toBe(200);
+    expect((await sessionOf(staleRelease)).promotionLeaseExpiresAt).toBe(leased.promotionLeaseExpiresAt);
+
+    const staleComplete = await call(durable, "/complete", {
+      sessionId: "sess-fence",
+      uploadId: "upload-fence",
+      promotionLeaseToken: "stale",
+    });
+    expect(staleComplete.status).toBe(409);
+    expect(((await staleComplete.json()) as { error: { code: string } }).error.code).toBe(
+      "upload_promotion_in_progress",
+    );
+    expect((await storage.get<UploadSessionRecord>("session:sess-fence"))?.status).toBe("staged");
+    expect(await bucket.get(".r2e-staging/sess-fence/uploads/fence.bin")).not.toBeNull();
+
+    const completed = await call(durable, "/complete", {
+      sessionId: "sess-fence",
+      uploadId: "upload-fence",
+      promotionLeaseToken: leased.promotionLeaseToken,
+    });
+    expect(completed.status).toBe(200);
+    const completedSession = await sessionOf(completed);
+    expect(completedSession.status).toBe("completed");
+    expect(completedSession.promotionLeaseToken).toBeNull();
+    // The staged bytes are reclaimed only once completion is durable.
+    expect(await bucket.get(".r2e-staging/sess-fence/uploads/fence.bin")).toBeNull();
+  });
+
+  it("completes a session that never held a lease without a token", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    await storage.put("session:sess-legacy", makeSessionRecord({ sessionId: "sess-legacy", uploadId: "upload-legacy" }));
+    const completed = await call(durable, "/complete", { sessionId: "sess-legacy", uploadId: "upload-legacy" });
+    expect(completed.status).toBe(200);
+    expect((await sessionOf(completed)).status).toBe("completed");
+  });
+
+  it("reclaims the staged object of a completed session once it passes expiry", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    // Completion was recorded but the follow-up staged delete never ran.
+    await bucket.put(".r2e-staging/sess-done/uploads/done.bin", "leftover staged bytes");
+    await bucket.put("uploads/done.bin", "promoted bytes");
+    await storage.put(
+      "session:sess-done",
+      makeSessionRecord({
+        sessionId: "sess-done",
+        uploadId: "upload-done",
+        objectKey: "uploads/done.bin",
+        stagingKey: ".r2e-staging/sess-done/uploads/done.bin",
+        status: "completed",
+        completedAt: new Date(Date.now() - 120_000).toISOString(),
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+
+    await call(durable, "/gc-expired", {});
+    expect(await bucket.get(".r2e-staging/sess-done/uploads/done.bin")).toBeNull();
+    expect(await (await bucket.get("uploads/done.bin"))?.text()).toBe("promoted bytes");
+    expect((await storage.get<UploadSessionRecord>("session:sess-done"))?.status).toBe("expired");
   });
 });

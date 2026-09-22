@@ -136,6 +136,11 @@ Upload semantics:
   `/api/v2/upload/complete` gets 409 `upload_promotion_in_progress` with `error.details.retryAfterSeconds`
   instead of racing the in-flight attempt; retry after the advertised delay. `/api/v2/upload/abort` refuses
   with the same code under the same condition, rather than deleting the in-flight attempt's staged object.
+  The promoter renews its lease while copying, so a long promotion keeps it; a promoter whose lease lapsed
+  and was taken over by a retry gets the same 409 with `error.details.reason` `lease_lost` and stops writing.
+  Completion is recorded before the staged object is deleted, and a retried `complete` recognizes its own
+  promoted object at the target key through the `uploadSessionId` custom metadata that every object
+  uploaded through this flow carries (next to `originalFilename` and, when declared, `declaredSha256`).
 - A declared or client-sent Content-Type of empty string or `application/octet-stream` is treated as "no real
   declaration": if the uploaded bytes match a known signature (PDF, PNG, JPEG, GIF, WEBP, ZIP family), that
   detected type is accepted and reported back as the object's `contentType` instead of the placeholder value.
