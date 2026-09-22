@@ -41,6 +41,14 @@ R2E_UPLOAD_PREFIX_ALLOWLIST = ""
 R2E_UPLOAD_ALLOWED_ORIGINS = ""
 R2E_UPLOAD_S3_BUCKET = "replace-with-upload-s3-bucket"
 
+# Raised above the Workers Paid default (10,000) so large-file upload
+# promotion is bounded by R2's own 10000-part multipart ceiling (~1.2 TiB at
+# the 128 MiB copy-part size in r2.ts), not the subrequest ceiling: promoting
+# via multipart copy uses 2 subrequests per copy-part plus a few more for
+# lookups and completion, so 10000 parts alone need over 20000 subrequests.
+[limits]
+subrequests = 25_000
+
 [[r2_buckets]]
 binding = "FILES_BUCKET"
 bucket_name = "replace-with-r2-bucket"
@@ -117,6 +125,11 @@ R2E_UPLOAD_BLOCKED_EXT = ""
 R2E_UPLOAD_PREFIX_ALLOWLIST = ""
 R2E_UPLOAD_ALLOWED_ORIGINS = ""
 R2E_UPLOAD_S3_BUCKET = "replace-with-upload-s3-bucket-preview"
+
+# See [limits] above: keeps the preview environment's large-file promotion
+# ceiling bounded by R2's part-count limit rather than the subrequest default.
+[env.preview.limits]
+subrequests = 25_000
 
 [[env.preview.r2_buckets]]
 binding = "FILES_BUCKET"
