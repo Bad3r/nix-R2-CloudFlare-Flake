@@ -11,7 +11,10 @@ cd "${REPO_ROOT}"
 # is invisible until `git add`ed, the normal flake rule). Override this in a
 # linked Lix worktree, where `.git` is a file, not a directory, and a clean
 # worktree cannot be fetched as `git+file`.
-NIX_VALIDATE_FLAKE_REF="${NIX_VALIDATE_FLAKE_REF:-git+file://${REPO_ROOT}}"
+# `shallow=1` because CI checks out with fetch-depth 1: Nix refuses to lock a
+# shallow repository without it (no revCount) and Lix refuses to fetch one at
+# all. Nothing here reads revCount; lib/version.nix stamps from shortRev.
+NIX_VALIDATE_FLAKE_REF="${NIX_VALIDATE_FLAKE_REF:-git+file://${REPO_ROOT}?shallow=1}"
 export NIX_VALIDATE_FLAKE_REF
 
 CACHE_URL_DEFAULT="https://cache.nixos.org"

@@ -44,9 +44,11 @@ For full local parity:
   git-ignored content are never copied into a temp checkout or the Nix store. A brand-new file is
   invisible until it is `git add`ed, the normal flake rule. `root-flake-template-docs` reads the
   repository ref from the `NIX_VALIDATE_FLAKE_REF` environment variable (set in
-  `scripts/ci/validate.sh`, default `git+file://<repo root>`); override it for setups where
+  `scripts/ci/validate.sh`, default `git+file://<repo root>?shallow=1`); override it for setups where
   `git+file` cannot fetch the working tree, for example a Lix linked worktree, where `.git` is a
-  file rather than a directory and a clean worktree cannot be fetched as `git+file`.
+  file rather than a directory and a clean worktree cannot be fetched as `git+file`. The `shallow=1`
+  attribute is required because CI checks out with `fetch-depth: 1`: Nix cannot lock a shallow
+  repository without it (no `revCount`), and Lix refuses to fetch one at all.
 
 ## References
 

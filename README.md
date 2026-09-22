@@ -66,9 +66,10 @@ and runs all pre-commit hooks (`lefthook run pre-commit --all-files`, including 
 `treefmt --fail-on-change` format check) in an isolated temp snapshot. The format
 check never rewrites files: on drift it names the files and asks for `nix fmt`.
 The snapshot and every flake evaluation only see git-visible files (the flake is
-fetched as `git+file://<repo>`, overridable with `NIX_VALIDATE_FLAKE_REF`), so
-ignored files such as `.env` and `node_modules` never reach `/tmp` or the Nix
-store; a new file must be `git add`ed before validation can see it.
+fetched as `git+file://<repo>?shallow=1`, overridable with
+`NIX_VALIDATE_FLAKE_REF`), so ignored files such as `.env` and `node_modules`
+never reach `/tmp` or the Nix store; a new file must be `git add`ed before
+validation can see it.
 The validation flow also runs Worker checks/tests in `r2-explorer`
 (`pnpm run check`, `pnpm run build:web`, `pnpm run test:all`) through
 `nix develop ./r2-explorer`; this target runs `pnpm install --frozen-lockfile`
