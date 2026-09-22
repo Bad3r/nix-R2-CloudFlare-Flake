@@ -25,10 +25,13 @@ Inputs:
 
 Required credentials:
 
-- default: GitHub Actions `GITHUB_TOKEN` (`contents: write`,
-  `pull-requests: write`)
-- optional: `RELEASE_PUSH_TOKEN` secret (used for Git push + PR merge/tag/release
-  API calls)
+- `RELEASE_PUSH_TOKEN` secret (required; used for the Git push, PR create/merge,
+  tag push, and GitHub Release API calls). The default `GITHUB_TOKEN` cannot
+  substitute for it: GitHub does not run `pull_request`-triggered workflows,
+  including `ci.yml`'s required checks, for a branch or PR created with
+  `GITHUB_TOKEN`, so a `GITHUB_TOKEN`-created release PR can never gain the
+  checks its auto-merge step waits for. `preflight` fails immediately, before
+  checkout or build, when this secret is empty.
 
 Workflow behavior:
 
@@ -123,6 +126,11 @@ The full template installs `git-annex-r2-init` and sets defaults:
 - rclone remote name: `r2`
 - default bucket hint: `files`
 - default prefix: `annex/workspace`
+
+The R2-Explorer Worker rejects delete and move requests whose source or
+destination key starts with `.git-annex/` (`400 invalid_delete` /
+`invalid_move`), the same protection it applies to its upload staging prefix,
+so the object browser cannot corrupt the git-annex special remote.
 
 Initialize a repository remote:
 

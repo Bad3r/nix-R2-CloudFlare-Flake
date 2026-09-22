@@ -37,6 +37,7 @@ jobs:
         github.event.pull_request.author_association == 'COLLABORATOR'
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: preview
     concurrency:
       group: r2-explorer-preview-${{ github.event.pull_request.number }}
@@ -252,6 +253,7 @@ jobs:
         github.event.pull_request.author_association == 'COLLABORATOR'
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [deploy-preview]
     environment: preview
     env:
@@ -358,6 +360,7 @@ jobs:
     name: Rollback guidance (preview)
     if: failure() && needs.smoke-preview.result == 'failure'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [deploy-preview, smoke-preview]
     steps:
       - name: Resolve rollback target
@@ -421,6 +424,7 @@ jobs:
     name: Deploy production
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: production
     concurrency:
       group: r2-explorer-production

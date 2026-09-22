@@ -41,9 +41,26 @@ jobs:
   preflight:
     name: release-preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       release_date: ${{ steps.meta.outputs.release_date }}
     steps:
+      - name: Require RELEASE_PUSH_TOKEN
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RELEASE_PUSH_TOKEN}" ]]; then
+            echo "RELEASE_PUSH_TOKEN secret is required for releases." >&2
+            echo "The default GITHUB_TOKEN cannot substitute: PRs and branch pushes it" >&2
+            echo "makes do not trigger ci.yml's pull_request workflow, so the required" >&2
+            echo "checks the release PR needs for auto-merge never run, and the merge" >&2
+            echo "wait step below fails only after a 90 minute timeout." >&2
+            echo "Provision RELEASE_PUSH_TOKEN; see docs/versioning.md for requirements." >&2
+            exit 1
+          fi
+
       - name: Validate release inputs
         env:
           TARGET_REF: ${{ inputs.target_ref }}
@@ -94,6 +111,7 @@ jobs:
   build-root:
     name: build-root-artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [preflight]
     steps:
       - name: Checkout target ref
@@ -155,6 +173,7 @@ jobs:
   build-worker:
     name: build-worker-artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [preflight]
     steps:
       - name: Checkout target ref
@@ -238,6 +257,7 @@ jobs:
   verify-cli-smoke:
     name: verify-cli-smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [preflight, build-root]
     steps:
       # Checkout is required to run the local composite action, which keeps
@@ -305,6 +325,10 @@ jobs:
   publish-release:
     name: publish-release
     runs-on: ubuntu-latest
+    # "Wait for release PR merge" polls for up to 5400s (90 minutes) internally;
+    # this must exceed that plus the other steps' time or a slow-but-legitimate
+    # merge gets killed by the job timeout instead of the poll's own deadline.
+    timeout-minutes: 120
     needs: [preflight, build-root, build-worker, verify-cli-smoke]
     permissions:
       contents: write
@@ -365,9 +389,6 @@ jobs:
           set -euo pipefail
 
           auth_token="${RELEASE_PUSH_TOKEN}"
-          if [[ -z "${auth_token}" ]]; then
-            auth_token="${{ github.token }}"
-          fi
           echo "::add-mask::${auth_token}"
           export GH_TOKEN="${auth_token}"
 
@@ -419,9 +440,6 @@ jobs:
           set -euo pipefail
 
           auth_token="${RELEASE_PUSH_TOKEN}"
-          if [[ -z "${auth_token}" ]]; then
-            auth_token="${{ github.token }}"
-          fi
           echo "::add-mask::${auth_token}"
           export GH_TOKEN="${auth_token}"
 
@@ -441,9 +459,6 @@ jobs:
           set -euo pipefail
 
           auth_token="${RELEASE_PUSH_TOKEN}"
-          if [[ -z "${auth_token}" ]]; then
-            auth_token="${{ github.token }}"
-          fi
           echo "::add-mask::${auth_token}"
           export GH_TOKEN="${auth_token}"
 
@@ -490,9 +505,6 @@ jobs:
           set -euo pipefail
 
           push_token="${RELEASE_PUSH_TOKEN}"
-          if [[ -z "${push_token}" ]]; then
-            push_token="${{ github.token }}"
-          fi
           echo "::add-mask::${push_token}"
 
           git remote set-url origin "https://x-access-token:${push_token}@github.com/${GITHUB_REPOSITORY}.git"
@@ -519,9 +531,6 @@ jobs:
           set -euo pipefail
 
           gh_token="${RELEASE_PUSH_TOKEN}"
-          if [[ -z "${gh_token}" ]]; then
-            gh_token="${{ github.token }}"
-          fi
           echo "::add-mask::${gh_token}"
           export GH_TOKEN="${gh_token}"
 
