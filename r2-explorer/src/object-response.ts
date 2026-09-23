@@ -1,4 +1,5 @@
 import { contentDisposition } from "./http";
+import { cancelUnreadBody } from "./r2";
 import type { RangedObjectResult } from "./r2";
 
 /** Strip leading slashes so object keys match their canonical R2 form. */
@@ -114,15 +115,16 @@ function resolveContentRange(range: R2Range, size: number): { start: number; end
  * metadata headers and no body, or 416 with only Content-Range.
  * Accept-Ranges: bytes is always sent so clients know Range is supported.
  * `includeBody: false` (a HEAD request) reuses the exact GET header set but
- * never streams object.body, since Hono maps HEAD onto the GET handler and
- * R2 has no head()-with-onlyIf to answer HEAD without calling get().
+ * cancels object.body instead of streaming it, since Hono maps HEAD onto the
+ * GET handler and R2 has no head()-with-onlyIf to answer HEAD without
+ * calling get().
  */
-export function respondToRangedObject(
+export async function respondToRangedObject(
   result: RangedObjectResult,
   key: string,
   disposition: "attachment" | "inline",
   options: RangedObjectResponseOptions,
-): Response {
+): Promise<Response> {
   const headers = new Headers();
   headers.set("accept-ranges", "bytes");
 
@@ -164,5 +166,9 @@ export function respondToRangedObject(
     headers.set("content-length", `${result.object.size}`);
   }
 
-  return new Response(options.includeBody ? result.object.body : null, { status: result.status, headers });
+  if (!options.includeBody) {
+    await cancelUnreadBody(result.object);
+    return new Response(null, { status: result.status, headers });
+  }
+  return new Response(result.object.body, { status: result.status, headers });
 }

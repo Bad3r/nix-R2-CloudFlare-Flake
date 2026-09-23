@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app";
 import type { Env } from "../../src/types";
-import { jsonMutationHeaders, useWorkersAccessJwks } from "./helpers";
+import { accessHeaders, jsonMutationHeaders, useWorkersAccessJwks } from "./helpers";
 
 const testEnv = env as unknown as Env;
 
@@ -36,6 +36,45 @@ describe("R2 conditional put under real workerd (RW-3)", () => {
       const stored = await bucket.get(key);
       expect(await stored?.text()).toBe("created");
     } finally {
+      await bucket.delete(key);
+    }
+  });
+});
+
+describe("unread R2 bodies under real workerd", () => {
+  useWorkersAccessJwks();
+
+  it("cancels the real R2 stream behind a HEAD answer and a 304 precondition recheck", async () => {
+    const app = createApp();
+    const bucket = testEnv.FILES_BUCKET;
+    const key = "workerd-unread-body.txt";
+    const stored = await bucket.put(key, "unread body");
+    const url = `https://files.example.com/api/v2/download?key=${encodeURIComponent(key)}`;
+    const errorSpy = vi.spyOn(console, "error");
+    try {
+      const head = await app.fetch(new Request(url, { method: "HEAD", headers: await accessHeaders() }), testEnv);
+      expect(head.status).toBe(200);
+      expect(head.headers.get("content-length")).toBe(String("unread body".length));
+      expect(await head.text()).toBe("");
+
+      const recheck = await app.fetch(
+        new Request(url, {
+          headers: {
+            ...(await accessHeaders()),
+            "if-match": stored?.httpEtag ?? "",
+            "if-none-match": stored?.httpEtag ?? "",
+          },
+        }),
+        testEnv,
+      );
+      expect(recheck.status).toBe(304);
+
+      const cancelFailures = errorSpy.mock.calls.filter(([message]) =>
+        String(message).includes("Failed to cancel the unread body"),
+      );
+      expect(cancelFailures).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
       await bucket.delete(key);
     }
   });

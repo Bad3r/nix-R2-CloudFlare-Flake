@@ -5,7 +5,7 @@ import { envBool, envInt } from "../config";
 import { HttpError } from "../http";
 import { getShareRecord, listSharesForObject, putShareRecord } from "../kv";
 import { normalizeObjectKey, respondToRangedObject } from "../object-response";
-import { getObjectForRead, headObject } from "../r2";
+import { cancelUnreadBody, getObjectForRead, headObject } from "../r2";
 import { randomTokenId } from "../random";
 import {
   shareCreateBodySchema,
@@ -162,7 +162,15 @@ export function registerShareRoutes(app: Hono<AppContext>): void {
     // writes to KV or Durable Object storage, so maxDownloads decrementing
     // is skipped while R2E_READONLY is enabled.
     const readonly = envBool("R2E_READONLY", c.env.R2E_READONLY, false);
-    await recordShareDownload(c.env, record, result, c.req.raw.headers, { readonly, isHead });
+    try {
+      await recordShareDownload(c.env, record, result, c.req.raw.headers, { readonly, isHead });
+    } catch (error) {
+      // A refused download or a failed counter/KV call serves nothing.
+      if (result.kind === "ok") {
+        await cancelUnreadBody(result.object);
+      }
+      throw error;
+    }
     return respondToRangedObject(result, record.key, record.contentDisposition, {
       hardening: "strict",
       includeBody: !isHead,

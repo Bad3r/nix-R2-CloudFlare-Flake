@@ -507,6 +507,45 @@ describe("share lifecycle", () => {
     expect(bucket.wasBodyCancelled("docs/cancel-me.txt")).toBe(true);
   });
 
+  it("cancels the unread object body on a successful HEAD", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/share-head.txt", "share head body");
+    const app = createApp();
+
+    const share = await createShareViaApi(app, env, {
+      bucket: "files",
+      key: "docs/share-head.txt",
+      ttl: "1h",
+    });
+
+    const head = await app.fetch(new Request(share.url, { method: "HEAD" }), env);
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    expect(bucket.wasBodyCancelled("docs/share-head.txt")).toBe(true);
+  });
+
+  it("cancels the unread object body when the share counter call fails", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/counter-down.txt", "counter down body");
+    const app = createApp();
+
+    const share = await createShareViaApi(app, env, {
+      bucket: "files",
+      key: "docs/counter-down.txt",
+      ttl: "1h",
+    });
+    env.R2E_SHARE_COUNTERS = {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async () => new Response("", { status: 503 }) }),
+    } as unknown as DurableObjectNamespace;
+
+    const response = await app.fetch(new Request(share.url), env);
+    expect(response.status).toBe(503);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("share_counter_error");
+    expect(bucket.wasBodyCancelled("docs/counter-down.txt")).toBe(true);
+  });
+
   it("does not touch the counter for HEAD requests in readonly mode", async () => {
     const { env, bucket, sharesKv } = await createTestEnv();
     await bucket.put("docs/ro-head.txt", "readonly head body");

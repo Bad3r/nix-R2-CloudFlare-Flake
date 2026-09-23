@@ -110,8 +110,8 @@ type ConsumeOutcome = { allowed: true; consumed: boolean; count: number } | { al
  * start or an out-of-window continuation consumes a slot (subject to
  * maxDownloads); a continuation inside the resume window is free. A 410 from
  * the counter (revoked, expired, or exhausted) comes back as `allowed:
- * false` instead of throwing, so the caller can cancel the unread object
- * body before answering.
+ * false` instead of throwing, so recordShareDownload refuses it with the
+ * same share_expired error as its read-only /status path.
  */
 async function consumeShareDownloadSlot(
   env: Env,
@@ -253,29 +253,10 @@ function determineIsContinuation(result: RangedObjectResult, requestHeaders: Hea
 }
 
 /**
- * Cancel an unread object body before answering a refused download. Test
- * doubles model R2ObjectBody.body as a plain byte array with no cancel();
- * skip rather than throw in that case.
- */
-async function cancelUnconsumedBody(result: RangedObjectResult): Promise<void> {
-  if (result.kind !== "ok") {
-    return;
-  }
-  const body = result.object.body as unknown as { cancel?: () => Promise<void> };
-  if (typeof body.cancel !== "function") {
-    return;
-  }
-  try {
-    await body.cancel();
-  } catch (error) {
-    console.error("Failed to cancel unread share object body after a refused download:", error);
-  }
-}
-
-/**
  * Account for one /share/:token request against the record's counted state,
  * throwing share_expired (410) if it must be refused. Never throws for a
- * request that goes on to serve a response.
+ * request that goes on to serve a response; the caller releases result's
+ * unread body whenever this throws.
  *
  * - Readonly mode, HEAD, and any GET outcome with no body (304/412/416)
  *   never consume a slot or write anything (KV or counter storage); all
@@ -311,7 +292,6 @@ export async function recordShareDownload(
   if (options.readonly || options.isHead || result.kind !== "ok") {
     const status = await checkShareCounterStatus(env, record, isContinuation);
     if (status.revoked || status.exhausted) {
-      await cancelUnconsumedBody(result);
       throw new HttpError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
     }
     return;
@@ -319,7 +299,6 @@ export async function recordShareDownload(
 
   const outcome = await consumeShareDownloadSlot(env, record, isContinuation);
   if (!outcome.allowed) {
-    await cancelUnconsumedBody(result);
     throw new HttpError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
   }
   if (!outcome.consumed) {

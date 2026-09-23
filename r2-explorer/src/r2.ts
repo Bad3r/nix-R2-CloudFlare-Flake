@@ -27,6 +27,20 @@ export async function getObject(bucket: R2Bucket, key: string): Promise<R2Object
 }
 
 /**
+ * Release the stream of an object body that will never be read (a HEAD
+ * answer, a refused download, or a get() issued only for its status). A
+ * failing cancel() is logged, not rethrown, so it cannot turn that answer
+ * into a 500.
+ */
+export async function cancelUnreadBody(object: R2ObjectBody): Promise<void> {
+  try {
+    await object.body.cancel();
+  } catch (error) {
+    console.error(`Failed to cancel the unread body of ${object.key}:`, error);
+  }
+}
+
+/**
  * Result of getObjectForRead: a body on success, object metadata only on a
  * failed onlyIf, or just the size for an unsatisfiable range. `kind` is the
  * discriminant (status alone does not narrow reliably here since 200/206 and
@@ -100,16 +114,22 @@ async function resolvePreconditionStatus(bucket: R2Bucket, key: string, requestH
   const recheck = await bucket.get(key, { onlyIf: preconditionHeaders });
   // recheck cannot be null: the outer get() already proved the key exists,
   // and narrowing onlyIf further cannot turn a hit into a miss.
-  return recheck && !("body" in recheck) ? 412 : 304;
+  if (recheck && "body" in recheck) {
+    // The 412-class headers passed, so a 304-class header failed the outer
+    // get(); this body was opened only to learn that.
+    await cancelUnreadBody(recheck);
+    return 304;
+  }
+  return recheck ? 412 : 304;
 }
 
 /**
  * Read an object honoring Range and conditional request headers, for
  * /api/v2/download and /api/v2/preview. Pass allowRange: false for a HEAD
  * request: bucket.head() cannot evaluate onlyIf (it takes only a key), so
- * HEAD still calls bucket.get() and the caller discards the body, but never
- * requests a Range slice, since a HEAD response describes the whole
- * resource regardless of Range.
+ * HEAD still calls bucket.get() and respondToRangedObject cancels the unread
+ * body, but never requests a Range slice, since a HEAD response describes
+ * the whole resource regardless of Range.
  */
 export async function getObjectForRead(
   bucket: R2Bucket,
@@ -134,7 +154,7 @@ export async function getObjectForRead(
   // malformed Range, so the status must come from the parsed request header.
   const requested = rangeHeaderValue ? parseSingleByteRange(rangeHeaderValue) : null;
   if (requested && !isRangeSatisfiable(requested, object.size)) {
-    await object.body.cancel();
+    await cancelUnreadBody(object);
     return { kind: "unsatisfiable_range", status: 416, size: object.size };
   }
   return { kind: "ok", status: requested ? 206 : 200, object };

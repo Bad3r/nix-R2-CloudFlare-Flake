@@ -613,6 +613,27 @@ describe("object routes", () => {
     expect(response.status).toBe(412);
   });
 
+  it("returns 304 and cancels the recheck body when If-Match passes but If-None-Match fails", async () => {
+    const { env, bucket } = await createTestEnv();
+    const stored = await bucket.put("docs/mixed-precondition.txt", "mixed precondition body");
+    const app = createApp();
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/download?key=docs%2Fmixed-precondition.txt", {
+        headers: {
+          ...accessHeaders(),
+          "if-match": `"${stored.httpEtag}"`,
+          "if-none-match": `"${stored.httpEtag}"`,
+        },
+      }),
+      env,
+    );
+    expect(response.status).toBe(304);
+    expect(await response.text()).toBe("");
+    // The If-Match-only recheck that tells 304 from 412 opens a body nobody reads.
+    expect(bucket.wasBodyCancelled("docs/mixed-precondition.txt")).toBe(true);
+  });
+
   it("returns 416 with Content-Range for an unsatisfiable range", async () => {
     const { env, bucket } = await createTestEnv();
     await bucket.put("docs/short.bin", "0123456789");
@@ -627,9 +648,10 @@ describe("object routes", () => {
     expect(response.status).toBe(416);
     expect(response.headers.get("content-range")).toBe("bytes */10");
     expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(bucket.wasBodyCancelled("docs/short.bin")).toBe(true);
   });
 
-  it("answers HEAD on /api/v2/download without fetching or sending a body", async () => {
+  it("answers HEAD on /api/v2/download without sending a body and cancels the unread one", async () => {
     const { env, bucket } = await createTestEnv();
     await bucket.put("docs/head.txt", "head body");
     const app = createApp();
@@ -645,6 +667,60 @@ describe("object routes", () => {
     expect(response.headers.get("content-length")).toBe(String("head body".length));
     expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(await response.text()).toBe("");
+    expect(bucket.wasBodyCancelled("docs/head.txt")).toBe(true);
+  });
+
+  it("answers HEAD on /api/v2/preview with a 200 and cancels the unread body", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/preview-head.txt", "preview head body");
+    const app = createApp();
+
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/preview?key=docs%2Fpreview-head.txt", {
+        method: "HEAD",
+        headers: accessHeaders(),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(bucket.wasBodyCancelled("docs/preview-head.txt")).toBe(true);
+  });
+
+  it("keeps the HEAD and 416 answers when cancelling the unread body fails, logging the failure", async () => {
+    const { env, bucket } = await createTestEnv();
+    await bucket.put("docs/cancel-fails.bin", "0123456789");
+    const read = bucket.get.bind(bucket);
+    vi.spyOn(bucket, "get").mockImplementation(async (key, options) => {
+      const object = await read(key, options);
+      if (object && "body" in object) {
+        Object.assign(object.body, {
+          cancel: async () => {
+            throw new Error("cancel failed");
+          },
+        });
+      }
+      return object;
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const app = createApp();
+      const url = "https://files.example.com/api/v2/download?key=docs%2Fcancel-fails.bin";
+
+      const head = await app.fetch(new Request(url, { method: "HEAD", headers: accessHeaders() }), env);
+      expect(head.status).toBe(200);
+      const unsatisfiable = await app.fetch(
+        new Request(url, { headers: { ...accessHeaders(), range: "bytes=1000-2000" } }),
+        env,
+      );
+      expect(unsatisfiable.status).toBe(416);
+      const cancelFailures = errorSpy.mock.calls.filter(([message]) =>
+        String(message).includes("Failed to cancel the unread body of docs/cancel-fails.bin"),
+      );
+      expect(cancelFailures).toHaveLength(2);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("answers HEAD on /api/v2/preview with a 304 for a matching If-None-Match, no body", async () => {
