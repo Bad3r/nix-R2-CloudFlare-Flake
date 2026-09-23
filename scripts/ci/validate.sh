@@ -796,6 +796,11 @@ let
       expect = "bisync.extraArgs must not contain filter flags";
     }
     {
+      name = "--delete-excluded in extraArgs";
+      mounts.documents = mount { bisync.extraArgs = [ "--delete-excluded" ]; };
+      expect = "bisync.extraArgs must not contain --delete-excluded";
+    }
+    {
       name = "same remote tree";
       mounts = pair { };
       expect = "both target bucket";

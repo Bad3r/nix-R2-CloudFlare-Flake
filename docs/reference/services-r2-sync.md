@@ -85,6 +85,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-sync.mounts.<name> is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name, and must not be '.' or '..', which would put the local bisync trash directory .trash/<name> outside itself): got '<name>'`
 - `services.r2-sync.mounts.<name>.localPath must not equal or be nested with mountPoint (bisync must not run against or through the live FUSE mount): set services.r2-sync.mounts.<name>.localPath to a separate local directory`
 - `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain filter flags (--filter, --filter-from, --exclude, --exclude-from, --exclude-if-present, --include, --include-from, --filters-file, --files-from, --files-from-raw, --metadata-filter-from, --metadata-exclude-from, --metadata-include-from, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.<name>.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync`
+- `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain --delete-excluded: rclone bisync applies it to every copy a run makes, which then deletes each file on the receiving side that the copy does not carry, excluded or not, and bisync.maxDelete does not count those deletions`
 - `services.r2-sync.mounts.<name> runs r2-mount-<name>.service as non-root user '<user>' without programs.fuse.userAllowOther = true (rclone mount passes --allow-other unconditionally, which requires user_allow_other for non-root mounts): set programs.fuse.userAllowOther = true`
 - `services.r2-sync.mounts.<name-a> and services.r2-sync.mounts.<name-b> both target bucket '<bucket>' prefix '<prefix>': two mounts must not target the same remote tree`
 - `services.r2-sync.mounts.<name-a> (bucket '<bucket>' prefix '<prefix-a>') and services.r2-sync.mounts.<name-b> (prefix '<prefix-b>') have nested remote prefixes in the same bucket: concurrent bisync runs must not overlap trees`
@@ -109,7 +110,11 @@ these messages at the same time.
   a legitimate mass delete that trips the check is a deliberate manual
   `rclone bisync ... --force` run (same `--workdir`, `--backup-dir1`,
   `--backup-dir2`, and local/remote paths as the generated unit) after
-  inspecting why so many deletes were expected.
+  inspecting why so many deletes were expected. The check counts only the
+  deletions bisync plans itself, which is why `--delete-excluded` is rejected
+  in `bisync.extraArgs`: rclone applies it to every copy a run makes, and
+  that copy then deletes each file on the receiving side it does not carry,
+  excluded or not.
 - Bisync uses backup dirs for soft-delete style recovery:
   - local backup dir: sibling of `localPath`, under `<dirOf(localPath)>/.trash/<name>`
   - remote backup dir: at the bucket root, under `.trash/<remotePrefix>`

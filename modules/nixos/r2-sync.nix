@@ -123,6 +123,11 @@ let
     lib.hasPrefix "-" shorthands && !lib.hasPrefix "--" shorthands && lib.hasInfix "f" shorthands;
   isBisyncFilterArg =
     arg: isShortFilterArg arg || lib.elem (lib.head (lib.splitString "=" arg)) bisyncFilterFlagNames;
+  # bisync copies each run's changes through rclone's sync engine, which under
+  # --delete-excluded lists the receiving side unfiltered and deletes every
+  # file the copy does not carry, excluded or not; bisync's --max-delete check
+  # never counts those (rclone cmd/bisync/queue.go fastCopy, verified on 1.75.1).
+  isDeleteExcludedArg = arg: lib.head (lib.splitString "=" arg) == "--delete-excluded";
 
   mkMountService =
     name: mount:
@@ -677,7 +682,11 @@ in
                   --hash-filter, --metadata-filter, --metadata-exclude,
                   --metadata-include, --ignore-case) are accepted and recorded
                   with their values, so changing one triggers the same
-                  automatic --resync as an excludes change.
+                  automatic --resync as an excludes change. --delete-excluded
+                  is rejected as well: bisync applies it to every copy a run
+                  makes, which then deletes each file on the receiving side
+                  that the copy does not carry, excluded or not, beyond the
+                  reach of maxDelete.
                 '';
               };
             };
@@ -747,6 +756,10 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncFilterArg mount.bisync.extraArgs;
       message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.${name}.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !lib.any isDeleteExcludedArg mount.bisync.extraArgs;
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain --delete-excluded: rclone bisync applies it to every copy a run makes, which then deletes each file on the receiving side that the copy does not carry, excluded or not, and bisync.maxDelete does not count those deletions";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:

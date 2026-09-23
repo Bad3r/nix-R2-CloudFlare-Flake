@@ -675,9 +675,9 @@ Likely root causes:
 
 - The configuration violates one of the module's fail-fast checks: wrong
   `localPath`, two mounts targeting the same bucket/prefix or overlapping
-  paths, a mount name outside `[A-Za-z0-9_.-]+` (or exactly `.` or `..`), or a
+  paths, a mount name outside `[A-Za-z0-9_.-]+` (or exactly `.` or `..`), a
   `--filter`-shaped flag passed through `extraArgs` instead of
-  `bisync.excludes`.
+  `bisync.excludes`, or `--delete-excluded` in `extraArgs`.
 
 Repair:
 
