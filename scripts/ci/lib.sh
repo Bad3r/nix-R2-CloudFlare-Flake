@@ -104,8 +104,13 @@ cf_api_get_paginated_results() {
       separator="&"
     fi
 
+    # Callers capture this function with $(...) too, so errexit is off here:
+    # test the substitution itself. response is declared on its own line so
+    # the test sees cf_api_get's status, not the always-zero status of local.
     local response
-    response="$(cf_api_get "${path}${separator}page=${page}&per_page=50")"
+    if ! response="$(cf_api_get "${path}${separator}page=${page}&per_page=50")"; then
+      fail "Cloudflare ${resource_name} API request failed (page ${page})"
+    fi
 
     local success
     success="$(jq -r '.success' <<<"${response}")"
