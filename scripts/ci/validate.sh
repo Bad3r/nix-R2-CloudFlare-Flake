@@ -915,7 +915,10 @@ let
     ) "bisync.timeout = \"\" does not give TimeoutStartSec=infinity"
     ++ lib.optional (
       !(valid.systemd.timers."r2-bisync-a".timerConfig ? RandomizedDelaySec)
-    ) "bisync timer lacks RandomizedDelaySec";
+    ) "bisync timer lacks RandomizedDelaySec"
+    ++ lib.optional (
+      (valid.systemd.timers."r2-bisync-b".timerConfig.OnUnitActiveSec or null) != "1h 30min"
+    ) "bisync timer for mount b does not render OnUnitActiveSec=1h 30min";
 
   problems =
     map (s: "assertion not raised: ${s.name}") missing
