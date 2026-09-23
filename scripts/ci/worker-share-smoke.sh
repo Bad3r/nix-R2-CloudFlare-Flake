@@ -339,41 +339,21 @@ else
   fi
 fi
 
-create_json="$(
-  "${R2_BIN}" share worker create \
-    "${SMOKE_BUCKET}" \
-    "${SMOKE_KEY}" \
-    "${ttl}" \
-    --max-downloads 1
-)"
-
-token_id="$(jq -r '.tokenId // empty' <<<"${create_json}")"
-share_url="$(jq -r '.url // empty' <<<"${create_json}")"
-expires_at="$(jq -r '.expiresAt // empty' <<<"${create_json}")"
-
-if [[ -z ${token_id} ]]; then
-  fail "share creation response did not include tokenId"
-fi
-if [[ -z ${share_url} ]]; then
-  fail "share creation response did not include url"
-fi
-if [[ -z ${expires_at} ]]; then
-  fail "share creation response did not include expiresAt"
-fi
-
-echo "Created smoke share token ${token_id} (expires ${expires_at})"
-
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke.XXXXXX")"
+token_id=""
 share_revoked="false"
 
 # Revokes the smoke share exactly once. Called from the success path below and
 # from cleanup on every exit (assertion failure, Ctrl-C, ...) so a token
-# created here never outlives the script that created it.
+# created here never outlives the script that created it. token_id is empty
+# until the share create response is parsed below, so an exit before that
+# (including a malformed create response) is a no-op instead of a revoke call
+# with an empty token id.
 revoke_share_token() {
   local revoke_json revoke_exit revoked
   local revoke_stderr="${tmp_dir}/revoke.stderr"
 
-  if [[ ${share_revoked} == "true" ]]; then
+  if [[ -z ${token_id} || ${share_revoked} == "true" ]]; then
     return 0
   fi
 
@@ -410,6 +390,30 @@ cleanup() {
   exit "${exit_status}"
 }
 trap cleanup EXIT
+
+create_json="$(
+  "${R2_BIN}" share worker create \
+    "${SMOKE_BUCKET}" \
+    "${SMOKE_KEY}" \
+    "${ttl}" \
+    --max-downloads 1
+)"
+
+token_id="$(jq -r '.tokenId // empty' <<<"${create_json}")"
+share_url="$(jq -r '.url // empty' <<<"${create_json}")"
+expires_at="$(jq -r '.expiresAt // empty' <<<"${create_json}")"
+
+if [[ -z ${token_id} ]]; then
+  fail "share creation response did not include tokenId"
+fi
+if [[ -z ${share_url} ]]; then
+  fail "share creation response did not include url"
+fi
+if [[ -z ${expires_at} ]]; then
+  fail "share creation response did not include expiresAt"
+fi
+
+echo "Created smoke share token ${token_id} (expires ${expires_at})"
 
 first_download_body="${tmp_dir}/first-download.body"
 assert_http_status "200" "first download" "${share_url}" "${first_download_body}" "true"
