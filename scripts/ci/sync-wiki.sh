@@ -300,7 +300,7 @@ for src in "${!FILE_MAP[@]}"; do
   fi
   wiki_name="${FILE_MAP[${src}]}"
   grep -qF "(${wiki_name})" "${WIKI_DIR}/Home.md" || missing_nav+=("Home.md: ${wiki_name}")
-  if [[ ${src} != operators/* && ${src} != reference/* ]]; then
+  if [[ ${wiki_name} != Operators-* && ${wiki_name} != Reference-* ]]; then
     grep -qF "(${wiki_name})" "${WIKI_DIR}/_Sidebar.md" || missing_nav+=("_Sidebar.md: ${wiki_name}")
   fi
 done
