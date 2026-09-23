@@ -448,6 +448,12 @@ and this project follows Conventional Commits.
 - `scripts/ci/worker-share-smoke.sh`'s authenticated API probe now reports
   the specific Cloudflare Access remediation when a stale Access app
   redirects it, instead of a bare status mismatch.
+- `scripts/ci/check-r2-web-security.sh` now requests the page with
+  `Accept: text/html`, the only request Cloudflare injects the Web Analytics
+  beacon and Zaraz loader into, and its fallback probes
+  `/cdn-cgi/zaraz/i.js` instead of `s.js`, which answers a bare GET with
+  `400 Invalid Zaraz parameters`. Preview smoke failed its analytics check on
+  both counts while analytics was being served.
 - `scripts/ci/lib.sh`'s `cf_api_get` and `clear-r2-access-gate.sh`'s
   `cf_api_delete` now bound every Cloudflare API curl call with configurable
   timeouts (`CF_API_TIMEOUT_SEC`/`CF_API_CONNECT_TIMEOUT_SEC`), report a curl

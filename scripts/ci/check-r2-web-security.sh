@@ -158,8 +158,11 @@ if [[ -n ${access_client_id} || -n ${access_client_secret} ]]; then
   )
 fi
 
+# Cloudflare injects the Web Analytics beacon and the Zaraz loader only into a
+# response to a request that accepts text/html; curl's default */* gets neither.
 http_code="$(
   curl -sS --location "${curl_headers[@]}" \
+    -H "Accept: text/html" \
     --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
     --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
     --dump-header "${headers_file}" \
@@ -192,14 +195,15 @@ if [[ ${actual_csp} != "${expected_csp}" ]]; then
 fi
 
 if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflareinsights\.com/beacon\.min\.js' "${body_file}"; then
-  # Zaraz/Web Analytics may be injected at runtime by Cloudflare and absent from raw curl HTML.
+  # Zaraz may still serve the host when this HTML carries no loader. Probe the
+  # init script: s.js answers a bare GET with 400 "Invalid Zaraz parameters".
   zaraz_probe_status="$(
     curl -sS --location "${curl_headers[@]}" \
       --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
       --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
       --output /dev/null \
       --write-out '%{http_code}' \
-      "${request_url%/}/cdn-cgi/zaraz/s.js"
+      "${request_url%/}/cdn-cgi/zaraz/i.js"
   )"
   # Any non-2xx probe status means the analytics runtime is unavailable
   # (404, 403, 5xx, ...); only a successful probe proves analytics is served.
