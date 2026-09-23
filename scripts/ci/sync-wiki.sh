@@ -287,6 +287,32 @@ for f in "${WIKI_DIR}"/Reference-*.md; do
 done
 
 # ---------------------------------------------------------------------------
+# Guard: fail loudly if a synced page is unreachable from the generated
+# navigation, so a new FILE_MAP entry never lands in the wiki only reachable
+# by direct URL. Operators-*/Reference-* entries are appended to _Sidebar.md
+# by the auto-detect loops above, so only Home.md (entirely hand-maintained)
+# and _Sidebar.md's hand-maintained top-level block need checking here.
+# ---------------------------------------------------------------------------
+missing_nav=()
+for src in "${!FILE_MAP[@]}"; do
+  if [[ ${src} == "plan.md" || ${src} == plan/* ]]; then
+    continue
+  fi
+  wiki_name="${FILE_MAP[${src}]}"
+  grep -qF "(${wiki_name})" "${WIKI_DIR}/Home.md" || missing_nav+=("Home.md: ${wiki_name}")
+  if [[ ${src} != operators/* && ${src} != reference/* ]]; then
+    grep -qF "(${wiki_name})" "${WIKI_DIR}/_Sidebar.md" || missing_nav+=("_Sidebar.md: ${wiki_name}")
+  fi
+done
+
+if [[ ${#missing_nav[@]} -gt 0 ]]; then
+  echo "ERROR: the following wiki pages are not linked from the generated" >&2
+  echo "navigation; add each to the matching heredoc in scripts/ci/sync-wiki.sh:" >&2
+  printf '  %s\n' "${missing_nav[@]}" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Commit and push if there are changes
 # ---------------------------------------------------------------------------
 cd "${WIKI_DIR}"
