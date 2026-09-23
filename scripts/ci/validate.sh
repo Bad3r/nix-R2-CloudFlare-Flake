@@ -831,6 +831,11 @@ let
       expect = "bisync.extraArgs must not contain flags the module already passes";
     }
     {
+      name = "--recover=false in extraArgs disables bisync's own error recovery";
+      mounts.documents = mount { bisync.extraArgs = [ "--recover=false" ]; };
+      expect = "bisync.extraArgs must not contain flags the module already passes";
+    }
+    {
       name = "unparsable bisync.timeout";
       mounts.documents = mount { bisync.timeout = "24hrs"; };
       expect = "bisync.timeout must be '' (no limit) or a systemd.time(7) time span";

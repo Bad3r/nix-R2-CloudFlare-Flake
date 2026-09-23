@@ -124,10 +124,11 @@ and this project follows Conventional Commits.
   `bisync.maxDelete` does not count those deletions
 - `bisync.extraArgs` may not contain flags the module already passes to
   `rclone bisync` (`--max-delete`, `--backup-dir1`, `--backup-dir2`,
-  `--max-lock`, `--workdir`, `--check-access`, `--check-filename`,
-  `--compare`): rclone takes the last occurrence of a repeated scalar flag,
-  so repeating one here would silently override the module's own value
-  instead of erroring; set the corresponding `bisync` option instead
+  `--max-lock`, `--recover`, `--resilient`, `--workdir`, `--check-access`,
+  `--check-filename`, `--compare`): rclone takes the last occurrence of a
+  repeated scalar flag, so repeating one here would silently override the
+  module's own value instead of erroring; set the corresponding `bisync`
+  option instead
 - a mount whose `r2-mount-<name>.service` runs as a non-root user now
   requires `programs.fuse.userAllowOther = true`, since `rclone mount`
   passes `--allow-other` unconditionally

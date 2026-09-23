@@ -150,14 +150,21 @@ let
   # Already passed by run_bisync (lines 358-378) before ${extraArgs} is
   # interpolated; pflag takes the last occurrence of a repeated scalar flag,
   # so repeating one here silently wins over the module's own value instead
-  # of erroring. --resync/--resync-mode are not listed here: the module
-  # passes those to run_bisync's "$@", after extraArgs, so the module's
-  # occurrence wins instead.
+  # of erroring. --recover/--resilient are bools, so only the attached form
+  # (--recover=false) reaches them; lib.head (lib.splitString "=" arg) below
+  # normalizes that like any other flag. Two categories are deliberately not
+  # listed: --resync/--resync-mode ride run_bisync's "$@", after extraArgs,
+  # so the module's occurrence wins there regardless; and the connection
+  # flags (--config, --s3-provider, --s3-endpoint, --s3-env-auth,
+  # --s3-no-check-bucket) are shared with mkMountService/copyto too, a
+  # broader concern than this per-bisync-invocation list.
   bisyncManagedFlagNames = [
     "--max-delete"
     "--backup-dir1"
     "--backup-dir2"
     "--max-lock"
+    "--recover"
+    "--resilient"
     "--workdir"
     "--check-access"
     "--check-filename"
@@ -740,11 +747,12 @@ in
                   that the copy does not carry, excluded or not, beyond the
                   reach of maxDelete. Flags the module already passes to
                   rclone bisync (--max-delete, --backup-dir1, --backup-dir2,
-                  --max-lock, --workdir, --check-access, --check-filename,
-                  --compare) are rejected too: rclone takes the last
-                  occurrence of a repeated flag, so repeating one here would
-                  silently override the module's own value instead of
-                  erroring; set the corresponding bisync option instead.
+                  --max-lock, --recover, --resilient, --workdir,
+                  --check-access, --check-filename, --compare) are rejected
+                  too: rclone takes the last occurrence of a repeated flag,
+                  so repeating one here would silently override the module's
+                  own value instead of erroring; set the corresponding
+                  bisync option instead.
                 '';
               };
             };
@@ -829,7 +837,7 @@ in
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncManagedArg mount.bisync.extraArgs;
-      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, or move the check file --check-access looks for away from the one the module already copied under checkFilename; set the matching services.r2-sync.mounts.${name}.bisync option instead";
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, move the check file --check-access looks for away from the one the module already copied under checkFilename, or turn off the crash and transient-error recovery that bisync.timeout now relies on to leave a usable listing behind; set the matching services.r2-sync.mounts.${name}.bisync option instead";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:
