@@ -735,8 +735,10 @@ in
       message = "services.r2-sync.mounts.${name}.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '${toString mount.bisync.compare}'";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: _mount: {
-      assertion = builtins.match "[A-Za-z0-9_.-]+" name != null;
-      message = "services.r2-sync.mounts.${name} is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name): got '${name}'";
+      # The name is also the last path segment of the local trash directory
+      # (localTrashPath), where "." or ".." would resolve to an ancestor.
+      assertion = builtins.match "[A-Za-z0-9_.-]+" name != null && name != "." && name != "..";
+      message = "services.r2-sync.mounts.${name} is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name, and must not be '.' or '..', which would put the local bisync trash directory .trash/<name> outside itself): got '${name}'";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !(pathsOverlap (resolveLocalPath mount) (toString mount.mountPoint));

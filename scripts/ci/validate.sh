@@ -741,6 +741,16 @@ let
       expect = "is not a valid mount name";
     }
     {
+      name = "mount name .";
+      mounts."." = mount { };
+      expect = "is not a valid mount name";
+    }
+    {
+      name = "mount name ..";
+      mounts.".." = mount { };
+      expect = "is not a valid mount name";
+    }
+    {
       name = "localPath unset";
       mounts.documents = builtins.removeAttrs (mount { }) [ "localPath" ];
       expect = "must not equal or be nested with mountPoint";

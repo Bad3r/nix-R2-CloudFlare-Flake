@@ -94,7 +94,9 @@ and this project follows Conventional Commits.
 - **`services.r2-sync.mounts.<name>`**: four new assertions run at
   evaluation time:
 - mount attribute names must match `[A-Za-z0-9_.-]+` (used verbatim in
-  systemd unit names)
+  systemd unit names) and may not be `.` or `..` (the name is also the last
+  segment of the local trash directory, which either would place outside
+  itself)
 - two mounts may not target the same bucket+prefix, nested remote prefixes
   in the same bucket, or overlapping `mountPoint`/`localPath` directories
 - `bisync.extraArgs` may not contain filter-shaped flags (`--filter`,
