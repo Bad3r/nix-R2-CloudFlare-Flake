@@ -95,7 +95,7 @@ jobs:
 
       - name: Fix CI failures with Claude
         id: claude
-        uses: anthropics/claude-code-action@af0559ee4f514d1ef21826982bed13f7edc3c35e # v1
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1
         with:
           prompt: |
             /fix-ci
