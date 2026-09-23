@@ -99,15 +99,26 @@ describe("normalizeShareTtl", () => {
 });
 
 describe("parseMaxDownloads", () => {
-  it("parses a valid non-negative integer", () => {
-    expect(parseMaxDownloads("5")).toBe(5);
-    expect(parseMaxDownloads("0")).toBe(0);
+  it("parses a valid non-negative integer, where 0 means unlimited", () => {
+    expect(parseMaxDownloads("5")).toEqual({ ok: true, value: 5 });
+    expect(parseMaxDownloads("0")).toEqual({ ok: true, value: 0 });
   });
 
-  it("defaults invalid or negative input to 1", () => {
-    expect(parseMaxDownloads("")).toBe(1);
-    expect(parseMaxDownloads("abc")).toBe(1);
-    expect(parseMaxDownloads("-3")).toBe(1);
+  it("defaults a blank value to 1", () => {
+    expect(parseMaxDownloads("")).toEqual({ ok: true, value: 1 });
+    expect(parseMaxDownloads("   ")).toEqual({ ok: true, value: 1 });
+  });
+
+  it("rejects anything parseInt would silently coerce to 0, instead of widening the share", () => {
+    expect(parseMaxDownloads("abc").ok).toBe(false);
+    expect(parseMaxDownloads("-3").ok).toBe(false);
+    expect(parseMaxDownloads("0.5").ok).toBe(false);
+    expect(parseMaxDownloads("0abc").ok).toBe(false);
+    expect(parseMaxDownloads("0x10").ok).toBe(false);
+  });
+
+  it("rejects a trailing non-digit rather than truncating it silently", () => {
+    expect(parseMaxDownloads("10x").ok).toBe(false);
   });
 });
 

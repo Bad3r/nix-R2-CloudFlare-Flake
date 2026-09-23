@@ -178,10 +178,21 @@ export function normalizeShareTtl(input: string): { ok: true; value: string } | 
   return { ok: true, value: trimmed };
 }
 
-/** Parse the share max-downloads field, defaulting to 1 for blank/invalid input. */
-export function parseMaxDownloads(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
+/**
+ * Parse the share max-downloads field. `0` is the API's "unlimited" value, so
+ * unlike a narrowing field this one must not guess: anything that is not a
+ * plain non-negative integer is rejected rather than coerced, since
+ * `parseInt` maps "0.5"/"0abc" to 0 and would silently drop the cap.
+ */
+export function parseMaxDownloads(input: string): { ok: true; value: number } | { ok: false; message: string } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { ok: true, value: 1 };
+  }
+  if (!/^[0-9]+$/.test(trimmed)) {
+    return { ok: false, message: "Enter a whole number of downloads (0 for unlimited)." };
+  }
+  return { ok: true, value: Number.parseInt(trimmed, 10) };
 }
 
 /** Object-list page size from session limits, or the given default when absent. */

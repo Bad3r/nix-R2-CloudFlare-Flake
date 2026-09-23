@@ -98,7 +98,12 @@ export function OpsExplorer(): JSX.Element {
           log.append(`Share not created: ${ttlResult.message}`, "error");
           return;
         }
-        void browser.performShareCreate(ttlResult.value, parseMaxDownloads(shareMaxDownloadsRef.current));
+        const maxDownloadsResult = parseMaxDownloads(shareMaxDownloadsRef.current);
+        if (!maxDownloadsResult.ok) {
+          log.append(`Share not created: ${maxDownloadsResult.message}`, "error");
+          return;
+        }
+        void browser.performShareCreate(ttlResult.value, maxDownloadsResult.value);
       },
       hasSelection: Boolean(browser.selectedObject),
     },

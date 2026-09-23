@@ -35,6 +35,7 @@ export function ObjectDetail(props: ObjectDetailProps): JSX.Element {
   const [moveError, setMoveError] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [shareTtlError, setShareTtlError] = useState("");
+  const [shareMaxDownloadsError, setShareMaxDownloadsError] = useState("");
   const [shareError, setShareError] = useState("");
 
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
@@ -136,8 +137,14 @@ export function ObjectDetail(props: ObjectDetailProps): JSX.Element {
       return;
     }
     setShareTtlError("");
+    const maxDownloadsResult = parseMaxDownloads(shareMaxDownloads);
+    if (!maxDownloadsResult.ok) {
+      setShareMaxDownloadsError(maxDownloadsResult.message);
+      return;
+    }
+    setShareMaxDownloadsError("");
     setShareError("");
-    const result = await props.onShareCreate(ttlResult.value, parseMaxDownloads(shareMaxDownloads));
+    const result = await props.onShareCreate(ttlResult.value, maxDownloadsResult.value);
     if (!result.ok) {
       setShareError(result.message);
     }
@@ -277,7 +284,10 @@ export function ObjectDetail(props: ObjectDetailProps): JSX.Element {
             <input
               value={shareMaxDownloads}
               inputMode="numeric"
-              onInput={(event) => props.onShareMaxDownloadsChange(event.currentTarget.value)}
+              onInput={(event) => {
+                props.onShareMaxDownloadsChange(event.currentTarget.value);
+                setShareMaxDownloadsError("");
+              }}
               placeholder="max"
               aria-label="Maximum downloads (0 for unlimited)"
               style={{ width: "6rem" }}
@@ -288,6 +298,7 @@ export function ObjectDetail(props: ObjectDetailProps): JSX.Element {
             Format: number plus unit, s/m/h/d (for example 24h or 7d).
           </div>
           {shareTtlError ? <div class="alert" role="alert">{shareTtlError}</div> : null}
+          {shareMaxDownloadsError ? <div class="alert" role="alert">{shareMaxDownloadsError}</div> : null}
           {shareError ? <div class="alert" role="alert">{shareError}</div> : null}
 
           {shareCreateResult ? (
