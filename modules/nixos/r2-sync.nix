@@ -64,8 +64,9 @@ let
     a: map (b: { inherit a b; }) (lib.filter (b: a.name < b.name) mountList)
   ) mountList;
 
-  # Rejected in bisync.extraArgs: only compare/excludes are tracked for the
-  # automatic --resync (trackedFlags below), and a filter here would bypass it.
+  # Rejected in bisync.extraArgs, since neither can be tracked for the automatic
+  # --resync (trackedFlags below): pattern rules belong in bisync.excludes, and
+  # a rules file can change without the config changing.
   bisyncFilterFlagNames = [
     "--filter"
     "--filter-from"
@@ -77,7 +78,40 @@ let
     "--filters-file"
     "--files-from"
     "--files-from-raw"
+    "--metadata-filter-from"
+    "--metadata-exclude-from"
+    "--metadata-include-from"
   ];
+  # rclone's other listing filters (the "Filter" flag group) have no bisync
+  # option of their own, so extraArgs may carry them and they are tracked there.
+  bisyncTrackedFilterFlagNames = [
+    "--min-size"
+    "--max-size"
+    "--min-age"
+    "--max-age"
+    "--max-depth"
+    "--hash-filter"
+    "--metadata-filter"
+    "--metadata-exclude"
+    "--metadata-include"
+  ];
+  # The tracked filter flags in args with their values: "--flag=value" and the
+  # --ignore-case switch as written, "--flag value" as both elements.
+  trackedFilterArgs =
+    args:
+    lib.concatLists (
+      lib.imap0 (
+        i: arg:
+        let
+          flag = lib.head (lib.splitString "=" arg);
+          takesNext = lib.elem flag bisyncTrackedFilterFlagNames && !lib.hasInfix "=" arg;
+        in
+        if flag == "--ignore-case" || lib.elem flag bisyncTrackedFilterFlagNames then
+          [ arg ] ++ lib.optional (takesNext && i + 1 < lib.length args) (lib.elemAt args (i + 1))
+        else
+          [ ]
+      ) args
+    );
   # rclone's flag parser (pflag) also reads -f with its value attached (-f=X,
   # -fX) or at the end of a shorthand cluster (-vf X); every other rclone
   # shorthand is a switch, so any f before "=" in a single-dash token sets it.
@@ -227,10 +261,12 @@ let
       # written next to the file, impossible from the store). The inline flags
       # are recorded in the workdir after each successful run so a change
       # forces the resync instead of a listing that silently drops files or
-      # lacks the compared attribute. extraArgs is verbatim and untracked.
+      # lacks the compared attribute. Of extraArgs, only the tracked filter
+      # flags (trackedFilterArgs) are recorded.
       trackedFlags =
         lib.optional (mount.bisync.compare != null) "--compare=${mount.bisync.compare}"
-        ++ map (rule: "--filter=${rule}") excludeRules;
+        ++ map (rule: "--filter=${rule}") excludeRules
+        ++ trackedFilterArgs mount.bisync.extraArgs;
       trackedFlagsArg = lib.escapeShellArg (lib.concatStringsSep "\n" trackedFlags);
       flagsFileArg = lib.escapeShellArg "${workdirPath}/.r2-bisync-flags";
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
@@ -260,7 +296,7 @@ let
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
-        # Compare/exclude flags recorded by the last successful run. A missing
+        # Compare and filter flags recorded by the last successful run. A missing
         # file reads as the empty flag set, which is what every run before the
         # file existed used, so an unchanged default config never resyncs.
         current_flags=${trackedFlagsArg}
@@ -269,7 +305,7 @@ let
           stored_flags="$(< ${flagsFileArg})"
         fi
         if [[ "$has_bisync_state" == true ]] && [[ "$stored_flags" != "$current_flags" ]]; then
-          echo "Bisync compare/exclude flags for ${name} changed since the last successful run; running --resync as rclone requires after a filter change." >&2
+          echo "Bisync compare/filter flags for ${name} changed since the last successful run; running --resync as rclone requires after a filter change." >&2
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
@@ -613,12 +649,17 @@ in
                   per entry. Filter-shaped flags (--filter, --exclude,
                   --include, --filters-file, --files-from, and related forms,
                   or -f in any short form: -f X, -f=X, -fX, or a shorthand
-                  cluster such as -vf) are rejected here by assertion; use
-                  excludes instead so the change is tracked for the automatic
-                  --resync. Because -f may carry its value attached, a
-                  separate option value that starts with a single "-" and
-                  contains "f" is read as -f too: pass such a value as
-                  --flag=value.
+                  cluster such as -vf) and the --metadata-*-from rules files
+                  are rejected here by assertion; use excludes instead so the
+                  change is tracked for the automatic --resync. Because -f may
+                  carry its value attached, a separate option value that
+                  starts with a single "-" and contains "f" is read as -f too:
+                  pass such a value as --flag=value. The other listing filters
+                  (--min-size, --max-size, --min-age, --max-age, --max-depth,
+                  --hash-filter, --metadata-filter, --metadata-exclude,
+                  --metadata-include, --ignore-case) are accepted and recorded
+                  with their values, so changing one triggers the same
+                  automatic --resync as an excludes change.
                 '';
               };
             };
@@ -685,7 +726,7 @@ in
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncFilterArg mount.bisync.extraArgs;
-      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): use services.r2-sync.mounts.${name}.bisync.excludes instead so the change is tracked for the automatic --resync";
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.${name}.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:

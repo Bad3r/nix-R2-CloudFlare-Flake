@@ -33,7 +33,7 @@ create the bucket before writing to it.
 | `services.r2-sync.mounts.<name>.bisync.maxLock`           | string                                                       | `"15m"`       | no                                    | Passed to `rclone bisync --max-lock`; `""` omits it so locks never expire.                                            |
 | `services.r2-sync.mounts.<name>.bisync.compare`           | `null` or string                                             | `null`        | no                                    | Passed to `rclone bisync --compare` (`size`, `modtime`, `checksum`); `null` keeps rclone's `size,modtime`.            |
 | `services.r2-sync.mounts.<name>.bisync.excludes`          | list of strings                                              | `[]`          | no                                    | Each entry becomes a `- <pattern>` filter rule, behind a `+ /<checkFilename>` rule that keeps the check file visible. |
-| `services.r2-sync.mounts.<name>.bisync.extraArgs`         | list of strings                                              | `[]`          | no                                    | Appended verbatim to every bisync run, one argv element per entry. Filter-shaped flags are rejected; use `excludes`.  |
+| `services.r2-sync.mounts.<name>.bisync.extraArgs`         | list of strings                                              | `[]`          | no                                    | Appended verbatim, one argv element each. Pattern filters are rejected (use `excludes`); listing filters are tracked. |
 | `services.r2-sync.mounts.<name>.vfsCache.mode`            | enum `off`, `minimal`, `writes`, `full`                      | `"full"`      | no                                    | Passed to `--vfs-cache-mode`.                                                                                         |
 | `services.r2-sync.mounts.<name>.vfsCache.maxSize`         | string                                                       | `"10G"`       | no                                    | Passed to `--vfs-cache-max-size`.                                                                                     |
 | `services.r2-sync.mounts.<name>.vfsCache.maxAge`          | string                                                       | `"24h"`       | no                                    | Passed to `--vfs-cache-max-age`.                                                                                      |
@@ -83,7 +83,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-sync.mounts.<name>.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '<compare>'`
 - `services.r2-sync.mounts.<name> is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name): got '<name>'`
 - `services.r2-sync.mounts.<name>.localPath must not equal or be nested with mountPoint (bisync must not run against or through the live FUSE mount): set services.r2-sync.mounts.<name>.localPath to a separate local directory`
-- `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain filter flags (--filter, --filter-from, --exclude, --exclude-from, --exclude-if-present, --include, --include-from, --filters-file, --files-from, --files-from-raw, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): use services.r2-sync.mounts.<name>.bisync.excludes instead so the change is tracked for the automatic --resync`
+- `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain filter flags (--filter, --filter-from, --exclude, --exclude-from, --exclude-if-present, --include, --include-from, --filters-file, --files-from, --files-from-raw, --metadata-filter-from, --metadata-exclude-from, --metadata-include-from, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.<name>.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync`
 - `services.r2-sync.mounts.<name> runs r2-mount-<name>.service as non-root user '<user>' without programs.fuse.userAllowOther = true (rclone mount passes --allow-other unconditionally, which requires user_allow_other for non-root mounts): set programs.fuse.userAllowOther = true`
 - `services.r2-sync.mounts.<name-a> and services.r2-sync.mounts.<name-b> both target bucket '<bucket>' prefix '<prefix>': two mounts must not target the same remote tree`
 - `services.r2-sync.mounts.<name-a> (bucket '<bucket>' prefix '<prefix-a>') and services.r2-sync.mounts.<name-b> (prefix '<prefix-b>') have nested remote prefixes in the same bucket: concurrent bisync runs must not overlap trees`
@@ -134,16 +134,21 @@ these messages at the same time.
   `modules/nixos/r2-sync.nix`). A future rclone version that rewords that text
   disables the self-heal with no test failure, so re-check it against the
   `pkgs.rclone` source on every version bump.
-- `bisync.compare` and `bisync.excludes` are recorded in the workdir as
-  `.r2-bisync-flags` after each successful run. When either changes on a mount
-  that already has listing state, the next run performs one automatic
-  `--resync --resync-mode <initialResyncMode>`: rclone requires this after a
-  filter change (prior listings would otherwise show the newly excluded files
-  as deleted) and recommends it after a compare change (prior listings lack
-  the newly compared attribute). rclone only guards its own `--filters-file`
-  this way, so the module tracks the inline flags itself. Filter-shaped flags
-  are rejected in `extraArgs` by assertion (see "Failure semantics") so they
-  cannot bypass this tracking; use `excludes` instead.
+- `bisync.compare`, `bisync.excludes`, and the listing filters passed in
+  `bisync.extraArgs` (`--min-size`, `--max-size`, `--min-age`, `--max-age`,
+  `--max-depth`, `--hash-filter`, `--metadata-filter`, `--metadata-exclude`,
+  `--metadata-include` with their values, and `--ignore-case`) are recorded in
+  the workdir as `.r2-bisync-flags` after each successful run. When any of
+  them changes on a mount that already has listing state, the next run
+  performs one automatic `--resync --resync-mode <initialResyncMode>`: rclone
+  requires this after a filter change (prior listings would otherwise show
+  the newly excluded files as deleted) and recommends it after a compare
+  change (prior listings lack the newly compared attribute). rclone only
+  guards its own `--filters-file` this way, so the module tracks the inline
+  flags itself. Pattern filters and rules files are rejected in `extraArgs` by
+  assertion (see "Failure semantics"): patterns belong in `excludes`, and a
+  rules file can change without the configuration changing, so it could not
+  be tracked.
 - Exclude patterns are rendered as `--filter '- <pattern>'` rules behind a
   leading `--filter '+ /<checkFilename>'` rule. rclone evaluates every
   `--exclude` before any `--filter` and gives `--include` an implied trailing

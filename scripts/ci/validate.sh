@@ -781,6 +781,11 @@ let
       expect = "bisync.extraArgs must not contain filter flags";
     }
     {
+      name = "metadata rules file in extraArgs";
+      mounts.documents = mount { bisync.extraArgs = [ "--metadata-include-from=/etc/r2/metadata-rules" ]; };
+      expect = "bisync.extraArgs must not contain filter flags";
+    }
+    {
       name = "same remote tree";
       mounts = pair { };
       expect = "both target bucket";
@@ -812,23 +817,31 @@ let
   ) scenarios;
 
   # The extraArgs hold an f in a long flag, a switch cluster without f, and an
-  # f after "=", none of which is the -f filter shorthand.
+  # f after "=", none of which is the -f filter shorthand, then two listing
+  # filters that must be tracked with their values.
   valid = evalMounts { } (pair {
     remotePrefix = "photos";
     bisync.extraArgs = [
       "--fast-list"
       "-vP"
       "--suffix=-offsite"
+      "--max-age"
+      "30d"
+      "--ignore-case"
     ];
   });
   validFailures = builtins.filter (lib.hasInfix "services.r2-sync") (failedMessages valid);
   bisyncService = valid.systemd.services."r2-bisync-a".serviceConfig;
   bisyncScript = builtins.readFile bisyncService.ExecStart;
   mountScript = builtins.readFile valid.systemd.services."r2-mount-a".serviceConfig.ExecStart;
+  trackingScript = builtins.readFile valid.systemd.services."r2-bisync-b".serviceConfig.ExecStart;
   shapeProblems =
     lib.optional (!(lib.hasInfix "--max-delete=50" bisyncScript)) "bisync script lacks the default --max-delete=50"
     ++ lib.optional (!(lib.hasInfix "--s3-no-check-bucket" bisyncScript)) "bisync script lacks --s3-no-check-bucket"
     ++ lib.optional (!(lib.hasInfix "--s3-no-check-bucket" mountScript)) "mount script lacks --s3-no-check-bucket"
+    ++ lib.optional (
+      !(lib.hasInfix "\ncurrent_flags='--max-age\n30d\n--ignore-case'\n" trackingScript)
+    ) "bisync script does not track exactly the listing filters in extraArgs"
     ++ lib.optional (bisyncService.TimeoutStartSec or null != "infinity") "bisync service lacks TimeoutStartSec=infinity"
     ++ lib.optional (
       !(valid.systemd.timers."r2-bisync-a".timerConfig ? RandomizedDelaySec)

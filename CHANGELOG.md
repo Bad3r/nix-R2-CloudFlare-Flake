@@ -23,7 +23,11 @@ and this project follows Conventional Commits.
   skip the per-object modtime HEAD requests and keep build trees out of the
   listing (#150). A `compare` or `excludes` change on a mount with existing
   bisync state triggers one automatic `--resync`, which rclone requires after
-  a filter change.
+  a filter change, and so does a change to a listing filter passed in
+  `extraArgs` (`--min-size`, `--max-size`, `--min-age`, `--max-age`,
+  `--max-depth`, `--hash-filter`, `--metadata-filter`, `--metadata-exclude`,
+  `--metadata-include`, `--ignore-case`). A mount that already passes one of
+  these resyncs once after upgrading, since its recorded flags lack them.
 - `/api/v2/download`, `/api/v2/preview`, and `/share/<token>` now support `Range`
   and conditional request headers (`If-Match`, `If-None-Match`,
   `If-Modified-Since`, `If-Unmodified-Since`), answering
@@ -91,9 +95,10 @@ and this project follows Conventional Commits.
 - `bisync.extraArgs` may not contain filter-shaped flags (`--filter`,
   `--exclude`, `--include`, `--filters-file`, `--files-from`, and related
   forms, or `-f` in any short form: `-f X`, `-f=X`, `-fX`, or a shorthand
-  cluster such as `-vf`); use `bisync.excludes` instead so the change is
-  tracked for the automatic `--resync`. A separate option value that starts
-  with a single `-` and contains `f` reads as `-f`; pass it as
+  cluster such as `-vf`) or a `--metadata-*-from` rules file; use
+  `bisync.excludes`, or an inline `--metadata-*` flag, instead so the change
+  is tracked for the automatic `--resync`. A separate option value that
+  starts with a single `-` and contains `f` reads as `-f`; pass it as
   `--flag=value`
 - a mount whose `r2-mount-<name>.service` runs as a non-root user now
   requires `programs.fuse.userAllowOther = true`, since `rclone mount`

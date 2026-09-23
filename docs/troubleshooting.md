@@ -389,8 +389,9 @@ services.r2-sync.mounts.<name>.bisync = {
 
 A `compare` or `excludes` change on a mount that already has listing state
 makes the next run perform one automatic `--resync`, which rclone requires
-after a filter change. Filter flags passed through `extraArgs` are not tracked;
-keep them in `excludes`.
+after a filter change. So does a change to a size, age, depth, hash, metadata
+or `--ignore-case` filter in `extraArgs`; pattern filters are rejected there,
+so keep them in `excludes`.
 
 Current module revisions set `r2-bisync-<name>.service`'s `TimeoutStartSec =
 "infinity"`, so the unit no longer times out at start no matter how long the
