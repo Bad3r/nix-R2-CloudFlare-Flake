@@ -163,8 +163,11 @@ function promotionLeaseRenewer(env: Env, actor: string, session: UploadSessionRe
 }
 
 /**
- * Discard a staged-but-invalid completed upload: delete the staged object,
- * mark the session aborted, and rethrow the validation error. The final
+ * Discard a staged-but-invalid completed upload: mark the session aborted,
+ * delete the staged object, and rethrow the validation error. The abort runs
+ * first, as in /abort: the store refuses it while another request holds the
+ * promotion lease, and that request may still be copying the staged object
+ * (two Worker versions can disagree on upload policy mid-rollout). The final
  * target key is never touched, so a pre-existing object survives rejected
  * overwrites. For legacy sessions staged directly at the target key the
  * delete removes the invalid completed bytes, matching their old behavior.
@@ -175,21 +178,29 @@ async function rejectStagedUpload(
   session: UploadSessionRecord,
   error: HttpError,
 ): Promise<never> {
-  await env.FILES_BUCKET.delete(session.stagingKey).catch((deleteError) => {
-    // A transient delete failure (R2 rate limit, network blip) must not mask
-    // the validation error thrown below with a 500. The staged object lives
-    // under the reserved staging prefix and is reclaimed when the session
-    // expires, so log and continue.
-    console.error(`Failed to delete staged object ${session.stagingKey}:`, deleteError);
-  });
-  await markUploadSessionAborted(env, actor, {
+  const aborted = await markUploadSessionAborted(env, actor, {
     sessionId: session.sessionId,
     uploadId: session.uploadId,
-  }).catch((abortError) => {
-    // A failed status transition only leaves the session to expire on its
-    // own, so log instead of masking the validation error below.
-    console.error(`Failed to mark upload session ${session.sessionId} aborted:`, abortError);
-  });
+  }).then(
+    () => true,
+    (abortError) => {
+      // A failed status transition only leaves the session to expire on its
+      // own, so log instead of masking the validation error below.
+      console.error(`Failed to mark upload session ${session.sessionId} aborted:`, abortError);
+      return false;
+    },
+  );
+  // Legacy sessions never hold a promotion lease, and expiry never reclaims
+  // their bytes at the target key, so only they are deleted without the abort.
+  if (aborted || session.stagingKey === session.objectKey) {
+    await env.FILES_BUCKET.delete(session.stagingKey).catch((deleteError) => {
+      // A transient delete failure (R2 rate limit, network blip) must not mask
+      // the validation error thrown below with a 500. The staged object lives
+      // under the reserved staging prefix and is reclaimed when the session
+      // expires, so log and continue.
+      console.error(`Failed to delete staged object ${session.stagingKey}:`, deleteError);
+    });
+  }
   throw error;
 }
 

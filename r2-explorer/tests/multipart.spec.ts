@@ -1629,6 +1629,58 @@ describe("upload completion resilience (UPS-001, UPS-005)", () => {
     expect(secondAbort.status).toBe(200);
     expect(await bucket.get(stagingKey)).toBeNull();
   });
+
+  it("keeps the staged object when a validation rejection meets a live promotion lease", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "lease-reject.pdf",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/pdf",
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // PNG magic bytes under a declared application/pdf fail request B's
+    // validation, standing in for a policy that request A's Worker version
+    // accepted mid-rollout.
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // Request A: assembly finished and it holds the promotion lease, still
+    // copying the staged object.
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+    await acquirePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const rejected = await completeUpload(app, env, {
+        sessionId: initPayload.sessionId,
+        uploadId: initPayload.uploadId,
+        finalSize: declaredSize,
+        parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+      });
+      expect(rejected.status).toBe(400);
+      expect(((await rejected.json()) as ErrorPayload).error?.code).toBe("upload_magic_mismatch");
+      // The store refused the abort because of A's lease; that refusal is logged.
+      expect(errorSpy.mock.calls.some(([message]) => String(message).includes("aborted"))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    // Request A's copy source is still there.
+    expect(await bucket.get(stagingKey)).not.toBeNull();
+  });
 });
 
 describe("upload overwrite contract (WEB-001)", () => {

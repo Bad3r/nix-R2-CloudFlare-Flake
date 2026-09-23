@@ -386,7 +386,9 @@ and this project follows Conventional Commits.
   instead of returning a bare `500 internal_error`.
 - Aborting an upload while its promotion is still in progress no longer
   deletes the staged object out from under it (`/api/v2/upload/abort` now
-  respects the same promotion lease as `complete`).
+  respects the same promotion lease as `complete`), and neither does a
+  `complete` whose validation rejects the upload while another request holds
+  that lease.
 - `/api/v2/download` and `/api/v2/preview` no longer return `500` for object
   keys containing non-Latin-1 characters (CJK, emoji, and similar);
   `Content-Disposition` now includes an RFC 6266 `filename*` fallback.
