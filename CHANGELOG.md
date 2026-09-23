@@ -189,8 +189,11 @@ and this project follows Conventional Commits.
   `25000` (root and `env.preview`), since completing a very large staged
   upload can need upward of 20000 R2 subrequests (roughly 2 per copy-part
   at the 128 MiB copy-part size and R2's 10000-part ceiling), above the
-  Workers Paid plan's default of 10000. No action is needed for a
-  redeploy through the existing workflow; a self-managed Worker on a plan
+  Workers Paid plan's default of 10000. Cloudflare accepts `[limits]` only
+  on the Workers Standard usage model: a Worker still on the legacy Bundled
+  or Unbound model fails to deploy with API error 10205, so switch each
+  Worker (production and `-preview`) under Workers & Pages, the Worker,
+  Settings, Usage Model before redeploying. A self-managed Worker on a plan
   that cannot raise this limit should lower the effective promotion
   ceiling instead (see the comment on
   `PromoteObjectLimits.copyPartSizeBytes` in `src/r2.ts`).

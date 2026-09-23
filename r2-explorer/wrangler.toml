@@ -46,6 +46,8 @@ R2E_UPLOAD_S3_BUCKET = "replace-with-upload-s3-bucket"
 # the 128 MiB copy-part size in r2.ts), not the subrequest ceiling: promoting
 # via multipart copy uses 2 subrequests per copy-part plus a few more for
 # lookups and completion, so 10000 parts alone need over 20000 subrequests.
+# [limits] deploys only on the Workers Standard usage model (API error 10205
+# on Bundled or Unbound); see README.md, "Upload semantics".
 [limits]
 subrequests = 25_000
 

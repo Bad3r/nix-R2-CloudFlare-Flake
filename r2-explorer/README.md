@@ -153,7 +153,10 @@ Upload semantics:
   is bounded by R2's own 10000-part multipart upload ceiling at the 128 MiB copy-part size used internally,
   roughly 1.2 TiB. `wrangler.toml`'s `[limits] subrequests` is raised above the Workers Paid plan default so the
   Worker's own subrequest ceiling does not cut in below that R2-imposed ceiling; see the comment there for the
-  math.
+  math. Cloudflare accepts `[limits]` only for a Worker on the Workers Standard usage model: a Worker still on the
+  legacy Bundled or Unbound model fails to deploy with API error 10205 ("Bundled and Unbound usage models do not
+  support setting CPU limits"). Switch each Worker (production and `-preview`) under Workers & Pages, the Worker,
+  Settings, Usage Model; the account default only applies to Workers created later.
 
 Required API Worker secrets:
 
