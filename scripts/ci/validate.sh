@@ -796,6 +796,11 @@ let
       expect = "bisync.extraArgs must not contain filter flags";
     }
     {
+      name = "--files-from0 in extraArgs";
+      mounts.documents = mount { bisync.extraArgs = [ "--files-from0=/etc/r2/files" ]; };
+      expect = "bisync.extraArgs must not contain filter flags";
+    }
+    {
       name = "--delete-excluded in extraArgs";
       mounts.documents = mount { bisync.extraArgs = [ "--delete-excluded" ]; };
       expect = "bisync.extraArgs must not contain --delete-excluded";

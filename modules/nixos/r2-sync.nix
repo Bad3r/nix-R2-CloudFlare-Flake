@@ -78,6 +78,8 @@ let
     "--filters-file"
     "--files-from"
     "--files-from-raw"
+    # New in rclone 1.75.1; older releases reject it as an unknown flag anyway.
+    "--files-from0"
     "--metadata-filter-from"
     "--metadata-exclude-from"
     "--metadata-include-from"
