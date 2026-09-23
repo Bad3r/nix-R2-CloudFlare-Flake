@@ -75,7 +75,7 @@ export function isInlineSafeContentType(contentType: string): boolean {
   return false;
 }
 
-export type ObjectResponseOptions = {
+export type RangedObjectResponseOptions = {
   /** Override the stored or guessed Content-Type on the response. */
   forceContentType?: string;
   /**
@@ -89,47 +89,6 @@ export type ObjectResponseOptions = {
    * - "preview": authenticated /api/v2/preview responses.
    * - "strict": /api/v2/download and public /share/:token responses.
    */
-  hardening: "preview" | "strict";
-};
-
-/**
- * Build the streaming response for a stored R2 object with content-type,
- * disposition, cache, and content-sniffing/CSP hardening headers applied.
- * All object responses send `X-Content-Type-Options: nosniff` so browsers
- * cannot sniff stored bytes into a script-capable type.
- */
-export async function responseFromObject(
-  object: R2ObjectBody,
-  key: string,
-  disposition: "attachment" | "inline",
-  options: ObjectResponseOptions,
-): Promise<Response> {
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  if (!headers.has("content-type")) {
-    headers.set("content-type", options.forceContentType ?? guessContentType(key));
-  } else if (options.forceContentType) {
-    headers.set("content-type", options.forceContentType);
-  }
-  headers.set("content-disposition", contentDisposition(disposition, key));
-  headers.set("cache-control", "private, max-age=0, no-store");
-  headers.set("x-content-type-options", "nosniff");
-
-  if (options.hardening === "strict" || options.hardening === "preview") {
-    const effectiveType = headers.get("content-type") ?? "application/octet-stream";
-    const inlineSafe = disposition === "inline" && isInlineSafeContentType(effectiveType);
-    if (!inlineSafe) {
-      headers.set("content-security-policy", "default-src 'none'; sandbox");
-    }
-  }
-
-  return new Response(object.body, { status: 200, headers });
-}
-
-export type RangedObjectResponseOptions = {
-  /** Override the stored or guessed Content-Type on the response. */
-  forceContentType?: string;
-  /** Same hardening semantics as ObjectResponseOptions.hardening. */
   hardening: "preview" | "strict";
   /** False for HEAD: build the same headers and status as GET, but never stream a body. */
   includeBody: boolean;
