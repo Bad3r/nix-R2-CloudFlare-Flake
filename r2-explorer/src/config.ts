@@ -66,10 +66,17 @@ export function envNonNegativeInt(
 
 /**
  * Parse a boolean Worker variable. Accepts 1/true/yes/on and 0/false/no/off
- * (case-insensitive); any other value returns the fallback.
+ * (case-insensitive). Missing or empty values fall back to `fallback`; any
+ * other non-empty value throws `errorCode`, matching envInt/envNonNegativeInt
+ * instead of silently masking a typo as "off".
  */
-export function envBool(value: string | undefined, fallback = false): boolean {
-  if (!value) {
+export function envBool(
+  name: string,
+  value: string | undefined,
+  fallback = false,
+  errorCode = "config_invalid",
+): boolean {
+  if (!value || value.trim().length === 0) {
     return fallback;
   }
   const normalized = value.trim().toLowerCase();
@@ -79,7 +86,7 @@ export function envBool(value: string | undefined, fallback = false): boolean {
   if (["0", "false", "no", "off"].includes(normalized)) {
     return false;
   }
-  return fallback;
+  throw new HttpError(500, errorCode, `${name} must be one of 1/true/yes/on or 0/false/no/off.`);
 }
 
 /**

@@ -28,11 +28,6 @@ if ! git clone --depth 1 \
 fi
 
 # ---------------------------------------------------------------------------
-# Clear existing wiki content (preserve .git/)
-# ---------------------------------------------------------------------------
-find "${WIKI_DIR}" -maxdepth 1 -not -name '.git' -not -path "${WIKI_DIR}" -exec rm -rf {} +
-
-# ---------------------------------------------------------------------------
 # File mapping: source path (relative to DOCS_DIR) -> wiki filename (no .md)
 # Plan docs (`docs/plan.md` and `docs/plan/**`) are intentionally excluded from
 # wiki sync.
@@ -53,7 +48,9 @@ declare -A FILE_MAP=(
   ["operators/access-policy-split.md"]="Operators-Access-Policy-Split"
   ["operators/incident-response.md"]="Operators-Incident-Response"
   ["operators/rollback-worker-share.md"]="Operators-Rollback-Worker-Share"
+  ["operators/rollback-cli-release.md"]="Operators-Rollback-Cli-Release"
   ["operators/security-gates-remediation.md"]="Operators-Security-Gates-Remediation"
+  ["operators/web-csp-analytics.md"]="Operators-Web-Csp-Analytics"
 
   # Option reference
   ["reference/index.md"]="Reference"
@@ -64,6 +61,63 @@ declare -A FILE_MAP=(
   ["reference/services-r2-restic.md"]="Reference-services-r2-restic"
   ["reference/services-r2-sync.md"]="Reference-services-r2-sync"
 )
+
+# ---------------------------------------------------------------------------
+# docs/*.md files intentionally not published to the wiki: contributor/CI-
+# internal docs and the docs/ landing index, which duplicates README/AGENTS
+# navigation rather than describing a wiki-worthy guide or runbook.
+# ---------------------------------------------------------------------------
+EXCLUDED_FILES=(
+  "index.md"
+  "ci-tests/README.md"
+  "ci-tests/local-validation.md"
+  "ci-tests/worker-test-suites.md"
+  "ci-tests/deploy-and-smoke-tests.md"
+  "ci-tests/security-gates.md"
+  "ci-tests/release-gates.md"
+  "ci-tests/environment-matrix.md"
+)
+
+# ---------------------------------------------------------------------------
+# Guard: fail loudly, before the wiki is wiped or pushed, if a docs/*.md file
+# is neither mapped nor explicitly excluded, so a new page is never silently
+# dropped from the wiki.
+# ---------------------------------------------------------------------------
+unmapped_docs=()
+while IFS= read -r -d '' doc_path; do
+  doc_rel="${doc_path#"${DOCS_DIR}"/}"
+  if [[ ${doc_rel} == "plan.md" || ${doc_rel} == plan/* ]]; then
+    continue
+  fi
+  if [[ -n ${FILE_MAP[${doc_rel}]+set} ]]; then
+    continue
+  fi
+  is_excluded="false"
+  for excluded in "${EXCLUDED_FILES[@]}"; do
+    if [[ ${doc_rel} == "${excluded}" ]]; then
+      is_excluded="true"
+      break
+    fi
+  done
+  if [[ ${is_excluded} != "true" ]]; then
+    unmapped_docs+=("docs/${doc_rel}")
+  fi
+done < <(find "${DOCS_DIR}" -name '*.md' -print0)
+
+if [[ ${#unmapped_docs[@]} -gt 0 ]]; then
+  echo "ERROR: the following docs/*.md files are neither in FILE_MAP nor" >&2
+  echo "EXCLUDED_FILES in scripts/ci/sync-wiki.sh; add each one to a wiki page" >&2
+  echo "mapping or to the exclusion list before syncing:" >&2
+  printf '  %s\n' "${unmapped_docs[@]}" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Clear existing wiki content (preserve .git/). The wiki is a full mirror of
+# FILE_MAP: any page not re-created below, including one edited directly
+# through the GitHub wiki UI, is intentionally deleted by this wipe.
+# ---------------------------------------------------------------------------
+find "${WIKI_DIR}" -maxdepth 1 -not -name '.git' -not -path "${WIKI_DIR}" -exec rm -rf {} +
 
 # ---------------------------------------------------------------------------
 # Copy files into wiki directory
@@ -167,7 +221,9 @@ cat >"${WIKI_DIR}/Home.md" <<'HOMEEOF'
   - [Access Policy Split](Operators-Access-Policy-Split)
   - [Incident Response](Operators-Incident-Response)
   - [Rollback Worker/Share](Operators-Rollback-Worker-Share)
+  - [Rollback CLI Release](Operators-Rollback-Cli-Release)
   - [Security Gates Remediation](Operators-Security-Gates-Remediation)
+  - [Web CSP/Analytics](Operators-Web-Csp-Analytics)
 
 ## Option Reference
 
@@ -229,6 +285,55 @@ for f in "${WIKI_DIR}"/Reference-*.md; do
   heading="$(head -1 "${f}" | sed 's/^# //')"
   echo "- [${heading}](${basename_no_ext})" >>"${WIKI_DIR}/_Sidebar.md"
 done
+
+# ---------------------------------------------------------------------------
+# Guard: fail loudly if a synced page is unreachable from the generated
+# navigation, so a new FILE_MAP entry never lands in the wiki only reachable
+# by direct URL. Operators-*/Reference-* entries are appended to _Sidebar.md
+# by the auto-detect loops above, so only Home.md (entirely hand-maintained)
+# and _Sidebar.md's hand-maintained top-level block need checking here. Also
+# fail if a mapping was never copied (its source docs/*.md is missing): the
+# copy loop above only warns and skips, so both heredocs still hardcode a
+# link to a page that does not exist in the wiki. Also fail if two source
+# docs map to the same wiki_name: the second cp (above) silently overwrites
+# the first, so the other checks here all pass while one doc's content is
+# gone from the wiki.
+# ---------------------------------------------------------------------------
+missing_nav=()
+declare -A seen_wiki_names
+duplicate_names=()
+for src in "${!FILE_MAP[@]}"; do
+  if [[ ${src} == "plan.md" || ${src} == plan/* ]]; then
+    continue
+  fi
+  wiki_name="${FILE_MAP[${src}]}"
+  if [[ -n ${seen_wiki_names[${wiki_name}]+set} ]]; then
+    duplicate_names+=("${wiki_name}: docs/${seen_wiki_names[${wiki_name}]} and docs/${src}")
+  else
+    seen_wiki_names[${wiki_name}]="${src}"
+  fi
+  grep -qF "(${wiki_name})" "${WIKI_DIR}/Home.md" || missing_nav+=("Home.md: ${wiki_name}")
+  if [[ ${wiki_name} != Operators-* && ${wiki_name} != Reference-* ]]; then
+    grep -qF "(${wiki_name})" "${WIKI_DIR}/_Sidebar.md" || missing_nav+=("_Sidebar.md: ${wiki_name}")
+  fi
+  [[ -f "${WIKI_DIR}/${wiki_name}.md" ]] || missing_nav+=("page not copied (source docs/${src} missing): ${wiki_name}")
+done
+
+if [[ ${#duplicate_names[@]} -gt 0 ]]; then
+  echo "ERROR: the following FILE_MAP entries map different source docs to the" >&2
+  echo "same wiki page name; give each a distinct value in scripts/ci/sync-wiki.sh:" >&2
+  printf '  %s\n' "${duplicate_names[@]}" >&2
+  exit 1
+fi
+
+if [[ ${#missing_nav[@]} -gt 0 ]]; then
+  echo "ERROR: the following wiki pages are not reachable from the generated" >&2
+  echo "navigation, or were never copied; in scripts/ci/sync-wiki.sh, add each" >&2
+  echo "linking failure to the matching heredoc, and drop or repoint the" >&2
+  echo "FILE_MAP entry for each 'page not copied' failure:" >&2
+  printf '  %s\n' "${missing_nav[@]}" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Commit and push if there are changes

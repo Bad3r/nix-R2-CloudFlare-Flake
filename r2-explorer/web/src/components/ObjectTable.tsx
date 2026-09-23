@@ -1,6 +1,7 @@
+import { useEffect, useRef } from "preact/hooks";
 import type { JSX } from "preact";
 import type { ObjectMetadata } from "../lib/api";
-import { formatBytes, formatWhen, readEtag } from "../lib/format";
+import { focusableRow, formatBytes, formatWhen, isListingEmpty, prefixLabel, readEtag } from "../lib/format";
 import { Badge, PanelHead } from "./primitives";
 
 type ObjectTableProps = {
@@ -34,7 +35,37 @@ export function ObjectTable({
   onSelect,
   onActivate,
 }: ObjectTableProps): JSX.Element {
-  const isEmpty = !loading && folders.length === 0 && objects.length === 0;
+  const isEmpty = isListingEmpty(loading, folders.length, objects.length);
+  const focusable = focusableRow(
+    folders,
+    objects.map((object) => object.key),
+    selectedKey,
+  );
+  const focusableKey = focusable ? `${focusable.kind}:${focusable.value}` : null;
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+
+  // Moves DOM focus with the roving tabindex when selection changes via
+  // keyboard (j/k/arrows), without stealing focus from elsewhere (e.g. the
+  // prefix input, or a background refresh after an upload completes).
+  useEffect(() => {
+    if (!focusableKey) {
+      return;
+    }
+    const active = document.activeElement;
+    const focusWasInTable = Array.from(rowRefs.current.values()).some((row) => row === active);
+    if (!focusWasInTable) {
+      return;
+    }
+    rowRefs.current.get(focusableKey)?.focus();
+  }, [focusableKey]);
+
+  const registerRow = (key: string) => (el: HTMLTableRowElement | null) => {
+    if (el) {
+      rowRefs.current.set(key, el);
+    } else {
+      rowRefs.current.delete(key);
+    }
+  };
 
   return (
     <section class="panel reveal" style={{ "--i": 1 }}>
@@ -64,8 +95,9 @@ export function ObjectTable({
               {folders.map((folder) => (
                 <tr
                   key={folder}
+                  ref={registerRow(`folder:${folder}`)}
                   class="folder"
-                  tabIndex={0}
+                  tabIndex={focusable?.kind === "folder" && focusable.value === folder ? 0 : -1}
                   role="button"
                   aria-label={`Open prefix ${folder}`}
                   onClick={() => onOpenFolder(folder)}
@@ -74,7 +106,7 @@ export function ObjectTable({
                   <td>
                     <span class="cell-key">
                       <span class="glyph" aria-hidden="true">▸</span>
-                      <span class="truncate" title={folder}>{folder}</span>
+                      <span class="truncate" title={folder}>{prefixLabel(folder)}</span>
                     </span>
                   </td>
                   <td class="dim">-</td>
@@ -88,8 +120,9 @@ export function ObjectTable({
                 return (
                   <tr
                     key={object.key}
+                    ref={registerRow(`object:${object.key}`)}
                     class={selected ? "selected" : ""}
-                    tabIndex={0}
+                    tabIndex={focusable?.kind === "object" && focusable.value === object.key ? 0 : -1}
                     // aria-selected is ignored on a tr outside a grid role;
                     // aria-current is valid on any element and is what AT
                     // announces for "the current item in a set".

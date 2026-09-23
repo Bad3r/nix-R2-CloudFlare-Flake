@@ -9,13 +9,15 @@ import {
   moveObject,
   revokeShare,
   type ObjectMetadata,
+  type SessionInfoResponse,
   type ShareCreateResponse,
   type ShareRecord,
 } from "../lib/api";
-import { errorMessage, isAuthRequired, parentPrefix } from "../lib/format";
+import { errorMessage, isAuthRequired, isObjectExistsError, objectExistsKey, parentPrefix, resolveListLimit } from "../lib/format";
 import type { ActivityLog } from "./useActivityLog";
 
-const PAGE_LIMIT = 200;
+/** Outcome of a mutation, reported back to the caller instead of only logged. */
+export type MutationOutcome = { ok: true } | { ok: false; message: string; conflictKey?: string };
 
 export type ObjectBrowser = {
   prefix: string;
@@ -42,16 +44,17 @@ export type ObjectBrowser = {
   refresh: () => void;
   select: (key: string) => void;
   moveSelection: (delta: number) => void;
-  performMove: (target: string) => Promise<void>;
-  performDelete: () => Promise<void>;
-  performShareCreate: (ttl: string, maxDownloads: number) => Promise<void>;
-  performShareRevoke: (tokenId: string) => Promise<void>;
+  performMove: (target: string, overwrite?: boolean) => Promise<MutationOutcome>;
+  performDelete: () => Promise<MutationOutcome>;
+  performShareCreate: (ttl: string, maxDownloads: number) => Promise<MutationOutcome>;
+  performShareRevoke: (tokenId: string) => Promise<MutationOutcome>;
 };
 
 type BrowserArgs = {
   log: Pick<ActivityLog, "append">;
   onAuthRequired: () => void;
   onAuthOk: () => void;
+  session: SessionInfoResponse | null;
 };
 
 /**
@@ -64,7 +67,7 @@ type BrowserArgs = {
  *   closures that previously reset the selection after a move.
  * - Paging keeps a cursor stack so Back is lossless, not forward-only.
  */
-export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs): ObjectBrowser {
+export function useObjectBrowser({ log, onAuthRequired, onAuthOk, session }: BrowserArgs): ObjectBrowser {
   const { append } = log;
 
   const [prefix, setPrefixState] = useState("");
@@ -73,7 +76,10 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
   const [selectedKey, setSelectedKeyState] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [listComplete, setListComplete] = useState(true);
-  const [loadingList, setLoadingList] = useState(false);
+  // Starts true so the table shows its loading state, never a false "no
+  // objects" claim, before the first list() attempt has even started (e.g.
+  // while session bootstrap is still resolving).
+  const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState("");
   const [pageStack, setPageStack] = useState<Array<string | undefined>>([]);
 
@@ -137,7 +143,8 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
       setLoadingList(true);
       setListError("");
       try {
-        const payload = await listObjects(targetPrefix, cursor, PAGE_LIMIT, controller.signal);
+        const limit = resolveListLimit(session);
+        const payload = await listObjects(targetPrefix, cursor, limit, controller.signal);
         if (seq !== listSeqRef.current) {
           return;
         }
@@ -178,7 +185,7 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
         }
       }
     },
-    [append, onAuthOk, onAuthRequired],
+    [append, onAuthOk, onAuthRequired, session],
   );
 
   const refresh = useCallback(() => {
@@ -286,36 +293,41 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
     void loadShares(selectedKey);
   }, [loadShares, selectedKey]);
 
-  const runMutation = useCallback(
-    async (action: () => Promise<void>): Promise<void> => {
-      setMutating(true);
-      try {
-        await action();
-      } finally {
-        setMutating(false);
-      }
-    },
-    [],
-  );
+  const runMutation = useCallback(async <T>(action: () => Promise<T>): Promise<T> => {
+    setMutating(true);
+    try {
+      return await action();
+    } finally {
+      setMutating(false);
+    }
+  }, []);
 
   const performMove = useCallback(
-    (target: string) =>
-      runMutation(async () => {
+    (target: string, overwrite = false) =>
+      runMutation(async (): Promise<MutationOutcome> => {
         const source = selectedKeyRef.current;
         if (!source || !target || target === source) {
-          return;
+          return { ok: true };
         }
         try {
-          await moveObject(source, target);
+          await moveObject(source, target, overwrite);
           append(`Moved ${source} to ${target}`, "success");
           setSelectedKey(target);
           await list(prefixRef.current, pageCursorRef.current);
+          return { ok: true };
         } catch (error) {
           if (isAuthRequired(error)) {
             onAuthRequired();
-            return;
+            return { ok: false, message: errorMessage(error) };
           }
-          append(`Move failed: ${errorMessage(error)}`, "error");
+          const message = errorMessage(error);
+          if (isObjectExistsError(error)) {
+            const conflictKey = objectExistsKey(error) ?? target;
+            append(`Move needs confirmation: an object already exists at ${conflictKey}`, "info");
+            return { ok: false, message, conflictKey };
+          }
+          append(`Move failed: ${message}`, "error");
+          return { ok: false, message };
         }
       }),
     [append, list, onAuthRequired, runMutation, setSelectedKey],
@@ -323,22 +335,25 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
 
   const performDelete = useCallback(
     () =>
-      runMutation(async () => {
+      runMutation(async (): Promise<MutationOutcome> => {
         const key = selectedKeyRef.current;
         if (!key) {
-          return;
+          return { ok: true };
         }
         try {
           await deleteObject(key);
           append(`Moved ${key} to .trash/`, "success");
           setSelectedKey(null);
           await list(prefixRef.current, pageCursorRef.current);
+          return { ok: true };
         } catch (error) {
           if (isAuthRequired(error)) {
             onAuthRequired();
-            return;
+            return { ok: false, message: errorMessage(error) };
           }
-          append(`Delete failed: ${errorMessage(error)}`, "error");
+          const message = errorMessage(error);
+          append(`Delete failed: ${message}`, "error");
+          return { ok: false, message };
         }
       }),
     [append, list, onAuthRequired, runMutation, setSelectedKey],
@@ -346,22 +361,25 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
 
   const performShareCreate = useCallback(
     (ttl: string, maxDownloads: number) =>
-      runMutation(async () => {
+      runMutation(async (): Promise<MutationOutcome> => {
         const key = selectedKeyRef.current;
         if (!key) {
-          return;
+          return { ok: true };
         }
         try {
           const created = await createShare(key, ttl, maxDownloads, bucketAlias);
           setShareCreateResult(created);
           append(`Created share ${created.tokenId} for ${key}`, "success");
           await loadShares(key);
+          return { ok: true };
         } catch (error) {
           if (isAuthRequired(error)) {
             onAuthRequired();
-            return;
+            return { ok: false, message: errorMessage(error) };
           }
-          append(`Share create failed: ${errorMessage(error)}`, "error");
+          const message = errorMessage(error);
+          append(`Share create failed: ${message}`, "error");
+          return { ok: false, message };
         }
       }),
     [append, bucketAlias, loadShares, onAuthRequired, runMutation],
@@ -369,7 +387,7 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
 
   const performShareRevoke = useCallback(
     (tokenId: string) =>
-      runMutation(async () => {
+      runMutation(async (): Promise<MutationOutcome> => {
         try {
           await revokeShare(tokenId);
           append(`Revoked share ${tokenId}`, "success");
@@ -377,12 +395,15 @@ export function useObjectBrowser({ log, onAuthRequired, onAuthOk }: BrowserArgs)
           if (key) {
             await loadShares(key);
           }
+          return { ok: true };
         } catch (error) {
           if (isAuthRequired(error)) {
             onAuthRequired();
-            return;
+            return { ok: false, message: errorMessage(error) };
           }
-          append(`Share revoke failed: ${errorMessage(error)}`, "error");
+          const message = errorMessage(error);
+          append(`Share revoke failed: ${message}`, "error");
+          return { ok: false, message };
         }
       }),
     [append, loadShares, onAuthRequired, runMutation],

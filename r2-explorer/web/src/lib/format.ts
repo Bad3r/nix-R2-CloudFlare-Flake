@@ -1,5 +1,5 @@
 import { ApiError } from "./api";
-import type { ObjectMetadata } from "./api";
+import type { ObjectMetadata, SessionInfoResponse } from "./api";
 
 /**
  * Human-readable byte size using binary units.
@@ -79,15 +79,58 @@ export function prefixLabel(prefix: string): string {
   return index === -1 ? clean : clean.slice(index + 1);
 }
 
-/** Human message for any thrown value, appending a stable code for ApiError. */
+/** First issue's "path: message" from a validation_error's details.issues, if shaped as expected. */
+function firstValidationIssue(details: unknown): string | null {
+  if (typeof details !== "object" || details === null) {
+    return null;
+  }
+  const issues = (details as { issues?: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) {
+    return null;
+  }
+  const issue = issues[0] as { path?: unknown; message?: unknown };
+  const message = typeof issue.message === "string" ? issue.message : null;
+  if (!message) {
+    return null;
+  }
+  const path = Array.isArray(issue.path) ? issue.path.join(".") : "";
+  return path ? `${path}: ${message}` : message;
+}
+
+/**
+ * Human message for any thrown value, appending a stable code for ApiError.
+ * validation_error's own message is a fixed "Invalid X." boilerplate, so the
+ * first Zod issue (the actual reason) is used instead when present.
+ */
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.code === "validation_error") {
+      const issue = firstValidationIssue(error.details);
+      if (issue) {
+        return `${issue} (${error.code})`;
+      }
+    }
     return `${error.message} (${error.code})`;
   }
   if (error instanceof Error) {
     return error.message;
   }
   return String(error);
+}
+
+/** True when the error is a 409 conflict because the target key already exists. */
+export function isObjectExistsError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409 && error.code === "object_exists";
+}
+
+/** The conflicting key from an object_exists error's details, if present. */
+export function objectExistsKey(error: ApiError): string | null {
+  const details = error.details;
+  if (typeof details !== "object" || details === null) {
+    return null;
+  }
+  const key = (details as { key?: unknown }).key;
+  return typeof key === "string" && key.length > 0 ? key : null;
 }
 
 /** True when the error is an Access/token 401 that requires re-authentication. */
@@ -115,4 +158,79 @@ export function ellipsizeMiddle(value: string, max = 48): string {
   const head = Math.ceil((max - 1) / 2);
   const tail = Math.floor((max - 1) / 2);
   return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
+}
+
+const SHARE_TTL_PATTERN = /^[0-9]+[smhd]$/;
+
+/**
+ * Validate and normalize a share TTL field value. A bare number is rejected
+ * here (the server would silently treat it as seconds) rather than forwarded;
+ * an empty value falls back to the same "24h" default the API would apply.
+ */
+export function normalizeShareTtl(input: string): { ok: true; value: string } | { ok: false; message: string } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { ok: true, value: "24h" };
+  }
+  if (!SHARE_TTL_PATTERN.test(trimmed)) {
+    return { ok: false, message: "Enter a duration with a unit: s, m, h, or d (for example 24h)." };
+  }
+  return { ok: true, value: trimmed };
+}
+
+/**
+ * Parse the share max-downloads field. `0` is the API's "unlimited" value, so
+ * unlike a narrowing field this one must not guess: anything that is not a
+ * plain non-negative integer is rejected rather than coerced, since
+ * `parseInt` maps "0.5"/"0abc" to 0 and would silently drop the cap.
+ */
+export function parseMaxDownloads(input: string): { ok: true; value: number } | { ok: false; message: string } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { ok: true, value: 1 };
+  }
+  if (!/^[0-9]+$/.test(trimmed)) {
+    return { ok: false, message: "Enter a whole number of downloads (0 for unlimited)." };
+  }
+  return { ok: true, value: Number.parseInt(trimmed, 10) };
+}
+
+/** Object-list page size from session limits, or the given default when absent. */
+export function resolveListLimit(session: SessionInfoResponse | null, fallback = 200): number {
+  return session?.limits.uiMaxListLimit ?? fallback;
+}
+
+/** True when the object table should show its "no objects under this prefix" state. */
+export function isListingEmpty(loading: boolean, folderCount: number, objectCount: number): boolean {
+  return !loading && folderCount === 0 && objectCount === 0;
+}
+
+export type FocusableRow = { kind: "folder"; value: string } | { kind: "object"; value: string } | null;
+
+/**
+ * The one row a roving-tabindex table keeps in the Tab order: the selected
+ * object if one exists and is still listed, else the first row overall
+ * (folders are listed before objects).
+ */
+export function focusableRow(folders: string[], objectKeys: string[], selectedKey: string | null): FocusableRow {
+  if (selectedKey !== null && objectKeys.includes(selectedKey)) {
+    return { kind: "object", value: selectedKey };
+  }
+  if (folders.length > 0) {
+    return { kind: "folder", value: folders[0] };
+  }
+  if (objectKeys.length > 0) {
+    return { kind: "object", value: objectKeys[0] };
+  }
+  return null;
+}
+
+/** HTML `accept` attribute value from allowed extensions/MIME types; empty when both are empty. */
+export function buildAcceptAttribute(allowedExtensions: string[], allowedMime: string[]): string {
+  const extensionTokens = allowedExtensions
+    .map((ext) => ext.trim())
+    .filter((ext) => ext.length > 0)
+    .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
+  const mimeTokens = allowedMime.map((mime) => mime.trim()).filter((mime) => mime.length > 0);
+  return [...extensionTokens, ...mimeTokens].join(",");
 }

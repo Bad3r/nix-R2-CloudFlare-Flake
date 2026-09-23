@@ -36,10 +36,12 @@ writeShellApplication {
   ++ lib.optionals (wrangler != null) [ wrangler ];
   text = ''
     set -euo pipefail
+    shopt -s inherit_errexit
 
     credentials_file=""
     default_credentials_file="$HOME/.config/cloudflare/r2/env"
     default_rclone_config="$HOME/.config/rclone/rclone.conf"
+    r2_version=${lib.escapeShellArg packageVersion}
 
     usage_main() {
       printf '%s\n' \
@@ -51,6 +53,7 @@ writeShellApplication {
         "  share worker <subcommand> ...        Manage Worker share tokens" \
         "  rclone <args...>                     Run rclone with managed config path" \
         "  help                                 Show this help" \
+        "  version                              Show CLI version" \
         "" \
         "Examples:" \
         "  r2 bucket list" \
@@ -130,6 +133,8 @@ writeShellApplication {
       exit 1
     }
 
+    ${r2lib.sourceEnvFileShellFunction}
+
     load_credentials() {
       local default_account_id account_id
 
@@ -140,14 +145,15 @@ writeShellApplication {
         fail "credentials file is missing or unreadable: $credentials_file"
       fi
 
-      set -a
-      # shellcheck source=/dev/null
-      source "$credentials_file"
-      set +a
+      r2_source_env_file "$credentials_file"
 
       account_id="''${R2_ACCOUNT_ID:-$default_account_id}"
       if [[ -z "$account_id" ]]; then
         fail "R2 account ID is missing. Set R2_ACCOUNT_ID in credentials file or R2_DEFAULT_ACCOUNT_ID."
+      fi
+
+      if [[ -n "''${R2_ACCOUNT_ID:-}" && -n "$default_account_id" && "$R2_ACCOUNT_ID" != "$default_account_id" ]]; then
+        echo "Warning: R2_ACCOUNT_ID ('$R2_ACCOUNT_ID', from environment or $credentials_file) differs from R2_DEFAULT_ACCOUNT_ID ('$default_account_id', from Home Manager); using R2_ACCOUNT_ID." >&2
       fi
 
       export R2_ACCOUNT_ID="$account_id"
@@ -189,7 +195,6 @@ writeShellApplication {
       local query="''${3:-}"
       local body="''${4:-}"
       local url response status payload
-      local access_client_id_header access_client_secret_header
 
       ensure_worker_share_env
 
@@ -198,33 +203,35 @@ writeShellApplication {
         url="$url?$query"
       fi
 
-      access_client_id_header="CF-Access-Client-Id: ''${R2_EXPLORER_ACCESS_CLIENT_ID}"
-      access_client_secret_header="CF-Access-Client-Secret: ''${R2_EXPLORER_ACCESS_CLIENT_SECRET}"
-
+      # Access service-token headers are read from a process substitution
+      # (curl's `-H @file` form), not passed as literal -H arguments, so the
+      # secret never appears in this process's argv (/proc/<pid>/cmdline).
       if [[ -n "$body" ]]; then
-        response="$(
+        if ! response="$(
           curl -sS \
             -X "$method" \
             -H "content-type: application/json" \
-            -H "$access_client_id_header" \
-            -H "$access_client_secret_header" \
+            -H @<(printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' "$R2_EXPLORER_ACCESS_CLIENT_ID" "$R2_EXPLORER_ACCESS_CLIENT_SECRET") \
             --data "$body" \
             --max-time 60 \
             --connect-timeout 10 \
             "$url" \
             -w '\n%{http_code}'
-        )"
+        )"; then
+          fail "worker API request failed: could not connect to $R2_EXPLORER_BASE_URL ($method $path)"
+        fi
       else
-        response="$(
+        if ! response="$(
           curl -sS \
             -X "$method" \
-            -H "$access_client_id_header" \
-            -H "$access_client_secret_header" \
+            -H @<(printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' "$R2_EXPLORER_ACCESS_CLIENT_ID" "$R2_EXPLORER_ACCESS_CLIENT_SECRET") \
             --max-time 60 \
             --connect-timeout 10 \
             "$url" \
             -w '\n%{http_code}'
-        )"
+        )"; then
+          fail "worker API request failed: could not connect to $R2_EXPLORER_BASE_URL ($method $path)"
+        fi
       fi
 
       status="''${response##*$'\n'}"
@@ -267,7 +274,9 @@ writeShellApplication {
       load_credentials
       ensure_wrangler
 
-      read -r -p "Delete bucket '$name'? [y/N] " confirm
+      if ! read -r -p "Delete bucket '$name'? [y/N] " confirm; then
+        fail "no confirmation received (stdin is not interactive); aborting delete of '$name'"
+      fi
       if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo "Cancelled"
         exit 0
@@ -304,6 +313,8 @@ writeShellApplication {
 
       [[ -n "$bucket" && -n "$rule_id" ]] || \
         fail "usage: r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
+      [[ -n "$prefix" ]] || \
+        fail "prefix is required (r2 bucket lifecycle add does not currently support whole-bucket rules; pass a non-empty prefix)"
 
       shift 3 || true
 
@@ -372,7 +383,8 @@ writeShellApplication {
       local days="''${2:-30}"
 
       [[ -n "$bucket" ]] || fail "usage: r2 bucket lifecycle <bucket> [days]"
-      require_non_negative_int "$days" "retention days"
+      [[ "$days" =~ ^[0-9]+$ ]] || \
+        fail "'$bucket' is not a recognized 'bucket lifecycle' subcommand; assuming the deprecated 'r2 bucket lifecycle <bucket> [days]' form, retention days must be a non-negative integer (got '$days')"
 
       echo "Warning: 'r2 bucket lifecycle <bucket> [days]' is deprecated." >&2
       echo "Warning: use 'r2 bucket lifecycle add <bucket> trash-cleanup .trash/ --expire-days <days>' instead." >&2
@@ -394,7 +406,7 @@ writeShellApplication {
           ;;
         add)
           shift || true
-          [[ "$#" -ge 5 ]] || \
+          [[ "$#" -ge 3 ]] || \
             fail "usage: r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
           run_bucket_lifecycle_add "$@"
           ;;
@@ -463,7 +475,7 @@ writeShellApplication {
         esac
       done
 
-      [[ "$max_downloads" =~ ^[0-9]+$ ]] || fail "--max-downloads must be a non-negative integer"
+      require_non_negative_int "$max_downloads" "--max-downloads"
 
       body="$(jq -n \
         --arg bucket "$bucket" \
@@ -487,13 +499,15 @@ writeShellApplication {
     }
 
     run_share_worker_list() {
-      local bucket key query response
+      local bucket key bucket_escaped key_escaped query response
 
       bucket="''${1:-}"
       key="''${2:-}"
       [[ -n "$bucket" && -n "$key" ]] || fail "usage: r2 share worker list <bucket> <key>"
 
-      query="bucket=$(uri_escape "$bucket")&key=$(uri_escape "$key")"
+      bucket_escaped="$(uri_escape "$bucket")"
+      key_escaped="$(uri_escape "$key")"
+      query="bucket=$bucket_escaped&key=$key_escaped"
       response="$(worker_api_json "GET" "/api/v2/share/list" "$query" "")"
       echo "$response" | jq '.'
     }
@@ -526,13 +540,15 @@ writeShellApplication {
     }
 
     run_share() {
-      if [[ "''${1:-}" == "worker" ]]; then
+      local first="''${1:-help}"
+
+      if [[ "$first" == "worker" ]]; then
         shift
         run_share_worker "$@"
         return
       fi
 
-      if [[ "''${1:-}" =~ ^(-h|--help|help)$ ]]; then
+      if [[ "$first" =~ ^(-h|--help|help)$ ]]; then
         usage_share
         return
       fi
@@ -545,10 +561,10 @@ writeShellApplication {
       local config_path
       config_path="''${R2_RCLONE_CONFIG:-$default_rclone_config}"
 
-      [[ "$#" -gt 0 ]] || {
-        usage_rclone >&2
-        exit 1
-      }
+      if [[ "$#" -eq 0 ]]; then
+        usage_rclone
+        return
+      fi
 
       load_credentials
       [[ -r "$config_path" ]] || fail "rclone config is missing or unreadable: $config_path"
@@ -596,7 +612,9 @@ writeShellApplication {
         run_share "$@"
         ;;
       rclone)
-        if [[ "''${1:-}" =~ ^(-h|--help|help)$ ]]; then
+        if [[ "$#" -eq 0 ]]; then
+          usage_rclone
+        elif [[ "$#" -eq 1 && "$1" =~ ^(-h|--help|help)$ ]]; then
           usage_rclone
         else
           run_rclone "$@"
@@ -604,6 +622,9 @@ writeShellApplication {
         ;;
       help|-h|--help)
         usage_main
+        ;;
+      version|--version)
+        printf '%s\n' "$r2_version"
         ;;
       *)
         fail "unknown command '$cmd' (run: r2 help)"

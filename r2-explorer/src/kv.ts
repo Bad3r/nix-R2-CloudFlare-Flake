@@ -21,8 +21,14 @@ export async function putShareRecord(
   record: ShareRecord,
   ttlSeconds: number,
 ): Promise<void> {
-  await kv.put(shareRecordKey(record.tokenId), JSON.stringify(record), { expirationTtl: ttlSeconds });
+  // Index first: KV has no multi-key transaction, so if the second put below
+  // fails, the only artifact left is a phantom index entry pointing at a
+  // record that never existed. listSharesForObject already treats a missing
+  // record as "skip", and the entry self-expires with the same TTL. Writing
+  // the primary record first would instead risk a live, redeemable share that
+  // never shows up in share/list.
   await kv.put(shareIndexKey(record.bucket, record.key, record.tokenId), "", { expirationTtl: ttlSeconds });
+  await kv.put(shareRecordKey(record.tokenId), JSON.stringify(record), { expirationTtl: ttlSeconds });
 }
 
 export async function getShareRecord(kv: KVNamespace, tokenId: string): Promise<ShareRecord | null> {
@@ -73,7 +79,15 @@ export async function listSharesForObject(
     if (!tokenId) {
       continue;
     }
-    const record = await getShareRecord(kv, tokenId);
+    let record: ShareRecord | null;
+    try {
+      record = await getShareRecord(kv, tokenId);
+    } catch (error) {
+      // One unreadable record (corruption, hand-edited KV, schema drift)
+      // must not take down every sibling share's listing.
+      console.error(`Skipping unreadable share record for token ${tokenId}:`, error);
+      continue;
+    }
     if (record) {
       shares.push(record);
     }

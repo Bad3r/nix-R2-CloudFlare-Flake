@@ -2,6 +2,7 @@ import { createHash, createSign, generateKeyPairSync, randomBytes, sign as nodeS
 import { afterEach, beforeEach } from "vitest";
 import { resetAuthSigningKeyCache } from "../../src/auth";
 import type { Env } from "../../src/types";
+import { UploadSessionDurableObject } from "../../src/upload-sessions";
 
 type KVEntry = {
   value: string;
@@ -24,36 +25,6 @@ type MultipartUpload = {
   parts: Map<number, { etag: string; bytes: Uint8Array }>;
 };
 
-type UploadSessionRecord = {
-  sessionId: string;
-  ownerId: string;
-  bucket: string;
-  uploadId: string;
-  objectKey: string;
-  stagingKey: string;
-  filename: string;
-  contentType: string;
-  declaredSize: number;
-  sha256: string | null;
-  prefix: string;
-  maxParts: number;
-  maxFileBytes: number;
-  partSizeBytes: number;
-  createdAt: string;
-  expiresAt: string;
-  status: "init" | "active" | "completed" | "aborted" | "expired";
-  completedAt: string | null;
-  abortedAt: string | null;
-  signedParts: Record<
-    string,
-    {
-      partNumber: number;
-      issuedAt: string;
-      contentLength: number;
-      contentMd5: string | null;
-    }
-  >;
-};
 
 function isReadableStreamLike(value: unknown): value is ReadableStream {
   return typeof value === "object" && value !== null && "getReader" in value;
@@ -108,6 +79,90 @@ function kvExpired(entry: KVEntry | undefined): boolean {
     return false;
   }
   return Date.now() >= entry.expiresAt;
+}
+
+/**
+ * Resolve a `Range: bytes=...` header against a known size, mirroring R2's
+ * own behavior for the Headers form of R2GetOptions.range: a single
+ * satisfiable range slices the object; anything else (absent, unparseable,
+ * multi-range, or out of bounds) falls back to serving the full object
+ * rather than signaling an error, matching validator.worker.ts in
+ * @cloudflare/workers-sdk's miniflare R2 gateway. Returns an exclusive end.
+ */
+function resolveRangeHeader(value: string | null, size: number): { offset: number; end: number } | null {
+  if (!value) {
+    return null;
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const [, startText, endText] = match;
+  if (startText === "" && endText === "") {
+    return null;
+  }
+  if (startText === "") {
+    const suffix = Number.parseInt(endText, 10);
+    if (!Number.isFinite(suffix) || suffix <= 0) {
+      return null;
+    }
+    const clamped = Math.min(suffix, size);
+    return clamped > 0 ? { offset: size - clamped, end: size } : null;
+  }
+  const offset = Number.parseInt(startText, 10);
+  if (!Number.isFinite(offset) || offset < 0 || offset >= size) {
+    return null;
+  }
+  if (endText === "") {
+    return { offset, end: size };
+  }
+  const end = Number.parseInt(endText, 10);
+  if (!Number.isFinite(end) || end < offset) {
+    return null;
+  }
+  return { offset, end: Math.min(size, end + 1) };
+}
+
+function etagListMatches(headerValue: string, etag: string): boolean {
+  if (headerValue.trim() === "*") {
+    return true;
+  }
+  return headerValue
+    .split(",")
+    .map((part) => part.trim().replace(/^W\//, "").replace(/^"|"$/g, ""))
+    .includes(etag);
+}
+
+/**
+ * Evaluate R2Conditional-as-Headers (onlyIf) against a stored object, per
+ * RFC 7232 section 6 precedence: If-Match/If-Unmodified-Since gate first
+ * (independent of If-None-Match/If-Modified-Since), matching R2's documented
+ * "all conditional headers aside from If-Range are supported" contract.
+ */
+function onlyIfHeadersPass(onlyIf: Headers, object: StoredObject): boolean {
+  const ifMatch = onlyIf.get("if-match");
+  if (ifMatch !== null && !etagListMatches(ifMatch, object.etag)) {
+    return false;
+  }
+  const ifUnmodifiedSince = onlyIf.get("if-unmodified-since");
+  if (ifMatch === null && ifUnmodifiedSince !== null) {
+    const since = new Date(ifUnmodifiedSince);
+    if (!Number.isNaN(since.getTime()) && object.uploaded.getTime() > since.getTime()) {
+      return false;
+    }
+  }
+  const ifNoneMatch = onlyIf.get("if-none-match");
+  if (ifNoneMatch !== null && etagListMatches(ifNoneMatch, object.etag)) {
+    return false;
+  }
+  const ifModifiedSince = onlyIf.get("if-modified-since");
+  if (ifNoneMatch === null && ifModifiedSince !== null) {
+    const since = new Date(ifModifiedSince);
+    if (!Number.isNaN(since.getTime()) && object.uploaded.getTime() <= since.getTime()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export class MemoryKV {
@@ -166,6 +221,14 @@ export class MemoryR2Bucket {
 
   private readonly uploads = new Map<string, MultipartUpload>();
 
+  /** Keys whose most recently read body had cancel() called on it; see wasBodyCancelled. */
+  private readonly cancelledBodies = new Set<string>();
+
+  /** Test hook: whether the most recently read body for `key` was cancelled unread. */
+  wasBodyCancelled(key: string): boolean {
+    return this.cancelledBodies.has(key);
+  }
+
   private toR2Object(object: StoredObject): R2Object {
     return {
       key: object.key,
@@ -191,9 +254,19 @@ export class MemoryR2Bucket {
 
   private toR2ObjectBody(object: StoredObject): R2ObjectBody {
     const base = this.toR2Object(object);
+    const key = object.key;
+    this.cancelledBodies.delete(key);
+    // A real R2ObjectBody.body is a ReadableStream with cancel(); attach an
+    // equivalent method to the byte-array double so recordShareDownload's
+    // cancelUnconsumedBody can be exercised without a real stream.
+    const body = Object.assign(object.bytes.slice(), {
+      cancel: async () => {
+        this.cancelledBodies.add(key);
+      },
+    });
     return {
       ...base,
-      body: object.bytes.slice(),
+      body,
       bodyUsed: false,
       text: async () => new TextDecoder().decode(object.bytes),
       json: async () => JSON.parse(new TextDecoder().decode(object.bytes)),
@@ -209,8 +282,19 @@ export class MemoryR2Bucket {
   async put(
     key: string,
     value: unknown,
-    options?: { httpMetadata?: Record<string, unknown>; customMetadata?: Record<string, string> },
-  ): Promise<R2Object> {
+    options?: {
+      httpMetadata?: Record<string, unknown>;
+      customMetadata?: Record<string, string>;
+      onlyIf?: Headers;
+    },
+  ): Promise<R2Object | null> {
+    // Mirrors the real binding's create-only-if-absent form (If-None-Match:
+    // *): when no object exists yet, any If-None-Match condition trivially
+    // passes and the put proceeds below.
+    const existing = this.objects.get(key);
+    if (existing && options?.onlyIf instanceof Headers && !onlyIfHeadersPass(options.onlyIf, existing)) {
+      return null;
+    }
     const bytes = await toBytes(value);
     const object: StoredObject = {
       key,
@@ -226,20 +310,42 @@ export class MemoryR2Bucket {
 
   async get(
     key: string,
-    options?: { range?: { offset?: number; length?: number; suffix?: number } },
-  ): Promise<R2ObjectBody | null> {
+    options?: {
+      range?: { offset?: number; length?: number; suffix?: number } | Headers;
+      onlyIf?: Headers;
+    },
+  ): Promise<R2ObjectBody | R2Object | null> {
     const object = this.objects.get(key);
     if (!object) {
       return null;
     }
+
+    if (options?.onlyIf instanceof Headers && !onlyIfHeadersPass(options.onlyIf, object)) {
+      // Precondition failed: R2 returns the object's metadata without a body.
+      return this.toR2Object(object);
+    }
+
+    const total = object.bytes.byteLength;
+    // Like the real binding (verified under workerd): every read reports a
+    // resolved range with an explicit `suffix: undefined` key, a full read
+    // as { offset: 0, length: size }.
+    const fullBody = (): R2ObjectBody =>
+      ({ ...this.toR2ObjectBody(object), range: { offset: 0, length: total, suffix: undefined } }) as R2ObjectBody;
+
     const range = options?.range;
     if (!range) {
-      return this.toR2ObjectBody(object);
+      return fullBody();
     }
-    const total = object.bytes.byteLength;
+
     let offset: number;
     let end: number;
-    if (typeof range.suffix === "number") {
+    if (range instanceof Headers) {
+      const resolved = resolveRangeHeader(range.get("range"), total);
+      if (!resolved) {
+        return fullBody();
+      }
+      ({ offset, end } = resolved);
+    } else if (typeof range.suffix === "number") {
       offset = Math.max(0, total - range.suffix);
       end = total;
     } else {
@@ -253,7 +359,7 @@ export class MemoryR2Bucket {
     return {
       ...view,
       size: total,
-      range: { offset, length: end - offset },
+      range: { offset, length: end - offset, suffix: undefined },
     } as R2ObjectBody;
   }
 
@@ -407,8 +513,16 @@ function doError(status: number, code: string, message: string, details?: unknow
   );
 }
 
+/**
+ * Routes upload-session store calls to a real UploadSessionDurableObject per
+ * owner, backed by in-memory storage, so route tests exercise the lease,
+ * expiry and completion logic the Worker deploys instead of a
+ * re-implementation that can drift from it.
+ */
 export class MemoryUploadSessionNamespace {
-  private readonly sessionsByOwner = new Map<string, Map<string, UploadSessionRecord>>();
+  private readonly objectsByOwner = new Map<string, UploadSessionDurableObject>();
+
+  constructor(private readonly bucket: MemoryR2Bucket) {}
 
   idFromName(name: string): DurableObjectId {
     return {
@@ -419,225 +533,41 @@ export class MemoryUploadSessionNamespace {
 
   get(id: DurableObjectId): DurableObjectStub {
     const owner = ((id as unknown as MemoryDurableObjectId).name ?? String(id)).toLowerCase();
+    let durable = this.objectsByOwner.get(owner);
+    if (!durable) {
+      const { state } = createMemoryDurableObjectState();
+      durable = new UploadSessionDurableObject(state, {
+        FILES_BUCKET: this.bucket as unknown as R2Bucket,
+      } as unknown as Env);
+      this.objectsByOwner.set(owner, durable);
+    }
+    const target = durable;
     return {
       fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url =
-          typeof input === "string"
-            ? new URL(input)
-            : input instanceof URL
-              ? input
-              : new URL(input.url);
-        if ((init?.method || "GET").toUpperCase() !== "POST") {
-          return doError(405, "method_not_allowed", "Only POST is supported.");
-        }
-        const raw = typeof init?.body === "string" ? init.body : "";
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw || "{}");
-        } catch (error) {
-          return doError(400, "bad_request", "Request body must be valid JSON.", { cause: String(error) });
-        }
-
-        const ownerSessions = this.sessionsByOwner.get(owner) ?? new Map<string, UploadSessionRecord>();
-        this.sessionsByOwner.set(owner, ownerSessions);
-        const nowMs = Date.now();
-        for (const [sessionId, session] of ownerSessions.entries()) {
-          if (Date.parse(session.expiresAt) <= nowMs) {
-            ownerSessions.set(sessionId, {
-              ...session,
-              status: "expired",
-            });
-          }
-        }
-
-        const asObject =
-          parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : null;
-        if (!asObject) {
-          return doError(400, "validation_error", "Request payload must be a JSON object.");
-        }
-
-        if (url.pathname === "/create") {
-          const sessionRaw =
-            asObject.session && typeof asObject.session === "object" && !Array.isArray(asObject.session)
-              ? (asObject.session as UploadSessionRecord)
-              : null;
-          if (!sessionRaw || typeof sessionRaw.sessionId !== "string" || sessionRaw.sessionId.length === 0) {
-            return doError(400, "validation_error", "session.sessionId is required.");
-          }
-          const maxConcurrentUploads =
-            typeof asObject.maxConcurrentUploads === "number" && Number.isInteger(asObject.maxConcurrentUploads)
-              ? asObject.maxConcurrentUploads
-              : 0;
-          if (maxConcurrentUploads > 0) {
-            let activeCount = 0;
-            for (const value of ownerSessions.values()) {
-              if (value.status === "active" && Date.parse(value.expiresAt) > nowMs) {
-                activeCount += 1;
-              }
-            }
-            if (activeCount >= maxConcurrentUploads) {
-              return doError(429, "upload_concurrency_limit", "Maximum concurrent uploads reached.");
-            }
-          }
-          if (ownerSessions.has(sessionRaw.sessionId)) {
-            return doError(409, "upload_session_exists", "Upload session already exists.");
-          }
-          for (const value of ownerSessions.values()) {
-            if (
-              value.status === "active" &&
-              Date.parse(value.expiresAt) > nowMs &&
-              value.objectKey === sessionRaw.objectKey
-            ) {
-              return doError(409, "upload_object_key_in_use", "An active upload session already targets this key.");
-            }
-          }
-          if (sessionRaw.status !== "init" && sessionRaw.status !== "active") {
-            return doError(409, "upload_session_invalid_state", "Upload session must start in init or active state.");
-          }
-          const activeSession: UploadSessionRecord = {
-            ...sessionRaw,
-            status: "active",
-          };
-          ownerSessions.set(sessionRaw.sessionId, activeSession);
-          return new Response(JSON.stringify({ session: activeSession }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/get") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const requireActive = asObject.requireActive === true;
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.status === "expired") {
-            return doError(410, "upload_session_expired", "Upload session has expired.");
-          }
-          if (requireActive && session.status !== "active") {
-            return doError(409, "upload_session_not_active", "Upload session is not active.");
-          }
-          return new Response(JSON.stringify({ session }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/record-signed-part") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const uploadId = typeof asObject.uploadId === "string" ? asObject.uploadId : "";
-          const partNumber =
-            typeof asObject.partNumber === "number" && Number.isInteger(asObject.partNumber)
-              ? asObject.partNumber
-              : 0;
-          const contentLength =
-            typeof asObject.contentLength === "number" && Number.isInteger(asObject.contentLength)
-              ? asObject.contentLength
-              : 0;
-          const contentMd5 =
-            typeof asObject.contentMd5 === "string" && asObject.contentMd5.length > 0 ? asObject.contentMd5 : null;
-
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.uploadId !== uploadId) {
-            return doError(409, "upload_session_mismatch", "Upload session uploadId mismatch.");
-          }
-          if (session.status !== "active") {
-            return doError(409, "upload_session_not_active", "Upload session is not active.");
-          }
-          if (partNumber <= 0 || contentLength <= 0) {
-            return doError(400, "validation_error", "partNumber and contentLength must be positive integers.");
-          }
-
-          const updated: UploadSessionRecord = {
-            ...session,
-            signedParts: {
-              ...session.signedParts,
-              [String(partNumber)]: {
-                partNumber,
-                issuedAt: new Date().toISOString(),
-                contentLength,
-                contentMd5,
-              },
-            },
-          };
-          ownerSessions.set(sessionId, updated);
-          return new Response(JSON.stringify({ session: updated }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        if (url.pathname === "/complete" || url.pathname === "/abort") {
-          const sessionId = typeof asObject.sessionId === "string" ? asObject.sessionId : "";
-          const uploadId = typeof asObject.uploadId === "string" ? asObject.uploadId : "";
-          const session = ownerSessions.get(sessionId);
-          if (!session) {
-            return doError(404, "upload_session_not_found", "Upload session not found.");
-          }
-          if (session.uploadId !== uploadId) {
-            return doError(409, "upload_session_mismatch", "Upload session uploadId mismatch.");
-          }
-          if (session.status === "expired") {
-            return doError(410, "upload_session_expired", "Upload session has expired.");
-          }
-
-          if (url.pathname === "/complete") {
-            if (session.status !== "active") {
-              return doError(409, "upload_session_not_active", "Upload session is not active.");
-            }
-            const updated: UploadSessionRecord = {
-              ...session,
-              status: "completed",
-              completedAt: new Date().toISOString(),
-            };
-            ownerSessions.set(sessionId, updated);
-            return new Response(JSON.stringify({ session: updated }), {
-              status: 200,
-              headers: { "content-type": "application/json; charset=utf-8" },
-            });
-          }
-
-          if (session.status === "completed") {
-            return doError(409, "upload_session_already_completed", "Upload session is already completed.");
-          }
-          if (session.status === "aborted") {
-            return new Response(JSON.stringify({ session }), {
-              status: 200,
-              headers: { "content-type": "application/json; charset=utf-8" },
-            });
-          }
-          const updated: UploadSessionRecord = {
-            ...session,
-            status: "aborted",
-            abortedAt: new Date().toISOString(),
-          };
-          ownerSessions.set(sessionId, updated);
-          return new Response(JSON.stringify({ session: updated }), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-
-        return doError(404, "not_found", "Upload session route not found.");
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        return target.fetch(new Request(url, init));
       },
     } as unknown as DurableObjectStub;
   }
 }
 
 /**
- * In-memory stand-in for the ShareCounterDurableObject namespace. The
- * /consume handler performs its read-modify-write synchronously, mirroring
- * the serialization the real Durable Object input gate provides, so
- * concurrent app.fetch calls observe an atomic counter.
+ * In-memory stand-in for the ShareCounterDurableObject namespace, mirroring
+ * its /consume (start vs. resume-window continuation), read-only /status,
+ * and /revoke contract. Every handler runs synchronously between its map
+ * reads and writes, mirroring the serialization the real Durable Object
+ * input gate provides, so concurrent app.fetch calls observe an atomic
+ * counter.
  */
 export class MemoryShareCounterNamespace {
   private readonly counts = new Map<string, number>();
+
+  private readonly revokedTokens = new Set<string>();
+
+  private readonly lastStartAtMs = new Map<string, number>();
+
+  /** Every call that actually wrote state (never /status); see writesFor. */
+  private readonly writeLog: Array<{ tokenId: string; action: "consume" | "revoke" }> = [];
 
   idFromName(name: string): DurableObjectId {
     return {
@@ -649,6 +579,11 @@ export class MemoryShareCounterNamespace {
   /** Test hook: read the authoritative counter for a token. */
   countFor(tokenId: string): number {
     return this.counts.get(tokenId) ?? 0;
+  }
+
+  /** Test hook: the sequence of writing calls (consume/revoke) made for a token; /status never appears. */
+  writesFor(tokenId: string): Array<"consume" | "revoke"> {
+    return this.writeLog.filter((entry) => entry.tokenId === tokenId).map((entry) => entry.action);
   }
 
   get(id: DurableObjectId): DurableObjectStub {
@@ -664,9 +599,6 @@ export class MemoryShareCounterNamespace {
         if ((init?.method || "GET").toUpperCase() !== "POST") {
           return doError(405, "method_not_allowed", "Only POST is supported.");
         }
-        if (url.pathname !== "/consume") {
-          return doError(404, "not_found", "Share counter route not found.");
-        }
         const raw = typeof init?.body === "string" ? init.body : "";
         let parsed: unknown;
         try {
@@ -681,22 +613,81 @@ export class MemoryShareCounterNamespace {
         if (!payload) {
           return doError(400, "validation_error", "Request payload must be a JSON object.");
         }
+
+        if (url.pathname === "/revoke") {
+          this.revokedTokens.add(tokenKey);
+          this.writeLog.push({ tokenId: tokenKey, action: "revoke" });
+          return new Response(JSON.stringify({ revoked: true }), {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname !== "/consume" && url.pathname !== "/status") {
+          return doError(404, "not_found", "Share counter route not found.");
+        }
+
         const maxDownloads =
           typeof payload.maxDownloads === "number" && Number.isInteger(payload.maxDownloads)
             ? payload.maxDownloads
             : 0;
         const expiresAtMs = typeof payload.expiresAtMs === "number" ? payload.expiresAtMs : 0;
+        const downloadCount =
+          typeof payload.downloadCount === "number" && Number.isInteger(payload.downloadCount)
+            ? payload.downloadCount
+            : 0;
+        const isContinuation = payload.isContinuation === true;
+        const resumeWindowMs =
+          typeof payload.resumeWindowMs === "number" && Number.isInteger(payload.resumeWindowMs)
+            ? payload.resumeWindowMs
+            : 0;
+
+        if (url.pathname === "/status") {
+          const revoked = this.revokedTokens.has(tokenKey);
+          const count = this.counts.get(tokenKey) ?? downloadCount;
+          const expired = Date.now() >= expiresAtMs;
+          let capExhausted = maxDownloads > 0 && count >= maxDownloads;
+          if (capExhausted && isContinuation) {
+            const lastStart = this.lastStartAtMs.get(tokenKey);
+            if (typeof lastStart === "number" && Date.now() - lastStart <= resumeWindowMs) {
+              capExhausted = false;
+            }
+          }
+          return new Response(JSON.stringify({ revoked, exhausted: expired || capExhausted, count }), {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+        }
+
+        if (this.revokedTokens.has(tokenKey)) {
+          return doError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
+        }
         if (Date.now() >= expiresAtMs) {
           return doError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
         }
 
-        const current = this.counts.get(tokenKey) ?? 0;
-        if (maxDownloads > 0 && current >= maxDownloads) {
+        const currentCount = this.counts.get(tokenKey) ?? downloadCount;
+
+        if (isContinuation) {
+          const lastStart = this.lastStartAtMs.get(tokenKey);
+          if (typeof lastStart === "number" && Date.now() - lastStart <= resumeWindowMs) {
+            return new Response(JSON.stringify({ count: currentCount, consumed: false }), {
+              status: 200,
+              headers: { "content-type": "application/json; charset=utf-8" },
+            });
+          }
+          // No recorded start, or it aged out of the window: fall through and
+          // treat this range request exactly like a fresh download start.
+        }
+
+        if (maxDownloads > 0 && currentCount >= maxDownloads) {
           return doError(410, "share_expired", "Share token is expired, revoked, or exhausted.");
         }
-        const updated = current + 1;
+        const updated = currentCount + 1;
         this.counts.set(tokenKey, updated);
-        return new Response(JSON.stringify({ count: updated }), {
+        this.lastStartAtMs.set(tokenKey, Date.now());
+        this.writeLog.push({ tokenId: tokenKey, action: "consume" });
+        return new Response(JSON.stringify({ count: updated, consumed: true }), {
           status: 200,
           headers: { "content-type": "application/json; charset=utf-8" },
         });
@@ -809,6 +800,26 @@ const ACCESS_EDDSA_PUBLIC_JWK: JsonWebKey = {
   use: "sig",
   alg: "EdDSA",
 };
+
+/** The default JWKS key set served by installAccessJwksFetchMock, for tests building their own fetch mock. */
+export function accessJwksKeys(): JsonWebKey[] {
+  return [ACCESS_RS_PUBLIC_JWK, ACCESS_EDDSA_PUBLIC_JWK];
+}
+
+/**
+ * A JWK for the alternate RSA test keypair under a caller-chosen kid, paired
+ * with `createAccessJwt({ signWithAlternateKey: true, headerKid })`. Used to
+ * simulate an Access JWKS key rotation: a new kid appearing in the served
+ * key set, signed with a key the initial JWKS fetch did not include.
+ */
+export function alternateAccessPublicJwk(kid: string): JsonWebKey {
+  return {
+    ...(ACCESS_ALTERNATE_KEYPAIR.publicKey.export({ format: "jwk" }) as JsonWebKey),
+    kid,
+    use: "sig",
+    alg: "RS256",
+  };
+}
 
 function base64UrlEncode(value: string | Uint8Array): string {
   const raw = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
@@ -977,7 +988,7 @@ export async function createTestEnv(): Promise<{
   const bucket = new MemoryR2Bucket();
   const photosBucket = new MemoryR2Bucket();
   const sharesKv = new MemoryKV();
-  const uploadSessions = new MemoryUploadSessionNamespace();
+  const uploadSessions = new MemoryUploadSessionNamespace(bucket);
   const shareCounters = new MemoryShareCounterNamespace();
 
   const env: Env = {

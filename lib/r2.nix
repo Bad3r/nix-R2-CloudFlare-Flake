@@ -63,4 +63,44 @@ in
 
   validateBucketName =
     name: if isValidBucketName name then name else throw "Invalid R2 bucket name: ${name}";
+
+  # r2_source_env_file <path>: exports KEY=VALUE pairs as data, never through
+  # `source`/`eval`. Errors name file and line, not content (may be a secret).
+  sourceEnvFileShellFunction = ''
+    r2_source_env_file() {
+      local env_file="$1"
+      local line_no=0
+      local line key raw_value trimmed_value value
+
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        line_no=$((line_no + 1))
+        line="''${line%$'\r'}"
+
+        if [[ "$line" =~ ^[[:space:]]*(#|$) ]]; then
+          continue
+        fi
+
+        if [[ "$line" =~ ^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+          key="''${BASH_REMATCH[2]}"
+          raw_value="''${BASH_REMATCH[3]}"
+        else
+          echo "Error: $env_file: line $line_no: expected KEY=VALUE" >&2
+          exit 1
+        fi
+
+        trimmed_value="''${raw_value#"''${raw_value%%[!$' \t\r\n']*}"}"
+        trimmed_value="''${trimmed_value%"''${trimmed_value##*[!$' \t\r\n']}"}"
+
+        if [[ ''${#trimmed_value} -ge 2 && ''${trimmed_value:0:1} == '"' && ''${trimmed_value: -1} == '"' ]]; then
+          value="''${trimmed_value:1:-1}"
+        elif [[ ''${#trimmed_value} -ge 2 && ''${trimmed_value:0:1} == "'" && ''${trimmed_value: -1} == "'" ]]; then
+          value="''${trimmed_value:1:-1}"
+        else
+          value="$trimmed_value"
+        fi
+
+        export "$key=$value"
+      done < "$env_file"
+    }
+  '';
 }

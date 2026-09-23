@@ -111,7 +111,8 @@ Repair:
 ```bash
 # For managed NixOS, prefer updating the SOPS-managed source of truth and
 # rebuilding so `/run/secrets/r2/explorer.env` is updated persistently.
-export R2_EXPLORER_BASE_URL="https://files.unsigned.sh"
+# Replace files.example.com with your deployment's own domain.
+export R2_EXPLORER_BASE_URL="https://files.example.com"
 export R2_EXPLORER_ACCESS_CLIENT_ID="<service-token-client-id>"
 export R2_EXPLORER_ACCESS_CLIENT_SECRET="<service-token-client-secret>"
 
@@ -198,7 +199,7 @@ ls -la /data/r2/.trash/workspace
 set -a
 source /run/secrets/r2/credentials.env
 set +a
-rclone lsf :s3:nix-r2-cf-r2e-files-prod/.trash/workspace \
+rclone lsf :s3:files/.trash/workspace \
   --config=/dev/null \
   --s3-provider=Cloudflare \
   --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
@@ -343,16 +344,18 @@ Escalate:
 
 - `docs/sync.md` for template-specific expected paths.
 
-### B. First run of a large prefix never completes
+### B. First run of a large prefix takes a long time
 
 Failure signature:
 
-- Every run of `r2-bisync-<name>` is killed by a consumer-side
-  `TimeoutStartSec` (`start operation timed out. Terminating.`) or simply runs
-  for a very long time, with little CPU, no disk writes, and steady small-request
-  network traffic.
-- `/var/lib/r2-sync-<name>/bisync/` holds only `.lst-new` headers and a `.lck`
-  after the kill; the next timer run clears the orphaned lock and starts over.
+- The first run of `r2-bisync-<name>` runs for a very long time, with little
+  CPU, no disk writes, and steady small-request network traffic.
+- A run that outlasts `bisync.timeout` (default `24h`; see
+  `docs/reference/services-r2-sync.md`, "Service timeouts") is stopped
+  (`start operation timed out. Terminating.`), and
+  `/var/lib/r2-sync-<name>/bisync/` holds only `.lst-new` headers and a `.lck`
+  after the kill; the next timer run clears the orphaned lock and starts
+  over, so a first run that always needs longer never completes.
 
 Confirm:
 
@@ -368,12 +371,12 @@ Likely root causes:
 - rclone's default comparison is `size,modtime`. On S3-class backends the
   modtime lives in object metadata, so every listing costs one HEAD request per
   object, and bisync writes its listings only after the whole walk finishes.
-  Lengthening the unit bound hides the cost; every later run pays it again.
+  Every later run pays this cost again.
 - Build and dependency trees (`node_modules`, `.venv`, caches) dominate the
   object count and do not belong in the sync.
 
 Repair (see `docs/reference/services-r2-sync.md`, "Sizing a mount for a large
-prefix"):
+prefix", to make the run itself faster):
 
 ```nix
 services.r2-sync.mounts.<name>.bisync = {
@@ -385,8 +388,20 @@ services.r2-sync.mounts.<name>.bisync = {
 
 A `compare` or `excludes` change on a mount that already has listing state
 makes the next run perform one automatic `--resync`, which rclone requires
-after a filter change. Filter flags passed through `extraArgs` are not tracked;
-keep them in `excludes`.
+after a filter change. So does a change to a size, age, depth, hash, metadata
+or `--ignore-case` filter in `extraArgs`; pattern filters are rejected there,
+so keep them in `excludes`. Reordering `excludes` or those `extraArgs` filters
+triggers the resync too, since the module records them in the order given.
+
+When the tuned first run still needs more than `bisync.timeout`, raise the
+deadline for that mount, or set `""` for no limit until the first run has
+seeded its listings. Set the option rather than
+`systemd.services."r2-bisync-<name>".serviceConfig.TimeoutStartSec`, which
+conflicts with the value the module derives from it:
+
+```nix
+services.r2-sync.mounts.<name>.bisync.timeout = "72h";
+```
 
 Verify:
 
@@ -395,6 +410,48 @@ Verify:
 - `/var/lib/r2-sync-<name>/bisync/` contains `.lst` files and
   `.r2-bisync-flags` listing the configured `--compare` flag and exclude filter
   rules.
+
+### C. Bisync aborts with a max-delete safety message
+
+Failure signature:
+
+- `r2-bisync-<name>` exits non-zero and the log shows a line similar to
+  `Safety abort: too many deletes (>NN%, X of Y) ... Run with --force if
+desired.`
+
+Confirm:
+
+```bash
+journalctl -u r2-bisync-<name> -n 100 --no-pager | grep -i "safety abort\|too many deletes"
+```
+
+Likely root causes:
+
+- `services.r2-sync.mounts.<name>.bisync.maxDelete` (default `50`, rclone's
+  own default) is a PERCENTAGE of tracked files, 0 to 100, not a count. When a
+  run would delete more than that share of files on either side, for example
+  because a listing came back empty, bisync aborts the whole run before
+  changing anything on either side.
+
+Repair:
+
+- Inspect both `localPath` and the remote bucket/prefix to confirm whether
+  the mass delete is actually intended.
+- If it is intended, run the unit's own bisync command once by hand with
+  `--force` (same `--workdir`, `--backup-dir1`, `--backup-dir2`, and
+  local/remote paths as the generated unit).
+- If large deletes are routine for this mount, raise
+  `services.r2-sync.mounts.<name>.bisync.maxDelete` instead of forcing every
+  run.
+
+Verify:
+
+- The next scheduled run of `r2-bisync-<name>` completes without the
+  max-delete abort.
+
+Escalate:
+
+- `docs/reference/services-r2-sync.md` for the full `maxDelete` semantics.
 
 ## 4) `restic`
 
@@ -415,7 +472,7 @@ source /run/secrets/r2/credentials.env
 set +a
 export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
 
-restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" snapshots
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
 ```
 
 Likely root causes:
@@ -431,7 +488,7 @@ Repair:
 test -r /run/secrets/r2/restic-password
 
 # If repository is not initialized yet:
-restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" init
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" init
 
 # Retry scheduled unit
 sudo systemctl start r2-restic-backup
@@ -447,6 +504,49 @@ Escalate:
 - `docs/versioning.md` for expected repository defaults.
 - `docs/operators/incident-response.md` if failures began after secret/key changes.
 
+### B. `r2-restic-backup.service` shows failed with exit status `3`
+
+Failure signature:
+
+- `systemctl status r2-restic-backup` reports `failed` with exit status `3`,
+  but a new snapshot exists.
+
+Confirm:
+
+```bash
+systemctl status r2-restic-backup --no-pager
+journalctl -u r2-restic-backup -n 200 --no-pager
+
+set -a
+source /run/secrets/r2/credentials.env
+set +a
+export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
+
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
+```
+
+Likely root causes:
+
+- Exit `3` means restic could not read one or more source files during the
+  backup. The backup script still completes the run: a snapshot is created
+  from whatever it could read, and `unlock`/`forget --prune` still ran, so
+  retention is unaffected. Only the exit status flags the unit as failed.
+
+Repair:
+
+- Read the journal for the specific unreadable path(s) restic reported.
+- Fix the permission or existence problem, or add the path to
+  `services.r2-restic.exclude` if it should never be backed up.
+
+Verify:
+
+- The next scheduled `r2-restic-backup` run exits `0` and
+  `systemctl status r2-restic-backup` reports success.
+
+Escalate:
+
+- `docs/reference/services-r2-restic.md` for the full exit-code handling.
+
 ## 5) Multipart upload (Worker API)
 
 ### A. `upload/init|sign-part|complete` fails or returns invalid upload state
@@ -459,8 +559,8 @@ Confirm:
 
 ```bash
 # Validate API protection and worker reachability
-curl -I https://files.unsigned.sh/api/v2/session/info
-curl -I https://files.unsigned.sh/api/v2/upload/init
+curl -I https://files.example.com/api/v2/session/info
+curl -I https://files.example.com/api/v2/upload/init
 ```
 
 For authenticated test sessions, retry init/sign-part/complete sequence and
@@ -484,11 +584,11 @@ Repair:
 - Reapply upload bucket CORS (same payload used by CI deploy jobs):
 
 ```bash
-# Example: production
+# Example: replace with your own bucket and domain
 ./scripts/ci/sync-r2-upload-cors.sh \
-  nix-r2-cf-r2e-files-prod \
+  files \
   "${R2E_UPLOAD_ALLOWED_ORIGINS:-}" \
-  "https://files.unsigned.sh"
+  "https://files.example.com"
 ```
 
 - If stuck upload state persists, call `upload/abort` and retry from init.
@@ -515,9 +615,9 @@ Failure signature:
 Confirm:
 
 ```bash
-curl -I https://files.unsigned.sh/share/<token-id>
-curl -I https://files.unsigned.sh/share/<token-id>
-curl -I https://files.unsigned.sh/api/v2/list
+curl -I https://files.example.com/share/<token-id>
+curl -I https://files.example.com/share/<token-id>
+curl -I https://files.example.com/api/v2/list
 r2 share worker list files workspace/demo.txt
 ```
 
@@ -538,7 +638,7 @@ r2 share worker create files workspace/demo.txt 1h --max-downloads 1
 If the bucket mapping is suspect, verify Worker settings:
 
 ```bash
-curl -s https://files.unsigned.sh/api/v2/session/info | jq '.buckets'
+curl -s https://files.example.com/api/v2/session/info | jq '.buckets'
 ```
 
 If fresh token still fails, re-validate Access split for:
@@ -556,3 +656,127 @@ Escalate:
 - `docs/operators/access-policy-split.md`
 - `docs/operators/rollback-worker-share.md`
 - `docs/operators/incident-response.md`
+
+## 7) Evaluation and platform
+
+### A. `nix flake check`/`nixos-rebuild` fails with a `services.r2-sync` assertion
+
+Failure signature:
+
+- Evaluation aborts before any unit is generated, naming `services.r2-sync`
+  and a condition such as `localPath` equal to `mountPoint`, two mounts
+  overlapping, an invalid mount name, or a filter flag inside
+  `bisync.extraArgs`.
+
+Confirm:
+
+- Read the full assertion message; it names the exact mount and option.
+
+Likely root causes:
+
+- The configuration violates one of the module's fail-fast checks: wrong
+  `localPath`, two mounts targeting the same bucket/prefix or overlapping
+  paths, a mount name outside `[A-Za-z0-9_.-]+` (or exactly `.` or `..`), a
+  `--filter`-shaped flag passed through `extraArgs` instead of
+  `bisync.excludes`, `--delete-excluded` in `extraArgs`, a flag the module
+  already passes to `rclone bisync` repeated in `extraArgs` (`--max-delete`,
+  `--backup-dir1`, `--backup-dir2`, `--max-lock`, `--recover`, `--resilient`,
+  `--workdir`, `--check-access`, `--check-filename`, `--compare`), or a
+  `bisync.timeout` or `syncInterval` that is not a `systemd.time(7)` time span.
+
+Repair:
+
+- Match the printed message against the "Failure semantics" section of
+  `docs/reference/services-r2-sync.md`, which lists every current assertion,
+  and fix the named option accordingly; assertion wording can change between
+  revisions, so treat the reference page, not a remembered message string, as
+  the source of truth.
+
+Verify:
+
+- `nix flake check` (or the next `nixos-rebuild` evaluation) completes past
+  the module's assertion checks.
+
+Escalate:
+
+- `docs/reference/services-r2-sync.md`, "Failure semantics".
+
+### B. Intel macOS (`x86_64-darwin`) fails to evaluate or is missing from flake outputs
+
+Failure signature:
+
+- `nix build`, `nix develop`, `nix flake check`, or `nix flake show` for
+  `x86_64-darwin` fails, for example with `Nixpkgs ... has dropped support
+for x86_64-darwin`, or the system is simply absent from `nix flake show`'s
+  output.
+
+Likely root causes:
+
+- Intel macOS (`x86_64-darwin`) is no longer a supported system of this
+  flake.
+
+Repair:
+
+- Run the command on a supported system instead: `x86_64-linux`,
+  `aarch64-linux`, or `aarch64-darwin` (Apple Silicon).
+
+Verify:
+
+- The same command succeeds on one of the supported systems above.
+
+## 8) Object operations (web/API)
+
+### A. Upload or move returns `409 object_exists`
+
+Failure signature:
+
+- An upload or move through the web UI or `/api/v2/*` fails with HTTP `409`
+  and code `object_exists`.
+
+Likely root causes:
+
+- The target key already exists. Uploads and moves do not silently
+  overwrite; the caller must confirm the overwrite first.
+
+Repair:
+
+- In the web UI, confirm the overwrite; a copy of the previous object is kept
+  under `.trash/`, so it is not lost.
+- Via the API, follow the overwrite-confirmation flow for the endpoint in
+  use, or choose another destination key.
+
+Verify:
+
+- The upload or move completes and the previous object is visible under
+  `.trash/`.
+
+Escalate:
+
+- `docs/sharing.md` for the Worker API contract.
+
+### B. A key with a space returns `404 object_not_found`
+
+Failure signature:
+
+- A request built with a raw (non-percent-encoded) object key containing a
+  space returns `404 object_not_found`, even though the object exists.
+
+Likely root causes:
+
+- Object keys used in query strings must be percent-encoded with
+  `encodeURIComponent`. A literal `+` in a raw query string decodes as a
+  space, so a key built by hand instead of through `encodeURIComponent` never
+  matches the stored key.
+
+Repair:
+
+- Percent-encode the key with `encodeURIComponent` (or equivalent) before
+  building the request URL, so a space becomes `%20` rather than `+`.
+
+Verify:
+
+- The same request with a correctly percent-encoded key returns the object.
+
+Escalate:
+
+- `docs/sharing.md` for the Worker API contract.

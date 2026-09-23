@@ -22,10 +22,14 @@ CSP through IaC.
 
 ## Required Permissions
 
-The API token used for CSP sync must include:
+The API token used for CSP sync needs these permissions on the zone named by
+`R2E_CF_ZONE_NAME` (dashboard token builder: Zone > Transform Rules and
+Zone > Zone):
 
-- `Zone Rulesets Write`
-- `Zone Rulesets Read`
+- `Transform Rules Write`: read the `http_response_headers_transform`
+  entrypoint ruleset, create it when missing, and create or update the CSP rule.
+- `Zone Read`: resolve the zone ID from `R2E_CF_ZONE_NAME`. Not needed when
+  `R2E_CF_ZONE_ID` is set.
 
 ## GitHub Environment Variables
 
@@ -81,8 +85,12 @@ Expected outcomes:
 
 - Response CSP equals normalized policy content (comment and blank lines are ignored).
 - HTML includes analytics loader markers (`/cdn-cgi/zaraz/` or
-  `static.cloudflareinsights.com/beacon.min.js`), or Zaraz runtime endpoint is
-  available when markers are injected client-side.
+  `static.cloudflareinsights.com/beacon.min.js`), or the Zaraz init script
+  (`/cdn-cgi/zaraz/i.js`) answers with a 2xx status. Cloudflare injects both
+  markers only into a response to a request that accepts `text/html`, as a
+  browser page load does; the script sends a browser's full `Accept` value,
+  so a manual `curl` without such a header sees neither marker even while
+  analytics works.
 - HTML does not include the empty-content sha512 marker associated with broken
   SRI fetches.
 
@@ -96,12 +104,18 @@ Preview workflow behavior:
 ## Failure Signatures and Triage
 
 - `HTTP 403 request is not authorized` from sync script:
-  - Token lacks `Zone Rulesets` permissions.
+  - Token lacks `Transform Rules Write` on the zone.
 - CSP mismatch:
   - Rule drift in Cloudflare dashboard or wrong zone name/host expression.
 - Analytics verification failure:
   - Raw HTML marker and Zaraz runtime endpoint check both failed (injection
-    disabled or blocked by non-CSP controls).
+    disabled or blocked by non-CSP controls). Reproduce with
+    `curl -H 'Accept: text/html'`; `/cdn-cgi/zaraz/s.js` answers a bare GET
+    with `400 Invalid Zaraz parameters` even while Zaraz works, so probe
+    `/cdn-cgi/zaraz/i.js` instead.
+  - The `i.js` fallback proves only Zaraz. A host that runs Web Analytics
+    without Zaraz answers it with 404, so there the check passes only through
+    the beacon marker in the HTML.
 - Empty-content sha512 marker detected:
   - Broken third-party fetch path (often CSP/CORS/network/intermediary issue).
 

@@ -23,6 +23,19 @@ let
       part: builtins.match "[[:space:]]*(size|modtime|checksum)[[:space:]]*" (lib.toLower part) != null
     ) (lib.splitString "," value);
 
+  # systemd.time(7) spans as systemd's parse_time reads them: "infinity", or
+  # <number>[<unit>] terms, a bare number counting seconds. systemd logs and
+  # ignores a unit setting it cannot parse, so a typo would drop the deadline
+  # or the timer interval without failing. A unit-less term must be followed
+  # by whitespace or the end: builtins.match explores every parse, and a digit
+  # run that could split into terms anywhere takes exponential time to reject.
+  timespanNum = "([0-9]+(\\.[0-9]+)?|\\.[0-9]+)";
+  timespanUnit = "(usec|us|msec|ms|seconds|second|sec|s|minutes|minute|min|m|hours|hour|hr|h|days|day|d|weeks|week|w|months|month|M|years|year|y)";
+  isValidTimespan =
+    value:
+    builtins.match "[[:space:]]*(infinity|(${timespanNum}[[:space:]]*${timespanUnit}[[:space:]]*|${timespanNum}[[:space:]]+)*${timespanNum}([[:space:]]*${timespanUnit})?)[[:space:]]*" value
+    != null;
+
   # Endpoint resolved at service runtime from the account ID env/file.
   runtimeEndpoint = r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}";
 
@@ -38,6 +51,126 @@ let
       inherit prefix;
       path = if prefix == "" then mount.bucket else "${mount.bucket}/${prefix}";
     };
+
+  # The mountPoint fallback only exists so the localPath assertion below can
+  # report it: a passing config always has a separate bisync directory.
+  resolveLocalPath =
+    mount: if mount.localPath != null then toString mount.localPath else toString mount.mountPoint;
+
+  localRoots = mount: [
+    {
+      role = "mountPoint";
+      path = toString mount.mountPoint;
+    }
+    {
+      role = "localPath";
+      path = resolveLocalPath mount;
+    }
+  ];
+
+  # "/data/r2" overlaps "/data/r2/sub" but not "/data/r2-other".
+  pathsOverlap = p: q: p == q || lib.hasPrefix "${p}/" q || lib.hasPrefix "${q}/" p;
+
+  # Each unordered pair of mounts once, for the cross-mount assertions.
+  mountList = lib.mapAttrsToList (name: mount: { inherit name mount; }) cfg.mounts;
+  mountPairs = lib.concatMap (
+    a: map (b: { inherit a b; }) (lib.filter (b: a.name < b.name) mountList)
+  ) mountList;
+
+  # Rejected in bisync.extraArgs, since neither can be tracked for the automatic
+  # --resync (trackedFlags below): pattern rules belong in bisync.excludes, and
+  # a rules file can change without the config changing.
+  bisyncFilterFlagNames = [
+    "--filter"
+    "--filter-from"
+    "--exclude"
+    "--exclude-from"
+    "--exclude-if-present"
+    "--include"
+    "--include-from"
+    "--filters-file"
+    "--files-from"
+    "--files-from-raw"
+    # New in rclone 1.75.1; older releases reject it as an unknown flag anyway.
+    "--files-from0"
+    "--metadata-filter-from"
+    "--metadata-exclude-from"
+    "--metadata-include-from"
+  ];
+  # rclone's other listing filters (the "Filter" flag group) have no bisync
+  # option of their own, so extraArgs may carry them and they are tracked there.
+  bisyncTrackedFilterFlagNames = [
+    "--min-size"
+    "--max-size"
+    "--min-age"
+    "--max-age"
+    "--max-depth"
+    "--hash-filter"
+    "--metadata-filter"
+    "--metadata-exclude"
+    "--metadata-include"
+  ];
+  # Tracked like the flags above but valueless: in that list, trackedFilterArgs
+  # would record the next argv element as the switch's value.
+  bisyncTrackedFilterSwitchNames = [ "--ignore-case" ];
+  # The tracked filter flags in args with their values: "--flag=value" and
+  # switches as written, "--flag value" as both elements. Kept in argv order,
+  # not sorted: rclone takes the last value of a repeated flag and the first
+  # matching --metadata-filter rule, so a reorder can change the listing.
+  trackedFilterArgs =
+    args:
+    lib.concatLists (
+      lib.imap0 (
+        i: arg:
+        let
+          flag = lib.head (lib.splitString "=" arg);
+          takesNext = lib.elem flag bisyncTrackedFilterFlagNames && !lib.hasInfix "=" arg;
+        in
+        if lib.elem flag (bisyncTrackedFilterFlagNames ++ bisyncTrackedFilterSwitchNames) then
+          [ arg ] ++ lib.optional (takesNext && i + 1 < lib.length args) (lib.elemAt args (i + 1))
+        else
+          [ ]
+      ) args
+    );
+  # rclone's flag parser (pflag) also reads -f with its value attached (-f=X,
+  # -fX) or at the end of a shorthand cluster (-vf X, -1f X); every other
+  # rclone shorthand is a switch. pflag walks a cluster left to right and
+  # fails at the first unregistered character, and rclone registers only
+  # letters and -1, so an f after anything else never sets -f: the space in a
+  # "- key=value" --metadata-filter rule stops pflag first.
+  isShortFilterArg =
+    arg: builtins.match "-[[:alnum:]]*f.*" (lib.head (lib.splitString "=" arg)) != null;
+  isBisyncFilterArg =
+    arg: isShortFilterArg arg || lib.elem (lib.head (lib.splitString "=" arg)) bisyncFilterFlagNames;
+  # bisync copies each run's changes through rclone's sync engine, which under
+  # --delete-excluded lists the receiving side unfiltered and deletes every
+  # file the copy does not carry, excluded or not; bisync's --max-delete check
+  # never counts those (rclone cmd/bisync/queue.go fastCopy, verified on 1.75.1).
+  isDeleteExcludedArg = arg: lib.head (lib.splitString "=" arg) == "--delete-excluded";
+  # Already passed by run_bisync (lines 358-378) before ${extraArgs} is
+  # interpolated; pflag takes the last occurrence of a repeated scalar flag,
+  # so repeating one here silently wins over the module's own value instead
+  # of erroring. --recover/--resilient are bools, so only the attached form
+  # (--recover=false) reaches them; lib.head (lib.splitString "=" arg) below
+  # normalizes that like any other flag. Two categories are deliberately not
+  # listed: --resync/--resync-mode ride run_bisync's "$@", after extraArgs,
+  # so the module's occurrence wins there regardless; and the connection
+  # flags (--config, --s3-provider, --s3-endpoint, --s3-env-auth,
+  # --s3-no-check-bucket) are shared with mkMountService/copyto too, a
+  # broader concern than this per-bisync-invocation list.
+  bisyncManagedFlagNames = [
+    "--max-delete"
+    "--backup-dir1"
+    "--backup-dir2"
+    "--max-lock"
+    "--recover"
+    "--resilient"
+    "--workdir"
+    "--check-access"
+    "--check-filename"
+    "--compare"
+  ];
+  isBisyncManagedArg = arg: lib.elem (lib.head (lib.splitString "=" arg)) bisyncManagedFlagNames;
 
   mkMountService =
     name: mount:
@@ -59,6 +192,7 @@ let
           --s3-provider=Cloudflare \
           --s3-endpoint="$endpoint" \
           --s3-env-auth \
+          --s3-no-check-bucket \
           --vfs-cache-mode=${mount.vfsCache.mode} \
           --vfs-cache-max-size=${lib.escapeShellArg mount.vfsCache.maxSize} \
           --vfs-cache-max-age=${lib.escapeShellArg mount.vfsCache.maxAge} \
@@ -121,7 +255,7 @@ let
   mkBisyncService =
     name: mount:
     let
-      localPath = if mount.localPath != null then toString mount.localPath else toString mount.mountPoint;
+      localPath = resolveLocalPath mount;
       localPathArg = lib.escapeShellArg localPath;
       localBaseDir = builtins.dirOf localPath;
       localTrashPath = "${localBaseDir}/.trash/${name}";
@@ -175,10 +309,12 @@ let
       # written next to the file, impossible from the store). The inline flags
       # are recorded in the workdir after each successful run so a change
       # forces the resync instead of a listing that silently drops files or
-      # lacks the compared attribute. extraArgs is verbatim and untracked.
+      # lacks the compared attribute. Of extraArgs, only the tracked filter
+      # flags (trackedFilterArgs) are recorded.
       trackedFlags =
         lib.optional (mount.bisync.compare != null) "--compare=${mount.bisync.compare}"
-        ++ map (rule: "--filter=${rule}") excludeRules;
+        ++ map (rule: "--filter=${rule}") excludeRules
+        ++ trackedFilterArgs mount.bisync.extraArgs;
       trackedFlagsArg = lib.escapeShellArg (lib.concatStringsSep "\n" trackedFlags);
       flagsFileArg = lib.escapeShellArg "${workdirPath}/.r2-bisync-flags";
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
@@ -195,6 +331,7 @@ let
           --s3-provider=Cloudflare \
           --s3-endpoint="$endpoint" \
           --s3-env-auth \
+          --s3-no-check-bucket \
           ${localCheckArg} \
           ${remoteCheckArg}
 
@@ -207,7 +344,7 @@ let
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
-        # Compare/exclude flags recorded by the last successful run. A missing
+        # Compare and filter flags recorded by the last successful run. A missing
         # file reads as the empty flag set, which is what every run before the
         # file existed used, so an unchanged default config never resyncs.
         current_flags=${trackedFlagsArg}
@@ -216,7 +353,7 @@ let
           stored_flags="$(< ${flagsFileArg})"
         fi
         if [[ "$has_bisync_state" == true ]] && [[ "$stored_flags" != "$current_flags" ]]; then
-          echo "Bisync compare/exclude flags for ${name} changed since the last successful run; running --resync as rclone requires after a filter change." >&2
+          echo "Bisync compare/filter flags for ${name} changed since the last successful run; running --resync as rclone requires after a filter change." >&2
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
@@ -230,6 +367,7 @@ let
             --s3-provider=Cloudflare \
             --s3-endpoint="$endpoint" \
             --s3-env-auth \
+            --s3-no-check-bucket \
             ${localPathArg} ${remoteArg} \
             --backup-dir1=${localTrashArg} \
             --backup-dir2=${remoteTrashArg} \
@@ -264,6 +402,8 @@ let
         # single-writer, so clearing a lock whose holder PID is dead and retrying
         # once is safe. Gated on --max-lock: with maxLock = "" the user opts into
         # rclone's native never-expire locks, which must be cleared by hand.
+        # The match is rclone log text (cmd/bisync/lockfile.go), not an API:
+        # re-check it on every pkgs.rclone bump.
         if [[ -n "${maxLockArg}" ]] \
           && [[ "$bisync_output" == *"prior lock file found"* ]]; then
           cleared_lock=false
@@ -297,6 +437,8 @@ let
 
         # When a mount path or remote basename changes, old listing files may still
         # exist in workdir and bisync asks for manual --resync recovery.
+        # The matches are rclone log text (cmd/bisync/operations.go), not an
+        # API: re-check them on every pkgs.rclone bump.
         if [[ "$has_bisync_state" == true ]] \
           && [[ "''${#resync_flags[@]}" -eq 0 ]] \
           && { [[ "$bisync_output" == *"cannot find prior Path1 or Path2 listings"* ]] || [[ "$bisync_output" == *"Must run --resync to recover"* ]]; }; then
@@ -324,6 +466,12 @@ let
         '';
         serviceConfig = {
           Type = "oneshot";
+          # A oneshot unit has no start timeout unless one is set, so a hung
+          # run would otherwise block every later timer run without failing.
+          TimeoutStartSec = if mount.bisync.timeout == "" then "infinity" else mount.bisync.timeout;
+          # rclone bisync takes up to 90s to cancel and save its listings,
+          # also when TimeoutStartSec expires and systemd stops the run.
+          TimeoutStopSec = "2min";
           EnvironmentFile = cfg.credentialsFile;
           ExecStart = bisyncScript;
           StateDirectory = "r2-sync-${name}";
@@ -348,6 +496,8 @@ let
         # system doesn't trigger an immediate run during `nixos-rebuild switch`.
         OnActiveSec = "2m";
         OnUnitActiveSec = mount.syncInterval;
+        # All mount timers activate together; spread their R2 API bursts.
+        RandomizedDelaySec = "30s";
         Unit = "r2-bisync-${name}.service";
         # No Persistent=true here: it only applies to OnCalendar= timers and is
         # a no-op for monotonic OnActiveSec/OnUnitActiveSec schedules.
@@ -411,14 +561,19 @@ in
             localPath = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
-              description = "Local path for bisync when different from mountPoint";
+              description = "Local path for bisync. Must be set to a directory different from mountPoint (bisync must not run against the live FUSE mount); enforced by assertion.";
               example = "/var/lib/r2-sync/documents";
             };
 
             syncInterval = lib.mkOption {
               type = lib.types.str;
               default = "5m";
-              description = "Bisync interval in systemd time format";
+              description = ''
+                Interval between bisync runs, a systemd.time(7) time span
+                passed to the timer as OnUnitActiveSec. A value systemd cannot
+                parse fails evaluation: systemd would ignore it, and the timer
+                would fire once and never again.
+              '';
             };
 
             vfsCache = {
@@ -448,9 +603,21 @@ in
 
             bisync = {
               maxDelete = lib.mkOption {
-                type = lib.types.int;
-                default = 100000;
-                description = "Maximum number of deletes permitted per bisync run (rclone --max-delete)";
+                type = lib.types.ints.between 0 100;
+                default = 50;
+                description = ''
+                  Percentage (0-100) of files allowed to be deleted in a
+                  single bisync run, passed to rclone bisync --max-delete.
+                  This is not a count: if a run would delete more than this
+                  percentage of the tracked files (for example because a
+                  listing came back empty), bisync aborts without touching
+                  anything. rclone itself silently clamps any value above 100
+                  to 100, which disables the check entirely, so this option's
+                  type rejects out-of-range values at eval time instead of
+                  forwarding them. Recovery from a tripped check is a
+                  deliberate manual `rclone bisync ... --force` run after
+                  inspecting why so many deletes were expected.
+                '';
               };
 
               checkFilename = lib.mkOption {
@@ -484,6 +651,25 @@ in
                   rclone's default where locks never expire and an orphaned lock
                   wedges the service until cleared by hand. rclone enforces a 2m
                   minimum when the flag is set.
+                '';
+              };
+
+              timeout = lib.mkOption {
+                type = lib.types.str;
+                default = "24h";
+                example = "72h";
+                description = ''
+                  Deadline for one bisync run, passed as TimeoutStartSec to the
+                  oneshot r2-bisync-<name> service, which systemd otherwise
+                  starts with no start timeout at all. A run still going at the
+                  deadline (for example one hung on a stuck network mount,
+                  which --max-lock and --resilient do not bound) is stopped and
+                  the unit fails, so the hang is visible and the timer can
+                  start the next run. The empty string passes "infinity",
+                  leaving a run unbounded. A first --resync of a very large
+                  prefix can need more than the default. Any other value must
+                  be a systemd.time(7) time span, or evaluation fails: systemd
+                  would ignore it and leave the run unbounded.
                 '';
               };
 
@@ -533,8 +719,45 @@ in
                 description = ''
                   Extra arguments appended verbatim to every rclone bisync
                   invocation after the module-managed flags, one argv element
-                  per entry. Filter flags placed here are not tracked for the
-                  automatic --resync; use excludes for those.
+                  per entry. Filter-shaped flags (--filter, --exclude,
+                  --include, --filters-file, --files-from, and related forms,
+                  or -f in any short form: -f X, -f=X, -fX, or a shorthand
+                  cluster such as -vf) and the --metadata-*-from rules files
+                  are rejected here by assertion; use excludes instead so the
+                  change is tracked for the automatic --resync. Because -f may
+                  carry its value attached, a separate option value made of a
+                  single "-" and then only letters or digits up to an "f"
+                  (such as --suffix's -offsite) is read as -f too: pass such a
+                  value as --flag=value. A --metadata-filter rule such as
+                  "- key=value" is not affected. The other listing filters
+                  (--min-size, --max-size, --min-age, --max-age, --max-depth,
+                  --hash-filter, --metadata-filter, --metadata-exclude,
+                  --metadata-include, --ignore-case) are accepted and recorded
+                  with their values in order, so changing them or their order
+                  triggers the same automatic --resync as an excludes change:
+                  rclone takes the last value of a repeated flag and the first
+                  matching --metadata-filter rule. A separate option value
+                  that exactly matches one of these flag names (such as
+                  --suffix's --max-age) is read as that flag too, along with
+                  the next argv element as its value: at most one spurious
+                  --resync, since the value rclone itself receives is
+                  unaffected. --delete-excluded
+                  is rejected as well: bisync applies it to every copy a run
+                  makes, which then deletes each file on the receiving side
+                  that the copy does not carry, excluded or not, beyond the
+                  reach of maxDelete. Flags the module already passes to
+                  rclone bisync (--max-delete, --backup-dir1, --backup-dir2,
+                  --max-lock, --recover, --resilient, --workdir,
+                  --check-access, --check-filename, --compare) are rejected
+                  too: rclone takes the last occurrence of a repeated flag,
+                  so repeating one here would silently override the module's
+                  own value instead of erroring; set bisync.maxDelete,
+                  bisync.maxLock, bisync.checkFilename or bisync.compare,
+                  the four of these with a dedicated option. The rest are
+                  fixed by the module and have none: the backup directories
+                  follow localPath/remotePrefix, the workdir is
+                  /var/lib/r2-sync-<name>/bisync, and --check-access,
+                  --recover and --resilient are always on.
                 '';
               };
             };
@@ -590,7 +813,84 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = mount.bisync.compare == null || isValidCompare mount.bisync.compare;
       message = "services.r2-sync.mounts.${name}.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '${toString mount.bisync.compare}'";
-    }) cfg.mounts;
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = mount.bisync.timeout == "" || isValidTimespan mount.bisync.timeout;
+      message = "services.r2-sync.mounts.${name}.bisync.timeout must be '' (no limit) or a systemd.time(7) time span such as '24h' or '1h 30min' (systemd ignores a TimeoutStartSec it cannot parse, which leaves the run unbounded): got '${mount.bisync.timeout}'";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = isValidTimespan mount.syncInterval;
+      message = "services.r2-sync.mounts.${name}.syncInterval must be a systemd.time(7) time span such as '5m' or '1h 30min' (systemd ignores an OnUnitActiveSec it cannot parse, which leaves the timer firing once and never again): got '${mount.syncInterval}'";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: _mount: {
+      # The name is also the last path segment of the local trash directory
+      # (localTrashPath), where "." or ".." would resolve to an ancestor.
+      assertion = builtins.match "[A-Za-z0-9_.-]+" name != null && name != "." && name != "..";
+      message = "services.r2-sync.mounts.${name} is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name, and must not be '.' or '..', which would put the local bisync trash directory .trash/<name> outside itself): got '${name}'";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !(pathsOverlap (resolveLocalPath mount) (toString mount.mountPoint));
+      message = "services.r2-sync.mounts.${name}.localPath must not equal or be nested with mountPoint (bisync must not run against or through the live FUSE mount): set services.r2-sync.mounts.${name}.localPath to a separate local directory";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !lib.any isBisyncFilterArg mount.bisync.extraArgs;
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value such as -offsite, a single '-' and then only letters or digits up to an 'f', reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.${name}.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !lib.any isDeleteExcludedArg mount.bisync.extraArgs;
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain --delete-excluded: rclone bisync applies it to every copy a run makes, which then deletes each file on the receiving side that the copy does not carry, excluded or not, and bisync.maxDelete does not count those deletions";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !lib.any isBisyncManagedArg mount.bisync.extraArgs;
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, move the check file --check-access looks for away from the one the module already copied under checkFilename, or turn off the crash and transient-error recovery that bisync.timeout now relies on to leave a usable listing behind; set bisync.maxDelete, bisync.maxLock, bisync.checkFilename or bisync.compare, the four of these with a dedicated option; the rest are fixed by the module and have none: the backup directories follow localPath/remotePrefix, the workdir is /var/lib/r2-sync-${name}/bisync, and --check-access, --recover and --resilient are always on";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (
+      name: _mount:
+      let
+        mountUser = config.systemd.services."r2-mount-${name}".serviceConfig.User or "root";
+      in
+      {
+        assertion = mountUser == "root" || mountUser == "" || config.programs.fuse.userAllowOther;
+        message = "services.r2-sync.mounts.${name} runs r2-mount-${name}.service as non-root user '${mountUser}' without programs.fuse.userAllowOther = true (rclone mount passes --allow-other unconditionally, which requires user_allow_other for non-root mounts): set programs.fuse.userAllowOther = true";
+      }
+    ) cfg.mounts
+    ++ map (
+      pair:
+      let
+        layoutA = mkRemoteLayout pair.a.mount;
+        layoutB = mkRemoteLayout pair.b.mount;
+      in
+      {
+        assertion = !(pair.a.mount.bucket == pair.b.mount.bucket && layoutA.prefix == layoutB.prefix);
+        message = "services.r2-sync.mounts.${pair.a.name} and services.r2-sync.mounts.${pair.b.name} both target bucket '${pair.a.mount.bucket}' prefix '${layoutA.prefix}': two mounts must not target the same remote tree";
+      }
+    ) mountPairs
+    ++ map (
+      pair:
+      let
+        layoutA = mkRemoteLayout pair.a.mount;
+        layoutB = mkRemoteLayout pair.b.mount;
+      in
+      {
+        assertion =
+          !(
+            pair.a.mount.bucket == pair.b.mount.bucket
+            && layoutA.prefix != layoutB.prefix
+            && pathsOverlap layoutA.prefix layoutB.prefix
+          );
+        message = "services.r2-sync.mounts.${pair.a.name} (bucket '${pair.a.mount.bucket}' prefix '${layoutA.prefix}') and services.r2-sync.mounts.${pair.b.name} (prefix '${layoutB.prefix}') have nested remote prefixes in the same bucket: concurrent bisync runs must not overlap trees";
+      }
+    ) mountPairs
+    ++ lib.concatMap (
+      pair:
+      lib.concatMap (
+        rootA:
+        map (rootB: {
+          assertion = !(pathsOverlap rootA.path rootB.path);
+          message = "services.r2-sync.mounts.${pair.a.name}.${rootA.role} ('${rootA.path}') and services.r2-sync.mounts.${pair.b.name}.${rootB.role} ('${rootB.path}') overlap: each mount must use independent mountPoint and localPath directories";
+        }) (localRoots pair.b.mount)
+      ) (localRoots pair.a.mount)
+    ) mountPairs;
 
     environment.systemPackages = [
       pkgs.rclone

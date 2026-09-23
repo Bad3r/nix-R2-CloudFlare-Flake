@@ -1,5 +1,5 @@
 {
-  description = "Standalone Cloudflare R2 flake (Phase 1 scaffold)";
+  description = "Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing";
   nixConfig = {
     extra-substituters = [
       "https://nix-r2-cloudflare-flake.cachix.org"
@@ -43,7 +43,6 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
 
@@ -159,23 +158,21 @@
               name = "lefthook-treefmt";
               runtimeInputs = [
                 pkgs.coreutils
-                pkgs.git
                 pkgs.treefmt
               ];
               text = ''
                 set -euo pipefail
 
-                mapfile -t changed < <(
-                  {
-                    git diff --name-only HEAD --diff-filter=ACM 2>/dev/null || true
-                    git ls-files --others --exclude-standard 2>/dev/null || true
-                  } | sort -u
-                )
-                if [ "''${#changed[@]}" -eq 0 ]; then
+                # lefthook resolves {files} (staged/changed files by default, or
+                # every git-tracked file under --all-files) and passes it here;
+                # with no args (a direct, non-lefthook invocation) check the
+                # whole tree, matching lefthook-statix's no-args behavior.
+                if [ "$#" -eq 0 ]; then
+                  treefmt --fail-on-change
                   exit 0
                 fi
 
-                treefmt --fail-on-change "''${changed[@]}"
+                treefmt --fail-on-change "$@"
               '';
             };
             lefthook-statix = pkgs.writeShellApplication {

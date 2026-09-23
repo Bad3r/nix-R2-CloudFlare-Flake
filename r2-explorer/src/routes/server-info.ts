@@ -37,7 +37,7 @@ export function registerServerInfoRoutes(app: Hono<AppContext>): void {
           prefixAllowlist: uploadPolicy.prefixAllowlist,
         },
       },
-      readonly: envBool(c.env.R2E_READONLY, false),
+      readonly: envBool("R2E_READONLY", c.env.R2E_READONLY, false),
       bucket: {
         alias: "files" as const,
         binding: "FILES_BUCKET" as const,
