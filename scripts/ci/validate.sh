@@ -791,6 +791,16 @@ let
       expect = "bisync.extraArgs must not contain filter flags";
     }
     {
+      name = "-f after bisync's -1 shorthand in extraArgs";
+      mounts.documents = mount {
+        bisync.extraArgs = [
+          "-1f"
+          "- *.tmp"
+        ];
+      };
+      expect = "bisync.extraArgs must not contain filter flags";
+    }
+    {
       name = "metadata rules file in extraArgs";
       mounts.documents = mount { bisync.extraArgs = [ "--metadata-include-from=/etc/r2/metadata-rules" ]; };
       expect = "bisync.extraArgs must not contain filter flags";
@@ -848,10 +858,11 @@ let
 
   # The extraArgs hold an f in a long flag, a switch cluster without f, and an
   # f after "=", none of which is the -f filter shorthand, then two listing
-  # filters that must be tracked with their values, and an untracked flag the
-  # --ignore-case switch must not record as its value. Mount b also lifts the
-  # run deadline and syncs on a two-term time span, while mount a keeps the
-  # defaults.
+  # filters that must be tracked with their values, an untracked flag the
+  # --ignore-case switch must not record as its value, and a --metadata-filter
+  # rule whose f follows a space, where pflag stops before reading -f. Mount b
+  # also lifts the run deadline and syncs on a two-term time span, while mount
+  # a keeps the defaults.
   valid = evalMounts { } (pair {
     remotePrefix = "photos";
     syncInterval = "1h 30min";
@@ -865,6 +876,8 @@ let
         "--ignore-case"
         "--checkers"
         "4"
+        "--metadata-filter"
+        "- fowner=1000"
       ];
       timeout = "";
     };
@@ -879,7 +892,7 @@ let
     ++ lib.optional (!(lib.hasInfix "--s3-no-check-bucket" bisyncScript)) "bisync script lacks --s3-no-check-bucket"
     ++ lib.optional (!(lib.hasInfix "--s3-no-check-bucket" mountScript)) "mount script lacks --s3-no-check-bucket"
     ++ lib.optional (
-      !(lib.hasInfix "\ncurrent_flags='--max-age\n30d\n--ignore-case'\n" trackingScript)
+      !(lib.hasInfix "\ncurrent_flags='--max-age\n30d\n--ignore-case\n--metadata-filter\n- fowner=1000'\n" trackingScript)
     ) "bisync script does not track exactly the listing filters in extraArgs"
     ++ lib.optional (bisyncService.TimeoutStartSec or null != "24h") "bisync service lacks the default TimeoutStartSec=24h"
     ++ lib.optional (

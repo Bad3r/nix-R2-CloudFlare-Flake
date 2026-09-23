@@ -113,9 +113,11 @@ and this project follows Conventional Commits.
   forms, or `-f` in any short form: `-f X`, `-f=X`, `-fX`, or a shorthand
   cluster such as `-vf`) or a `--metadata-*-from` rules file; use
   `bisync.excludes`, or an inline `--metadata-*` flag, instead so the change
-  is tracked for the automatic `--resync`. A separate option value that
-  starts with a single `-` and contains `f` reads as `-f`; pass it as
-  `--flag=value`
+  is tracked for the automatic `--resync`. A separate option value made of
+  a single `-` and then only letters or digits up to an `f` (such as
+  `--suffix`'s `-offsite`) reads as `-f`; pass it as `--flag=value`. A
+  `--metadata-filter` rule such as `- key=value` is not affected: rclone
+  stops at the space before it could read an `f`
 - `bisync.extraArgs` may not contain `--delete-excluded`: rclone bisync
   applies it to every copy a run makes, which then deletes each file on the
   receiving side that the copy does not carry, excluded or not, and

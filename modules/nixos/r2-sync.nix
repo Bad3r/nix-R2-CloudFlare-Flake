@@ -133,14 +133,13 @@ let
       ) args
     );
   # rclone's flag parser (pflag) also reads -f with its value attached (-f=X,
-  # -fX) or at the end of a shorthand cluster (-vf X); every other rclone
-  # shorthand is a switch, so any f before "=" in a single-dash token sets it.
+  # -fX) or at the end of a shorthand cluster (-vf X, -1f X); every other
+  # rclone shorthand is a switch. pflag walks a cluster left to right and
+  # fails at the first unregistered character, and rclone registers only
+  # letters and -1, so an f after anything else never sets -f: the space in a
+  # "- key=value" --metadata-filter rule stops pflag first.
   isShortFilterArg =
-    arg:
-    let
-      shorthands = lib.head (lib.splitString "=" arg);
-    in
-    lib.hasPrefix "-" shorthands && !lib.hasPrefix "--" shorthands && lib.hasInfix "f" shorthands;
+    arg: builtins.match "-[[:alnum:]]*f.*" (lib.head (lib.splitString "=" arg)) != null;
   isBisyncFilterArg =
     arg: isShortFilterArg arg || lib.elem (lib.head (lib.splitString "=" arg)) bisyncFilterFlagNames;
   # bisync copies each run's changes through rclone's sync engine, which under
@@ -702,9 +701,11 @@ in
                   cluster such as -vf) and the --metadata-*-from rules files
                   are rejected here by assertion; use excludes instead so the
                   change is tracked for the automatic --resync. Because -f may
-                  carry its value attached, a separate option value that
-                  starts with a single "-" and contains "f" is read as -f too:
-                  pass such a value as --flag=value. The other listing filters
+                  carry its value attached, a separate option value made of a
+                  single "-" and then only letters or digits up to an "f"
+                  (such as --suffix's -offsite) is read as -f too: pass such a
+                  value as --flag=value. A --metadata-filter rule such as
+                  "- key=value" is not affected. The other listing filters
                   (--min-size, --max-size, --min-age, --max-age, --max-depth,
                   --hash-filter, --metadata-filter, --metadata-exclude,
                   --metadata-include, --ignore-case) are accepted and recorded
@@ -792,7 +793,7 @@ in
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncFilterArg mount.bisync.extraArgs;
-      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.${name}.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync";
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value such as -offsite, a single '-' and then only letters or digits up to an 'f', reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.${name}.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isDeleteExcludedArg mount.bisync.extraArgs;
