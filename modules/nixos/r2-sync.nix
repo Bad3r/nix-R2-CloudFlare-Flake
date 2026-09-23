@@ -147,6 +147,23 @@ let
   # file the copy does not carry, excluded or not; bisync's --max-delete check
   # never counts those (rclone cmd/bisync/queue.go fastCopy, verified on 1.75.1).
   isDeleteExcludedArg = arg: lib.head (lib.splitString "=" arg) == "--delete-excluded";
+  # Already passed by run_bisync (lines 358-378) before ${extraArgs} is
+  # interpolated; pflag takes the last occurrence of a repeated scalar flag,
+  # so repeating one here silently wins over the module's own value instead
+  # of erroring. --resync/--resync-mode are not listed here: the module
+  # passes those to run_bisync's "$@", after extraArgs, so the module's
+  # occurrence wins instead.
+  bisyncManagedFlagNames = [
+    "--max-delete"
+    "--backup-dir1"
+    "--backup-dir2"
+    "--max-lock"
+    "--workdir"
+    "--check-access"
+    "--check-filename"
+    "--compare"
+  ];
+  isBisyncManagedArg = arg: lib.elem (lib.head (lib.splitString "=" arg)) bisyncManagedFlagNames;
 
   mkMountService =
     name: mount:
@@ -712,11 +729,22 @@ in
                   with their values in order, so changing them or their order
                   triggers the same automatic --resync as an excludes change:
                   rclone takes the last value of a repeated flag and the first
-                  matching --metadata-filter rule. --delete-excluded
+                  matching --metadata-filter rule. A separate option value
+                  that exactly matches one of these flag names (such as
+                  --suffix's --max-age) is read as that flag too, along with
+                  the next argv element as its value: at most one spurious
+                  --resync, since the value rclone itself receives is
+                  unaffected. --delete-excluded
                   is rejected as well: bisync applies it to every copy a run
                   makes, which then deletes each file on the receiving side
                   that the copy does not carry, excluded or not, beyond the
-                  reach of maxDelete.
+                  reach of maxDelete. Flags the module already passes to
+                  rclone bisync (--max-delete, --backup-dir1, --backup-dir2,
+                  --max-lock, --workdir, --check-access, --check-filename,
+                  --compare) are rejected too: rclone takes the last
+                  occurrence of a repeated flag, so repeating one here would
+                  silently override the module's own value instead of
+                  erroring; set the corresponding bisync option instead.
                 '';
               };
             };
@@ -798,6 +826,10 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isDeleteExcludedArg mount.bisync.extraArgs;
       message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain --delete-excluded: rclone bisync applies it to every copy a run makes, which then deletes each file on the receiving side that the copy does not carry, excluded or not, and bisync.maxDelete does not count those deletions";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !lib.any isBisyncManagedArg mount.bisync.extraArgs;
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, or move the check file --check-access looks for away from the one the module already copied under checkFilename; set the matching services.r2-sync.mounts.${name}.bisync option instead";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:

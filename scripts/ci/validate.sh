@@ -816,6 +816,21 @@ let
       expect = "bisync.extraArgs must not contain --delete-excluded";
     }
     {
+      name = "--max-delete in extraArgs overrides the abort guard";
+      mounts.documents = mount { bisync.extraArgs = [ "--max-delete=100" ]; };
+      expect = "bisync.extraArgs must not contain flags the module already passes";
+    }
+    {
+      name = "--backup-dir1 in extraArgs overrides the module's trash directory";
+      mounts.documents = mount {
+        bisync.extraArgs = [
+          "--backup-dir1"
+          "/tmp/x"
+        ];
+      };
+      expect = "bisync.extraArgs must not contain flags the module already passes";
+    }
+    {
       name = "unparsable bisync.timeout";
       mounts.documents = mount { bisync.timeout = "24hrs"; };
       expect = "bisync.timeout must be '' (no limit) or a systemd.time(7) time span";

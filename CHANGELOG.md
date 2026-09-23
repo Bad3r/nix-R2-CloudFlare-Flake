@@ -100,7 +100,7 @@ and this project follows Conventional Commits.
   relying on that default, or pointing `localPath` at a parent/child of
   `mountPoint`, now fails evaluation; set `localPath` to a separate
   directory.
-- **`services.r2-sync.mounts.<name>`**: five new assertions run at
+- **`services.r2-sync.mounts.<name>`**: six new assertions run at
   evaluation time:
 - mount attribute names must match `[A-Za-z0-9_.-]+` (used verbatim in
   systemd unit names) and may not be `.` or `..` (the name is also the last
@@ -122,6 +122,12 @@ and this project follows Conventional Commits.
   applies it to every copy a run makes, which then deletes each file on the
   receiving side that the copy does not carry, excluded or not, and
   `bisync.maxDelete` does not count those deletions
+- `bisync.extraArgs` may not contain flags the module already passes to
+  `rclone bisync` (`--max-delete`, `--backup-dir1`, `--backup-dir2`,
+  `--max-lock`, `--workdir`, `--check-access`, `--check-filename`,
+  `--compare`): rclone takes the last occurrence of a repeated scalar flag,
+  so repeating one here would silently override the module's own value
+  instead of erroring; set the corresponding `bisync` option instead
 - a mount whose `r2-mount-<name>.service` runs as a non-root user now
   requires `programs.fuse.userAllowOther = true`, since `rclone mount`
   passes `--allow-other` unconditionally
