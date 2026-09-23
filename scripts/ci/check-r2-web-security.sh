@@ -207,8 +207,9 @@ if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflarei
       --write-out '%{http_code}' \
       "${request_url%/}/cdn-cgi/zaraz/i.js"
   )"
-  # Any non-2xx probe status means the analytics runtime is unavailable
-  # (404, 403, 5xx, ...); only a successful probe proves analytics is served.
+  # Any non-2xx probe status means Zaraz is not served (404, 403, 5xx, ...).
+  # The probe proves only Zaraz: a host with Web Analytics alone fails here
+  # whenever the grep above misses its beacon.
   if [[ ! ${zaraz_probe_status} =~ ^2[0-9][0-9]$ ]]; then
     fail "analytics markers not found in HTML and Zaraz endpoint probe returned HTTP ${zaraz_probe_status}"
   fi

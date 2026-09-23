@@ -113,6 +113,9 @@ Preview workflow behavior:
     `curl -H 'Accept: text/html'`; `/cdn-cgi/zaraz/s.js` answers a bare GET
     with `400 Invalid Zaraz parameters` even while Zaraz works, so probe
     `/cdn-cgi/zaraz/i.js` instead.
+  - The `i.js` fallback proves only Zaraz. A host that runs Web Analytics
+    without Zaraz answers it with 404, so there the check passes only through
+    the beacon marker in the HTML.
 - Empty-content sha512 marker detected:
   - Broken third-party fetch path (often CSP/CORS/network/intermediary issue).
 

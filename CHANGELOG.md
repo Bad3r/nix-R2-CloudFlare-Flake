@@ -485,7 +485,9 @@ and this project follows Conventional Commits.
   gets the Web Analytics beacon and Zaraz loader injected. Its fallback probes
   `/cdn-cgi/zaraz/i.js` instead of `s.js`, which answers a bare GET with
   `400 Invalid Zaraz parameters`. Preview smoke failed its analytics check on
-  both counts while analytics was being served.
+  both counts while analytics was being served. The fallback proves only
+  Zaraz: on a host with Web Analytics alone, the check relies on the beacon
+  marker in the HTML.
 - `scripts/ci/lib.sh`'s `cf_api_get` and `clear-r2-access-gate.sh`'s
   `cf_api_delete` now bound every Cloudflare API curl call with configurable
   timeouts (`CF_API_TIMEOUT_SEC`/`CF_API_CONNECT_TIMEOUT_SEC`), report a curl
