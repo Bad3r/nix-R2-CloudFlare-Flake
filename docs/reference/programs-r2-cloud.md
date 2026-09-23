@@ -49,6 +49,11 @@ executed as shell (a malformed line cannot run as a command):
 - `KEY` must match `[A-Za-z_][A-Za-z0-9_]*`.
 - A trailing CR is stripped from each line.
 - An unquoted `VALUE` has surrounding whitespace trimmed.
+- Text after an unquoted `VALUE`, including ` # note`, is part of the value;
+  only a line that starts with `#` is a comment.
+- Backslashes are never escapes, in quoted or unquoted values: `KEY=a\ b`
+  keeps the backslash, and `KEY=value\ ` keeps it too while the trim above
+  drops the space. Quote a value that must end in a space: `KEY="value "`.
 - A `VALUE` wrapped in matching single or double quotes has the quotes
   removed; the content is otherwise literal (no expansion, no escapes).
 - Any other line fails with `Error: <file>: line <N>: expected KEY=VALUE` and
