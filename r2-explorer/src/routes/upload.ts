@@ -569,18 +569,22 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
         // session's own bytes, under the lease so a promoter that is still
         // running for this session is waited out rather than raced.
         session = await acquirePromotionLease(c.env, actor, leasePayload(session));
-        const promoted = await headObject(c.env.FILES_BUCKET, session.objectKey);
-        if (promoted && promotedBySession(promoted, session.sessionId)) {
-          return await recordCompletion(promoted, promoted.httpMetadata?.contentType ?? session.contentType);
+        try {
+          const promoted = await headObject(c.env.FILES_BUCKET, session.objectKey);
+          if (promoted && promotedBySession(promoted, session.sessionId)) {
+            return await recordCompletion(promoted, promoted.httpMetadata?.contentType ?? session.contentType);
+          }
+          throw new HttpError(
+            410,
+            "upload_staged_object_missing",
+            `Staged object ${session.stagingKey} for session ${session.sessionId} is missing.`,
+          );
+        } catch (error) {
+          await releasePromotionLease(c.env, actor, leasePayload(session)).catch((releaseError) => {
+            console.error(`Failed to release promotion lease for session ${session.sessionId}:`, releaseError);
+          });
+          throw error;
         }
-        await releasePromotionLease(c.env, actor, leasePayload(session)).catch((releaseError) => {
-          console.error(`Failed to release promotion lease for session ${session.sessionId}:`, releaseError);
-        });
-        throw new HttpError(
-          410,
-          "upload_staged_object_missing",
-          `Staged object ${session.stagingKey} for session ${session.sessionId} is missing.`,
-        );
       }
       stagedSize = staged.size;
     }
@@ -703,8 +707,6 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
     // is allowed; a race that lands a conflicting object here with overwrite
     // not allowed fails the same way the pre-assembly gate above does, leaving
     // the staged upload retryable.
-    let finalObject: R2Object;
-    let responseContentType = effectiveContentType;
     if (session.stagingKey === session.objectKey) {
       const legacyFinal = await headObject(c.env.FILES_BUCKET, session.objectKey);
       if (!legacyFinal) {
@@ -714,7 +716,7 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
           `Legacy session ${session.sessionId} completed but object ${session.objectKey} is missing.`,
         );
       }
-      finalObject = legacyFinal;
+      return await recordCompletion(legacyFinal, effectiveContentType);
     } else {
       // The staged object's own httpMetadata.contentType is whatever was
       // declared at /init (possibly the generic placeholder); only override
@@ -731,6 +733,8 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
       session = await acquirePromotionLease(c.env, actor, leasePayload(session));
 
       try {
+        let finalObject: R2Object;
+        let responseContentType = effectiveContentType;
         const existing = await wrapUploadStorageError(
           headObject(c.env.FILES_BUCKET, session.objectKey),
           "upload_promotion_precheck_failed",
@@ -773,19 +777,20 @@ export function registerUploadRoutes(app: Hono<AppContext>): void {
             `promote staged upload to ${session.objectKey}`,
           );
         }
+        return await recordCompletion(finalObject, responseContentType);
       } catch (error) {
         // Release immediately so a client that retries right away (or after
         // fixing the conflict, for example with overwrite: true) resumes
-        // without waiting out the lease TTL. A stale token makes this a
-        // no-op on the store side, so a lease a retry now holds survives.
+        // without waiting out the lease TTL; after a failed completion record
+        // the retry finds this session's own promoted object. A stale token
+        // makes this a no-op on the store side, so a lease a retry now holds
+        // survives.
         await releasePromotionLease(c.env, actor, leasePayload(session)).catch((releaseError) => {
           console.error(`Failed to release promotion lease for session ${session.sessionId}:`, releaseError);
         });
         throw error;
       }
     }
-
-    return await recordCompletion(finalObject, responseContentType);
   });
 
   app.post("/api/v2/upload/abort", async (c) => {

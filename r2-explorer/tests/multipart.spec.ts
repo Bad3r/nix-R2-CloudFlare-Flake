@@ -2128,6 +2128,40 @@ describe("promoteObject", () => {
   });
 });
 
+/**
+ * Answer 503 from the upload session store for requests whose path ends with
+ * one of `paths` until end() is called, standing in for a store outage.
+ */
+function simulateSessionStoreOutage(
+  env: Awaited<ReturnType<typeof createTestEnv>>["env"],
+  paths: string[],
+): { end: () => void; restore: () => void } {
+  const namespace = env.R2E_UPLOAD_SESSIONS as unknown as MemoryUploadSessionNamespace;
+  const originalGet = namespace.get.bind(namespace);
+  let active = true;
+  const getSpy = vi.spyOn(namespace, "get").mockImplementation((id) => {
+    const stub = originalGet(id);
+    return {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (active && paths.some((path) => url.endsWith(path))) {
+          return new Response(
+            JSON.stringify({ error: { code: "upload_session_error", message: "simulated store outage" } }),
+            { status: 503, headers: { "content-type": "application/json" } },
+          );
+        }
+        return stub.fetch(input, init);
+      },
+    } as unknown as DurableObjectStub;
+  });
+  return {
+    end: () => {
+      active = false;
+    },
+    restore: () => getSpy.mockRestore(),
+  };
+}
+
 describe("promotion crash-window recovery and lease fencing", () => {
   useAccessJwksFetchMock();
 
@@ -2152,32 +2186,17 @@ describe("promotion crash-window recovery and lease fencing", () => {
       parts: [{ partNumber: 1, etag: uploadedPart.etag }],
     };
 
-    // The session store's completion write fails once, after promotion has
-    // already written the target key.
-    const namespace = env.R2E_UPLOAD_SESSIONS as unknown as MemoryUploadSessionNamespace;
-    const originalGet = namespace.get.bind(namespace);
-    let failedOnce = false;
-    const getSpy = vi.spyOn(namespace, "get").mockImplementation((id) => {
-      const stub = originalGet(id);
-      return {
-        fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-          if (url.endsWith("/complete") && !failedOnce) {
-            failedOnce = true;
-            return new Response(
-              JSON.stringify({ error: { code: "upload_session_error", message: "simulated store outage" } }),
-              { status: 503, headers: { "content-type": "application/json" } },
-            );
-          }
-          return stub.fetch(input, init);
-        },
-      } as unknown as DurableObjectStub;
-    });
+    // The session store goes down after promotion has already written the
+    // target key: the completion write fails, and so does the lease release
+    // that follows it, so the lease stays held as after a Worker crash.
+    const outage = simulateSessionStoreOutage(env, ["/complete", "/release-promotion-lease"]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const firstComplete = await completeUpload(app, env, completeBody);
       expect(firstComplete.status).toBe(503);
+      outage.end();
       // Promotion landed, and the staged object is still there: nothing is
       // deleted before completion is durable.
       expect(await bucket.get("uploads/crash-after-promote.bin")).not.toBeNull();
@@ -2192,7 +2211,8 @@ describe("promotion crash-window recovery and lease fencing", () => {
       expect(payload.size).toBe(declaredSize);
     } finally {
       vi.useRealTimers();
-      getSpy.mockRestore();
+      outage.restore();
+      errorSpy.mockRestore();
     }
 
     expect(await bucket.get(stagingKey)).toBeNull();
@@ -2202,6 +2222,107 @@ describe("promotion crash-window recovery and lease fencing", () => {
     expect(trashed.objects).toHaveLength(0);
     const target = await bucket.get("uploads/crash-after-promote.bin");
     expect(target?.customMetadata?.uploadSessionId).toBe(initPayload.sessionId);
+  });
+
+  it("releases the lease when recording completion fails, so an immediate retry finalizes", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "record-fails.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, new Uint8Array(declaredSize).fill(7));
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    // Only the completion write fails; the lease release after it goes through.
+    const outage = simulateSessionStoreOutage(env, ["/complete"]);
+    try {
+      const firstComplete = await completeUpload(app, env, completeBody);
+      expect(firstComplete.status).toBe(503);
+      outage.end();
+
+      // No clock advance: the retry gets the lease at once.
+      const retry = await completeUpload(app, env, completeBody);
+      expect(retry.status).toBe(200);
+      const payload = (await retry.json()) as { key: string; size: number };
+      expect(payload.key).toBe("uploads/record-fails.bin");
+      expect(payload.size).toBe(declaredSize);
+    } finally {
+      outage.restore();
+    }
+
+    expect(await bucket.get(stagingKey)).toBeNull();
+    const target = await bucket.get("uploads/record-fails.bin");
+    expect(target?.customMetadata?.uploadSessionId).toBe(initPayload.sessionId);
+  });
+
+  it("releases the lease when recording a resumed completion fails, so an immediate retry finalizes", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "resume-record-fails.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+    const partBytes = new Uint8Array(declaredSize).fill(5);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // An earlier attempt assembled, promoted this session's bytes to the
+    // target and released its lease, but the staged object is gone and no
+    // completion was recorded: /complete resumes through the staged branch.
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+    const leased = await acquirePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+    await bucket.put(initPayload.objectKey, partBytes, {
+      customMetadata: { uploadSessionId: initPayload.sessionId },
+    });
+    await bucket.delete(stagingKey);
+    await releasePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      promotionLeaseToken: leased.promotionLeaseToken ?? undefined,
+    });
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    const outage = simulateSessionStoreOutage(env, ["/complete"]);
+    try {
+      const firstComplete = await completeUpload(app, env, completeBody);
+      expect(firstComplete.status).toBe(503);
+      outage.end();
+
+      const retry = await completeUpload(app, env, completeBody);
+      expect(retry.status).toBe(200);
+      const payload = (await retry.json()) as { key: string; size: number };
+      expect(payload.key).toBe(initPayload.objectKey);
+      expect(payload.size).toBe(declaredSize);
+    } finally {
+      outage.restore();
+    }
   });
 
   it("aborts a multipart promotion copy and writes nothing once the lease is lost mid-copy", async () => {

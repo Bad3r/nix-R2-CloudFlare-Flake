@@ -380,7 +380,9 @@ and this project follows Conventional Commits.
   completion or an abort (and reclaimed at expiry if that delete never ran),
   and a retried `complete` recognizes its own already-promoted object at the
   target key (`uploadSessionId` custom metadata, set at `init`) instead of
-  failing with `upload_staged_object_missing` or `409 object_exists`.
+  failing with `upload_staged_object_missing` or `409 object_exists`. A
+  `complete` whose completion record fails releases its promotion lease, so
+  that retry runs at once instead of after the 15 minute lease window.
 - Retrying `/api/v2/upload/complete` after a crash mid-completion (the
   server confirmed multipart assembly but never recorded it) now resumes
   instead of returning a bare `500 internal_error`.
