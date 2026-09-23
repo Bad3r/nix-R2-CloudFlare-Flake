@@ -127,8 +127,11 @@ and this project follows Conventional Commits.
   `--max-lock`, `--recover`, `--resilient`, `--workdir`, `--check-access`,
   `--check-filename`, `--compare`): rclone takes the last occurrence of a
   repeated scalar flag, so repeating one here would silently override the
-  module's own value instead of erroring; set the corresponding `bisync`
-  option instead
+  module's own value instead of erroring. Only `maxDelete`, `maxLock`,
+  `checkFilename` and `compare` have a dedicated `bisync` option to set
+  instead; the rest are fixed by the module (the backup directories follow
+  `localPath`/`remotePrefix`, the workdir is fixed per mount, and
+  `--check-access`, `--recover` and `--resilient` are always on)
 - a mount whose `r2-mount-<name>.service` runs as a non-root user now
   requires `programs.fuse.userAllowOther = true`, since `rclone mount`
   passes `--allow-other` unconditionally

@@ -751,8 +751,13 @@ in
                   --check-access, --check-filename, --compare) are rejected
                   too: rclone takes the last occurrence of a repeated flag,
                   so repeating one here would silently override the module's
-                  own value instead of erroring; set the corresponding
-                  bisync option instead.
+                  own value instead of erroring; set bisync.maxDelete,
+                  bisync.maxLock, bisync.checkFilename or bisync.compare,
+                  the four of these with a dedicated option. The rest are
+                  fixed by the module and have none: the backup directories
+                  follow localPath/remotePrefix, the workdir is
+                  /var/lib/r2-sync-<name>/bisync, and --check-access,
+                  --recover and --resilient are always on.
                 '';
               };
             };
@@ -837,7 +842,7 @@ in
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncManagedArg mount.bisync.extraArgs;
-      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, move the check file --check-access looks for away from the one the module already copied under checkFilename, or turn off the crash and transient-error recovery that bisync.timeout now relies on to leave a usable listing behind; set the matching services.r2-sync.mounts.${name}.bisync option instead";
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, move the check file --check-access looks for away from the one the module already copied under checkFilename, or turn off the crash and transient-error recovery that bisync.timeout now relies on to leave a usable listing behind; set bisync.maxDelete, bisync.maxLock, bisync.checkFilename or bisync.compare, the four of these with a dedicated option; the rest are fixed by the module and have none: the backup directories follow localPath/remotePrefix, the workdir is /var/lib/r2-sync-${name}/bisync, and --check-access, --recover and --resilient are always on";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:
