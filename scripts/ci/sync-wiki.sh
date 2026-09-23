@@ -294,14 +294,24 @@ done
 # and _Sidebar.md's hand-maintained top-level block need checking here. Also
 # fail if a mapping was never copied (its source docs/*.md is missing): the
 # copy loop above only warns and skips, so both heredocs still hardcode a
-# link to a page that does not exist in the wiki.
+# link to a page that does not exist in the wiki. Also fail if two source
+# docs map to the same wiki_name: the second cp (above) silently overwrites
+# the first, so the other checks here all pass while one doc's content is
+# gone from the wiki.
 # ---------------------------------------------------------------------------
 missing_nav=()
+declare -A seen_wiki_names
+duplicate_names=()
 for src in "${!FILE_MAP[@]}"; do
   if [[ ${src} == "plan.md" || ${src} == plan/* ]]; then
     continue
   fi
   wiki_name="${FILE_MAP[${src}]}"
+  if [[ -n ${seen_wiki_names[${wiki_name}]+set} ]]; then
+    duplicate_names+=("${wiki_name}: docs/${seen_wiki_names[${wiki_name}]} and docs/${src}")
+  else
+    seen_wiki_names[${wiki_name}]="${src}"
+  fi
   grep -qF "(${wiki_name})" "${WIKI_DIR}/Home.md" || missing_nav+=("Home.md: ${wiki_name}")
   if [[ ${wiki_name} != Operators-* && ${wiki_name} != Reference-* ]]; then
     grep -qF "(${wiki_name})" "${WIKI_DIR}/_Sidebar.md" || missing_nav+=("_Sidebar.md: ${wiki_name}")
@@ -309,9 +319,18 @@ for src in "${!FILE_MAP[@]}"; do
   [[ -f "${WIKI_DIR}/${wiki_name}.md" ]] || missing_nav+=("page not copied (source docs/${src} missing): ${wiki_name}")
 done
 
+if [[ ${#duplicate_names[@]} -gt 0 ]]; then
+  echo "ERROR: the following FILE_MAP entries map different source docs to the" >&2
+  echo "same wiki page name; give each a distinct value in scripts/ci/sync-wiki.sh:" >&2
+  printf '  %s\n' "${duplicate_names[@]}" >&2
+  exit 1
+fi
+
 if [[ ${#missing_nav[@]} -gt 0 ]]; then
-  echo "ERROR: the following wiki pages are not linked from the generated" >&2
-  echo "navigation; add each to the matching heredoc in scripts/ci/sync-wiki.sh:" >&2
+  echo "ERROR: the following wiki pages are not reachable from the generated" >&2
+  echo "navigation, or were never copied; in scripts/ci/sync-wiki.sh, add each" >&2
+  echo "linking failure to the matching heredoc, and drop or repoint the" >&2
+  echo "FILE_MAP entry for each 'page not copied' failure:" >&2
   printf '  %s\n' "${missing_nav[@]}" >&2
   exit 1
 fi
