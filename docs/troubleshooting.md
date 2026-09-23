@@ -678,8 +678,11 @@ Likely root causes:
   `localPath`, two mounts targeting the same bucket/prefix or overlapping
   paths, a mount name outside `[A-Za-z0-9_.-]+` (or exactly `.` or `..`), a
   `--filter`-shaped flag passed through `extraArgs` instead of
-  `bisync.excludes`, `--delete-excluded` in `extraArgs`, or a `bisync.timeout`
-  or `syncInterval` that is not a `systemd.time(7)` time span.
+  `bisync.excludes`, `--delete-excluded` in `extraArgs`, a flag the module
+  already passes to `rclone bisync` repeated in `extraArgs` (`--max-delete`,
+  `--backup-dir1`, `--backup-dir2`, `--max-lock`, `--recover`, `--resilient`,
+  `--workdir`, `--check-access`, `--check-filename`, `--compare`), or a
+  `bisync.timeout` or `syncInterval` that is not a `systemd.time(7)` time span.
 
 Repair:
 
