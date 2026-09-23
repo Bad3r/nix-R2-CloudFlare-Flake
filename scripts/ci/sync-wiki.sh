@@ -291,7 +291,10 @@ done
 # navigation, so a new FILE_MAP entry never lands in the wiki only reachable
 # by direct URL. Operators-*/Reference-* entries are appended to _Sidebar.md
 # by the auto-detect loops above, so only Home.md (entirely hand-maintained)
-# and _Sidebar.md's hand-maintained top-level block need checking here.
+# and _Sidebar.md's hand-maintained top-level block need checking here. Also
+# fail if a mapping was never copied (its source docs/*.md is missing): the
+# copy loop above only warns and skips, so both heredocs still hardcode a
+# link to a page that does not exist in the wiki.
 # ---------------------------------------------------------------------------
 missing_nav=()
 for src in "${!FILE_MAP[@]}"; do
@@ -303,6 +306,7 @@ for src in "${!FILE_MAP[@]}"; do
   if [[ ${wiki_name} != Operators-* && ${wiki_name} != Reference-* ]]; then
     grep -qF "(${wiki_name})" "${WIKI_DIR}/_Sidebar.md" || missing_nav+=("_Sidebar.md: ${wiki_name}")
   fi
+  [[ -f "${WIKI_DIR}/${wiki_name}.md" ]] || missing_nav+=("page not copied (source docs/${src} missing): ${wiki_name}")
 done
 
 if [[ ${#missing_nav[@]} -gt 0 ]]; then
