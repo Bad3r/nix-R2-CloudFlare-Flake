@@ -390,7 +390,8 @@ A `compare` or `excludes` change on a mount that already has listing state
 makes the next run perform one automatic `--resync`, which rclone requires
 after a filter change. So does a change to a size, age, depth, hash, metadata
 or `--ignore-case` filter in `extraArgs`; pattern filters are rejected there,
-so keep them in `excludes`.
+so keep them in `excludes`. Reordering `excludes` or those `extraArgs` filters
+triggers the resync too, since the module records them in the order given.
 
 When the tuned first run still needs more than `bisync.timeout`, raise the
 deadline for that mount, or set `""` for no limit until the first run has

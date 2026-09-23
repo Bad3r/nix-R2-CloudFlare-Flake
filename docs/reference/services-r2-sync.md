@@ -151,7 +151,12 @@ these messages at the same time.
   the newly excluded files as deleted) and recommends it after a compare
   change (prior listings lack the newly compared attribute). rclone only
   guards its own `--filters-file` this way, so the module tracks the inline
-  flags itself. Pattern filters and rules files are rejected in `extraArgs` by
+  flags itself. Each list is recorded in the order given, so reordering
+  `excludes` or those `extraArgs` filters also triggers the resync, even when
+  the listing would not change: rclone takes the last value of a repeated flag
+  and the first matching `--metadata-filter` rule, so the module cannot tell a
+  harmless reorder from one that changes the listing. Pattern filters and
+  rules files are rejected in `extraArgs` by
   assertion (see "Failure semantics"): patterns belong in `excludes`, and a
   rules file can change without the configuration changing, so it could not
   be tracked.

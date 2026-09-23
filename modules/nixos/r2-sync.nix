@@ -101,7 +101,9 @@ let
   # would record the next argv element as the switch's value.
   bisyncTrackedFilterSwitchNames = [ "--ignore-case" ];
   # The tracked filter flags in args with their values: "--flag=value" and
-  # switches as written, "--flag value" as both elements.
+  # switches as written, "--flag value" as both elements. Kept in argv order,
+  # not sorted: rclone takes the last value of a repeated flag and the first
+  # matching --metadata-filter rule, so a reorder can change the listing.
   trackedFilterArgs =
     args:
     lib.concatLists (
@@ -686,8 +688,10 @@ in
                   (--min-size, --max-size, --min-age, --max-age, --max-depth,
                   --hash-filter, --metadata-filter, --metadata-exclude,
                   --metadata-include, --ignore-case) are accepted and recorded
-                  with their values, so changing one triggers the same
-                  automatic --resync as an excludes change. --delete-excluded
+                  with their values in order, so changing them or their order
+                  triggers the same automatic --resync as an excludes change:
+                  rclone takes the last value of a repeated flag and the first
+                  matching --metadata-filter rule. --delete-excluded
                   is rejected as well: bisync applies it to every copy a run
                   makes, which then deletes each file on the receiving side
                   that the copy does not carry, excluded or not, beyond the

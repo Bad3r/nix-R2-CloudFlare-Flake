@@ -28,6 +28,9 @@ and this project follows Conventional Commits.
   `--max-depth`, `--hash-filter`, `--metadata-filter`, `--metadata-exclude`,
   `--metadata-include`, `--ignore-case`). A mount that already passes one of
   these resyncs once after upgrading, since its recorded flags lack them.
+  Reordering them triggers the resync as well: rclone takes the last value of
+  a repeated flag and the first matching `--metadata-filter` rule, so the
+  recorded order is significant.
 - `/api/v2/download`, `/api/v2/preview`, and `/share/<token>` now support `Range`
   and conditional request headers (`If-Match`, `If-None-Match`,
   `If-Modified-Since`, `If-Unmodified-Since`), answering
