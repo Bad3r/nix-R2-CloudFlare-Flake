@@ -60,6 +60,9 @@ and this project follows Conventional Commits.
 - `actions/setup-node` v6
 - `actions/download-artifact` v7
 - `actions/upload-artifact` v6
+- The CI, deploy, and release workflows set up Node.js 22 instead of 20:
+  astro now requires Node.js `>=22.12.0` and wrangler `>=22.0.0`. The Nix
+  dev shells keep nixpkgs' default `nodejs` (24.x).
 - `security-sensitive-change-policy` now exempts trusted PR authors from the
   `security-review-approved` label: the repo owner (`author_association`
   `OWNER`) plus a `trusted-actors` allowlist (default `Bad3r`,
