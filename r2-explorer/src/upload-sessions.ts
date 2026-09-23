@@ -555,7 +555,8 @@ export class UploadSessionDurableObject {
    * told to wait like any other bystander, so it cannot release the retry's
    * lease or record completion of a promotion it no longer owns. Sessions
    * that never acquired a lease (legacy direct-to-target uploads) carry no
-   * token and are not fenced.
+   * token and are not fenced; neither is a released lease, which stays safe
+   * only because /renew-promotion-lease refuses one (see there).
    */
   private assertLeaseHolder(session: SessionStorageRecord, body: UpdateSessionRequest): void {
     if (session.promotionLeaseToken === null || body.promotionLeaseToken === session.promotionLeaseToken) {
@@ -911,6 +912,10 @@ export class UploadSessionDurableObject {
           });
         }
 
+        // A released lease is not renewable. A holder whose lease lapsed
+        // renews before its next copy write, so it stops here instead of
+        // writing past a release; this keeps assertLeaseHolder's null-token
+        // carve-out safe.
         if (session.status !== "staged" || session.promotionLeaseExpiresAt === null) {
           throw new HttpError(409, "upload_session_not_active", "Upload session holds no promotion lease.", {
             sessionId: body.sessionId,
