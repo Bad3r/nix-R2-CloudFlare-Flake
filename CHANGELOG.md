@@ -377,10 +377,10 @@ and this project follows Conventional Commits.
   the lease, so the expiry alarm cannot delete a staged object that is still
   being copied to its final key.
 - The staged object is deleted only after the session store has recorded
-  completion (and reclaimed at expiry if that delete never ran), and a
-  retried `complete` recognizes its own already-promoted object at the target
-  key (`uploadSessionId` custom metadata, set at `init`) instead of failing
-  with `upload_staged_object_missing` or `409 object_exists`.
+  completion or an abort (and reclaimed at expiry if that delete never ran),
+  and a retried `complete` recognizes its own already-promoted object at the
+  target key (`uploadSessionId` custom metadata, set at `init`) instead of
+  failing with `upload_staged_object_missing` or `409 object_exists`.
 - Retrying `/api/v2/upload/complete` after a crash mid-completion (the
   server confirmed multipart assembly but never recorded it) now resumes
   instead of returning a bare `500 internal_error`.

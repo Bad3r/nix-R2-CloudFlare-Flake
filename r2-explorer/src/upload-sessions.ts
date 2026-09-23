@@ -628,9 +628,10 @@ export class UploadSessionDurableObject {
       if (value.status !== "expired") {
         if (isInFlight(value)) {
           await this.releaseExpiredUploadResources(value);
-        } else if (value.status === "completed") {
-          // /complete deletes the staged object after recording completion;
-          // this catches a delete that failed or a Worker evicted in between.
+        } else if (value.status === "completed" || value.status === "aborted") {
+          // /complete deletes the staged object after recording completion and
+          // the abort paths delete it after recording the abort; this catches
+          // a delete that failed or a Worker evicted in between.
           await this.reclaimStagedObject(value);
         }
         updates.set(key, {

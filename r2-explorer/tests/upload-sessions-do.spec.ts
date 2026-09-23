@@ -187,6 +187,33 @@ describe("UploadSessionDurableObject expiry cleanup", () => {
     expect(await object?.text()).toBe("completed upload");
   });
 
+  it("reclaims the staged object an aborted session left behind when it ages out", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    // The abort was recorded, but the staged-object delete that follows it failed.
+    await bucket.put("uploads/aborted.bin", "unrelated target object");
+    await bucket.put(".r2e-staging/sess-aborted/uploads/aborted.bin", "abandoned staged content");
+    const session = makeSessionRecord({
+      sessionId: "sess-aborted",
+      objectKey: "uploads/aborted.bin",
+      stagingKey: ".r2e-staging/sess-aborted/uploads/aborted.bin",
+      status: "aborted",
+      abortedAt: new Date(Date.now() - 120_000).toISOString(),
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    await storage.put("session:sess-aborted", session);
+
+    await durable.fetch(new Request("https://upload-sessions/gc-expired", { method: "POST", body: "{}" }));
+
+    expect(await bucket.get(".r2e-staging/sess-aborted/uploads/aborted.bin")).toBeNull();
+    const target = await bucket.get("uploads/aborted.bin");
+    expect(await target?.text()).toBe("unrelated target object");
+    const stored = await storage.get<UploadSessionRecord>("session:sess-aborted");
+    expect(stored?.status).toBe("expired");
+  });
+
   it("aborts the R2 upload when an expired session is loaded via /get", async () => {
     const bucket = new MemoryR2Bucket();
     const { state, storage } = createMemoryDurableObjectState();
