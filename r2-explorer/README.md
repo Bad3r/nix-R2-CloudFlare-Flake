@@ -101,7 +101,8 @@ Upload policy vars (all optional):
 
 - `R2E_UPLOAD_MAX_FILE_BYTES` (`0` = unlimited, default `0`)
 - `R2E_UPLOAD_MAX_PARTS` (`0` = up to R2 platform limit `10000`, default `0`)
-- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` (`0` = unlimited, default `0`)
+- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` (`0` = unlimited, default `0`; counts sessions still uploading and
+  sessions still promoting, see below)
 - `R2E_UPLOAD_SESSION_TTL_SEC` (default `3600`)
 - `R2E_UPLOAD_SIGN_TTL_SEC` (default `60`; must cover `R2E_UPLOAD_PART_SIZE_BYTES` at a documented minimum
   throughput of 1 MiB/s, or `/api/v2/upload/init` fails fast with `upload_config_invalid` naming both variables
@@ -141,6 +142,9 @@ Upload semantics:
   Completion is recorded before the staged object is deleted, and a retried `complete` recognizes its own
   promoted object at the target key through the `uploadSessionId` custom metadata that every object
   uploaded through this flow carries (next to `originalFilename` and, when declared, `declaredSha256`).
+  A session holds its `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` slot until it completes or aborts, so a long
+  promotion that keeps renewing its lease occupies a slot for as long as the copy runs, after every part
+  has been uploaded.
 - A declared or client-sent Content-Type of empty string or `application/octet-stream` is treated as "no real
   declaration": if the uploaded bytes match a known signature (PDF, PNG, JPEG, GIF, WEBP, ZIP family), that
   detected type is accepted and reported back as the object's `contentType` instead of the placeholder value.

@@ -371,7 +371,9 @@ and this project follows Conventional Commits.
   15 minute window keeps it, and the lease carries a fencing token: a
   promoter whose lease lapsed and was taken over by a retry can no longer
   release that lease, record completion, or write another part (its copy is
-  aborted, and its 409 carries `error.details.reason` `lease_lost`).
+  aborted, and its 409 carries `error.details.reason` `lease_lost`). A
+  promoting (`staged`) session counts toward
+  `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` for as long as the promotion runs.
 - An upload session no longer expires while its promotion lease is live:
   acquiring or renewing the lease defers `expiresAt` one lease window past
   the lease, so the expiry alarm cannot delete a staged object that is still
