@@ -838,7 +838,8 @@ let
 
   # The extraArgs hold an f in a long flag, a switch cluster without f, and an
   # f after "=", none of which is the -f filter shorthand, then two listing
-  # filters that must be tracked with their values. Mount b also lifts the
+  # filters that must be tracked with their values, and an untracked flag the
+  # --ignore-case switch must not record as its value. Mount b also lifts the
   # run deadline, while mount a keeps the default.
   valid = evalMounts { } (pair {
     remotePrefix = "photos";
@@ -850,6 +851,8 @@ let
         "--max-age"
         "30d"
         "--ignore-case"
+        "--checkers"
+        "4"
       ];
       timeout = "";
     };

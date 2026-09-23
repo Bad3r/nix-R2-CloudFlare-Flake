@@ -97,8 +97,11 @@ let
     "--metadata-exclude"
     "--metadata-include"
   ];
-  # The tracked filter flags in args with their values: "--flag=value" and the
-  # --ignore-case switch as written, "--flag value" as both elements.
+  # Tracked like the flags above but valueless: in that list, trackedFilterArgs
+  # would record the next argv element as the switch's value.
+  bisyncTrackedFilterSwitchNames = [ "--ignore-case" ];
+  # The tracked filter flags in args with their values: "--flag=value" and
+  # switches as written, "--flag value" as both elements.
   trackedFilterArgs =
     args:
     lib.concatLists (
@@ -108,7 +111,7 @@ let
           flag = lib.head (lib.splitString "=" arg);
           takesNext = lib.elem flag bisyncTrackedFilterFlagNames && !lib.hasInfix "=" arg;
         in
-        if flag == "--ignore-case" || lib.elem flag bisyncTrackedFilterFlagNames then
+        if lib.elem flag (bisyncTrackedFilterFlagNames ++ bisyncTrackedFilterSwitchNames) then
           [ arg ] ++ lib.optional (takesNext && i + 1 < lib.length args) (lib.elemAt args (i + 1))
         else
           [ ]
