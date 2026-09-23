@@ -761,6 +761,26 @@ let
       expect = "bisync.extraArgs must not contain filter flags";
     }
     {
+      name = "-f=X filter flag in extraArgs";
+      mounts.documents = mount { bisync.extraArgs = [ "-f=- *.tmp" ]; };
+      expect = "bisync.extraArgs must not contain filter flags";
+    }
+    {
+      name = "-fX filter flag in extraArgs";
+      mounts.documents = mount { bisync.extraArgs = [ "-f- *.tmp" ]; };
+      expect = "bisync.extraArgs must not contain filter flags";
+    }
+    {
+      name = "-f in a shorthand cluster in extraArgs";
+      mounts.documents = mount {
+        bisync.extraArgs = [
+          "-vf"
+          "- *.tmp"
+        ];
+      };
+      expect = "bisync.extraArgs must not contain filter flags";
+    }
+    {
       name = "same remote tree";
       mounts = pair { };
       expect = "both target bucket";
@@ -791,8 +811,15 @@ let
     !(builtins.any (lib.hasInfix s.expect) (failedMessages (evalMounts (s.extra or { }) s.mounts)))
   ) scenarios;
 
+  # The extraArgs hold an f in a long flag, a switch cluster without f, and an
+  # f after "=", none of which is the -f filter shorthand.
   valid = evalMounts { } (pair {
     remotePrefix = "photos";
+    bisync.extraArgs = [
+      "--fast-list"
+      "-vP"
+      "--suffix=-offsite"
+    ];
   });
   validFailures = builtins.filter (lib.hasInfix "services.r2-sync") (failedMessages valid);
   bisyncService = valid.systemd.services."r2-bisync-a".serviceConfig;

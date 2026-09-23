@@ -90,8 +90,11 @@ and this project follows Conventional Commits.
   in the same bucket, or overlapping `mountPoint`/`localPath` directories
 - `bisync.extraArgs` may not contain filter-shaped flags (`--filter`,
   `--exclude`, `--include`, `--filters-file`, `--files-from`, and related
-  forms, or `-f`); use `bisync.excludes` instead so the change is tracked
-  for the automatic `--resync`
+  forms, or `-f` in any short form: `-f X`, `-f=X`, `-fX`, or a shorthand
+  cluster such as `-vf`); use `bisync.excludes` instead so the change is
+  tracked for the automatic `--resync`. A separate option value that starts
+  with a single `-` and contains `f` reads as `-f`; pass it as
+  `--flag=value`
 - a mount whose `r2-mount-<name>.service` runs as a non-root user now
   requires `programs.fuse.userAllowOther = true`, since `rclone mount`
   passes `--allow-other` unconditionally

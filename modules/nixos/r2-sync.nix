@@ -78,8 +78,17 @@ let
     "--files-from"
     "--files-from-raw"
   ];
+  # rclone's flag parser (pflag) also reads -f with its value attached (-f=X,
+  # -fX) or at the end of a shorthand cluster (-vf X); every other rclone
+  # shorthand is a switch, so any f before "=" in a single-dash token sets it.
+  isShortFilterArg =
+    arg:
+    let
+      shorthands = lib.head (lib.splitString "=" arg);
+    in
+    lib.hasPrefix "-" shorthands && !lib.hasPrefix "--" shorthands && lib.hasInfix "f" shorthands;
   isBisyncFilterArg =
-    arg: arg == "-f" || lib.elem (lib.head (lib.splitString "=" arg)) bisyncFilterFlagNames;
+    arg: isShortFilterArg arg || lib.elem (lib.head (lib.splitString "=" arg)) bisyncFilterFlagNames;
 
   mkMountService =
     name: mount:
@@ -603,9 +612,13 @@ in
                   invocation after the module-managed flags, one argv element
                   per entry. Filter-shaped flags (--filter, --exclude,
                   --include, --filters-file, --files-from, and related forms,
-                  or the -f short form) are rejected here by assertion; use
+                  or -f in any short form: -f X, -f=X, -fX, or a shorthand
+                  cluster such as -vf) are rejected here by assertion; use
                   excludes instead so the change is tracked for the automatic
-                  --resync.
+                  --resync. Because -f may carry its value attached, a
+                  separate option value that starts with a single "-" and
+                  contains "f" is read as -f too: pass such a value as
+                  --flag=value.
                 '';
               };
             };
@@ -672,7 +685,7 @@ in
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncFilterArg mount.bisync.extraArgs;
-      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f): use services.r2-sync.mounts.${name}.bisync.excludes instead so the change is tracked for the automatic --resync";
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain filter flags (${lib.concatStringsSep ", " bisyncFilterFlagNames}, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value that starts with a single '-' and contains 'f' reads as one, so pass it as --flag=value): use services.r2-sync.mounts.${name}.bisync.excludes instead so the change is tracked for the automatic --resync";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:
