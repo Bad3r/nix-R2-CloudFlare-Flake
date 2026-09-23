@@ -380,6 +380,11 @@ and this project follows Conventional Commits.
   keys move selection like `j`/`k`.
 - The share TTL field in the web console has persistent format guidance and
   rejects an ambiguous bare number before it reaches the API.
+- The web console's share max-downloads field, read by both the Inspector
+  form and the Shift+R quick-share shortcut, now rejects a value that is not
+  a whole number instead of coercing it with `parseInt`, which turned typos
+  such as `0.5`, `0abc`, and `0x10` into `0`, the API's unlimited-downloads
+  value (security).
 - A transient failure on the final `upload/complete` call now retries
   instead of forcing a full re-upload.
 - Validation errors in the web console show the specific field/reason
@@ -508,7 +513,11 @@ and this project follows Conventional Commits.
   neither mapped nor explicitly excluded, and adds the two operator runbooks
   (`docs/operators/rollback-cli-release.md`,
   `docs/operators/web-csp-analytics.md`) that were silently missing from the
-  wiki.
+  wiki. It also fails, before pushing, when a mapped page is not linked from
+  the generated `Home.md` or `_Sidebar.md`, when a mapped source doc is
+  missing (it used to warn, skip that page, and push dead navigation links to
+  it), and when two source docs map to the same wiki page name (the second
+  copy would silently replace the first).
 - docs/operators/rollback-worker-share.md now lists the two `_PREVIEW`
   Access variables `render-r2-explorer-wrangler-config.sh` requires, and its
   verification step no longer consumes its own test share's only download.
