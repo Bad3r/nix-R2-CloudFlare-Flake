@@ -818,17 +818,21 @@ let
 
   # The extraArgs hold an f in a long flag, a switch cluster without f, and an
   # f after "=", none of which is the -f filter shorthand, then two listing
-  # filters that must be tracked with their values.
+  # filters that must be tracked with their values. Mount b also lifts the
+  # run deadline, while mount a keeps the default.
   valid = evalMounts { } (pair {
     remotePrefix = "photos";
-    bisync.extraArgs = [
-      "--fast-list"
-      "-vP"
-      "--suffix=-offsite"
-      "--max-age"
-      "30d"
-      "--ignore-case"
-    ];
+    bisync = {
+      extraArgs = [
+        "--fast-list"
+        "-vP"
+        "--suffix=-offsite"
+        "--max-age"
+        "30d"
+        "--ignore-case"
+      ];
+      timeout = "";
+    };
   });
   validFailures = builtins.filter (lib.hasInfix "services.r2-sync") (failedMessages valid);
   bisyncService = valid.systemd.services."r2-bisync-a".serviceConfig;
@@ -842,7 +846,10 @@ let
     ++ lib.optional (
       !(lib.hasInfix "\ncurrent_flags='--max-age\n30d\n--ignore-case'\n" trackingScript)
     ) "bisync script does not track exactly the listing filters in extraArgs"
-    ++ lib.optional (bisyncService.TimeoutStartSec or null != "infinity") "bisync service lacks TimeoutStartSec=infinity"
+    ++ lib.optional (bisyncService.TimeoutStartSec or null != "24h") "bisync service lacks the default TimeoutStartSec=24h"
+    ++ lib.optional (
+      valid.systemd.services."r2-bisync-b".serviceConfig.TimeoutStartSec or null != "infinity"
+    ) "bisync.timeout = \"\" does not give TimeoutStartSec=infinity"
     ++ lib.optional (
       !(valid.systemd.timers."r2-bisync-a".timerConfig ? RandomizedDelaySec)
     ) "bisync timer lacks RandomizedDelaySec";

@@ -79,6 +79,11 @@ and this project follows Conventional Commits.
   disabled the safety-abort check entirely. A config setting `maxDelete`
   above 100 now fails evaluation; set an intended percentage instead.
   Recovery from a tripped check is a manual `rclone bisync --force` run.
+- **`services.r2-sync.mounts.<name>.bisync.timeout`** (new, default `24h`):
+  a bisync run still going after 24 hours is stopped and its unit fails,
+  where it used to run without a deadline. A first `--resync` of a very
+  large prefix that needs longer requires a higher value, or `""` for no
+  limit.
 - **`services.r2-sync.mounts.<name>.localPath`**: must now be set to a
   directory that neither equals nor is nested with `mountPoint` (bisync
   must not run against or through the live FUSE mount); the previous
@@ -270,10 +275,12 @@ and this project follows Conventional Commits.
 - Worker Access auth now accepts the Access session `CF_Authorization` cookie as
   a JWT source, fixing GUI share-management calls when `/api/share/*` is an
   Access `Bypass` (HMAC CLI path).
-- `services.r2-sync` bisync service now sets `TimeoutStartSec = infinity` and
-  `TimeoutStopSec = 2min`, so systemd's 90s default no longer kills a long
-  first resync, and a stop has margin over rclone's own graceful-shutdown
-  budget.
+- `services.r2-sync` bisync service now bounds each run with
+  `services.r2-sync.mounts.<name>.bisync.timeout` (default `24h`, `""` for no
+  limit) as `TimeoutStartSec`: a `Type=oneshot` unit has no start timeout by
+  default, so a hung run (for example on a stuck network mount) used to block
+  every later sync without failing. It also sets `TimeoutStopSec = 2min`, so
+  a stop has margin over rclone's own graceful-shutdown budget.
 - `services.r2-sync` now passes `--s3-no-check-bucket` to every rclone
   invocation (mount, bisync, and the check-file preflight), and the generated
   Home Manager `rclone.conf` now sets `no_check_bucket = true`; both are
@@ -488,9 +495,10 @@ and this project follows Conventional Commits.
   instead of `HEAD`, creates the test share with `--max-downloads 2` so the
   verification request does not exhaust it, and reports a failed cleanup
   revoke instead of swallowing it with `|| true`.
-- docs/troubleshooting.md's large-prefix entry now reflects the module's
-  `TimeoutStartSec = infinity` default instead of describing the old 90s
-  kill as a permanent fact; added entries for the bisync max-delete safety
+- docs/troubleshooting.md's large-prefix entry now explains the
+  `bisync.timeout` deadline and how to raise it for a long first run instead
+  of describing a start-timeout kill as a permanent fact; added entries for
+  the bisync max-delete safety
   abort, `r2-restic-backup` exit status `3`, generic `services.r2-sync`
   assertion failures, the `x86_64-darwin` platform drop, and two web/API
   error codes (`409 object_exists`, the percent-encoding 404 case).

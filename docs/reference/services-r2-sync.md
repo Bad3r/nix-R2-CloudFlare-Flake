@@ -31,6 +31,7 @@ create the bucket before writing to it.
 | `services.r2-sync.mounts.<name>.bisync.checkFilename`     | string                                                       | `".r2-check"` | no                                    | Used for `--check-access` safety.                                                                                     |
 | `services.r2-sync.mounts.<name>.bisync.initialResyncMode` | enum `path1`, `path2`, `newer`, `older`, `larger`, `smaller` | `"path1"`     | no                                    | Used on first run to seed bisync state.                                                                               |
 | `services.r2-sync.mounts.<name>.bisync.maxLock`           | string                                                       | `"15m"`       | no                                    | Passed to `rclone bisync --max-lock`; `""` omits it so locks never expire.                                            |
+| `services.r2-sync.mounts.<name>.bisync.timeout`           | string                                                       | `"24h"`       | no                                    | Deadline for one bisync run, passed as the service's `TimeoutStartSec`; `""` means no limit.                          |
 | `services.r2-sync.mounts.<name>.bisync.compare`           | `null` or string                                             | `null`        | no                                    | Passed to `rclone bisync --compare` (`size`, `modtime`, `checksum`); `null` keeps rclone's `size,modtime`.            |
 | `services.r2-sync.mounts.<name>.bisync.excludes`          | list of strings                                              | `[]`          | no                                    | Each entry becomes a `- <pattern>` filter rule, behind a `+ /<checkFilename>` rule that keeps the check file visible. |
 | `services.r2-sync.mounts.<name>.bisync.extraArgs`         | list of strings                                              | `[]`          | no                                    | Appended verbatim, one argv element each. Pattern filters are rejected (use `excludes`); listing filters are tracked. |
@@ -157,15 +158,21 @@ these messages at the same time.
 
 ## Service timeouts
 
-- `r2-bisync-<name>.service` sets `TimeoutStartSec = "infinity"`: a `oneshot`
-  resync of an arbitrarily large prefix has no natural systemd-level
-  deadline, and systemd's 90s default would otherwise SIGTERM a first run
-  before it can seed bisync state (see "Sizing a mount for a large prefix"
-  below for ways to shorten that first run).
+- `r2-bisync-<name>.service` is a `oneshot` unit, which systemd starts with no
+  start timeout unless one is set (`TimeoutStartSec=` in `systemd.service(5)`),
+  so a run that hangs (for example on a stuck network mount, which
+  `--max-lock` and `--resilient` do not bound) would block every later timer
+  run without ever failing. `bisync.timeout` (default `24h`) sets
+  `TimeoutStartSec`: a run still going at the deadline is stopped, the unit
+  fails, and the timer starts the next run. A first `--resync` of a very
+  large prefix can take longer; raise `bisync.timeout` for it or set `""` for
+  no limit (see "Sizing a mount for a large prefix" below for ways to shorten
+  that run).
 - `r2-bisync-<name>.service` sets `TimeoutStopSec = "2min"`: rclone bisync's
   own graceful-shutdown budget is up to 90s (a 30s grace period plus a 60s
   cancel-and-save window), so this keeps a margin over systemd's matching
-  90s default before a `systemctl stop` or shutdown SIGKILLs a run mid-save.
+  90s default before a `systemctl stop`, a shutdown, or an expired
+  `bisync.timeout` SIGKILLs a run mid-save.
 
 ## Sizing a mount for a large prefix
 

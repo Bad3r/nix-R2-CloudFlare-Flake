@@ -350,13 +350,12 @@ Failure signature:
 
 - The first run of `r2-bisync-<name>` runs for a very long time, with little
   CPU, no disk writes, and steady small-request network traffic.
-- On a module revision older than the one that sets
-  `TimeoutStartSec = "infinity"` on this service (see
-  `docs/reference/services-r2-sync.md`, "Service timeouts"), the run is
-  instead killed by a consumer-side `TimeoutStartSec` (`start operation timed
-out. Terminating.`), and `/var/lib/r2-sync-<name>/bisync/` holds only
-  `.lst-new` headers and a `.lck` after the kill; the next timer run clears
-  the orphaned lock and starts over.
+- A run that outlasts `bisync.timeout` (default `24h`; see
+  `docs/reference/services-r2-sync.md`, "Service timeouts") is stopped
+  (`start operation timed out. Terminating.`), and
+  `/var/lib/r2-sync-<name>/bisync/` holds only `.lst-new` headers and a `.lck`
+  after the kill; the next timer run clears the orphaned lock and starts
+  over, so a first run that always needs longer never completes.
 
 Confirm:
 
@@ -393,14 +392,14 @@ after a filter change. So does a change to a size, age, depth, hash, metadata
 or `--ignore-case` filter in `extraArgs`; pattern filters are rejected there,
 so keep them in `excludes`.
 
-Current module revisions set `r2-bisync-<name>.service`'s `TimeoutStartSec =
-"infinity"`, so the unit no longer times out at start no matter how long the
-first run takes; the tuning above only shortens that run. Add an explicit
-override only when the host is still pinned to an older `r2-cloud` revision
-that predates this default:
+When the tuned first run still needs more than `bisync.timeout`, raise the
+deadline for that mount, or set `""` for no limit until the first run has
+seeded its listings. Set the option rather than
+`systemd.services."r2-bisync-<name>".serviceConfig.TimeoutStartSec`, which
+conflicts with the value the module derives from it:
 
 ```nix
-systemd.services."r2-bisync-<name>".serviceConfig.TimeoutStartSec = "infinity";
+services.r2-sync.mounts.<name>.bisync.timeout = "72h";
 ```
 
 Verify:

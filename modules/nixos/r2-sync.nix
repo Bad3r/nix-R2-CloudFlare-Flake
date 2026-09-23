@@ -418,10 +418,11 @@ let
         '';
         serviceConfig = {
           Type = "oneshot";
-          # systemd's 90s start default would kill a first resync of a large
-          # prefix; --recover/--resilient/--max-lock bound a stuck run instead.
-          TimeoutStartSec = "infinity";
-          # rclone bisync takes up to 90s to cancel and save its listings.
+          # A oneshot unit has no start timeout unless one is set, so a hung
+          # run would otherwise block every later timer run without failing.
+          TimeoutStartSec = if mount.bisync.timeout == "" then "infinity" else mount.bisync.timeout;
+          # rclone bisync takes up to 90s to cancel and save its listings,
+          # also when TimeoutStartSec expires and systemd stops the run.
           TimeoutStopSec = "2min";
           EnvironmentFile = cfg.credentialsFile;
           ExecStart = bisyncScript;
@@ -597,6 +598,23 @@ in
                   rclone's default where locks never expire and an orphaned lock
                   wedges the service until cleared by hand. rclone enforces a 2m
                   minimum when the flag is set.
+                '';
+              };
+
+              timeout = lib.mkOption {
+                type = lib.types.str;
+                default = "24h";
+                example = "72h";
+                description = ''
+                  Deadline for one bisync run, passed as TimeoutStartSec to the
+                  oneshot r2-bisync-<name> service, which systemd otherwise
+                  starts with no start timeout at all. A run still going at the
+                  deadline (for example one hung on a stuck network mount,
+                  which --max-lock and --resilient do not bound) is stopped and
+                  the unit fails, so the hang is visible and the timer can
+                  start the next run. The empty string passes "infinity",
+                  leaving a run unbounded. A first --resync of a very large
+                  prefix can need more than the default.
                 '';
               };
 
