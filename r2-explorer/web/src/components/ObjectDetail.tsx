@@ -51,6 +51,7 @@ export function ObjectDetail(props: ObjectDetailProps): JSX.Element {
     setMoveError("");
     setDeleteError("");
     setShareTtlError("");
+    setShareMaxDownloadsError("");
     setShareError("");
   }, [object?.key]);
 
