@@ -15,9 +15,9 @@ Arguments:
   csp-policy-file   File containing canonical CSP policy text.
 
 Environment (required):
-  CLOUDFLARE_API_TOKEN  Cloudflare API token with:
-                        - Zone Rulesets Write
-                        - Zone Rulesets Read
+  CLOUDFLARE_API_TOKEN  Cloudflare API token with, on the zone:
+                        - Transform Rules Write
+                        - Zone Read (unless R2E_CF_ZONE_ID is set)
   R2E_CF_ZONE_NAME      Zone name (for example, unsigned.sh).
 
 Environment (optional):

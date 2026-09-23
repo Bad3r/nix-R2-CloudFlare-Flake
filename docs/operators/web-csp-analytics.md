@@ -22,10 +22,14 @@ CSP through IaC.
 
 ## Required Permissions
 
-The API token used for CSP sync must include:
+The API token used for CSP sync needs these permissions on the zone named by
+`R2E_CF_ZONE_NAME` (dashboard token builder: Zone > Transform Rules and
+Zone > Zone):
 
-- `Zone Rulesets Write`
-- `Zone Rulesets Read`
+- `Transform Rules Write`: read the `http_response_headers_transform`
+  entrypoint ruleset, create it when missing, and create or update the CSP rule.
+- `Zone Read`: resolve the zone ID from `R2E_CF_ZONE_NAME`. Not needed when
+  `R2E_CF_ZONE_ID` is set.
 
 ## GitHub Environment Variables
 
@@ -96,7 +100,7 @@ Preview workflow behavior:
 ## Failure Signatures and Triage
 
 - `HTTP 403 request is not authorized` from sync script:
-  - Token lacks `Zone Rulesets` permissions.
+  - Token lacks `Transform Rules Write` on the zone.
 - CSP mismatch:
   - Rule drift in Cloudflare dashboard or wrong zone name/host expression.
 - Analytics verification failure:

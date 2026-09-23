@@ -257,10 +257,11 @@ Required workflow variable in GitHub Environments (`preview` and `production`):
     are skipped with explicit notices.
   - Production: must be non-empty; deploy fails fast if not set.
 
-Required API token permissions for CSP sync:
+Required API token permissions for CSP sync, on the zone named by
+`R2E_CF_ZONE_NAME`:
 
-- `Zone Rulesets Write`
-- `Zone Rulesets Read`
+- `Transform Rules Write`
+- `Zone Read` (resolves the zone ID; not needed when `R2E_CF_ZONE_ID` is set)
 
 ## Preview host routing
 

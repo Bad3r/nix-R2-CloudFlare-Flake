@@ -236,6 +236,10 @@ and this project follows Conventional Commits.
 
 ### Fixed
 
+- CSP sync docs (`docs/operators/web-csp-analytics.md`, `r2-explorer/README.md`)
+  and the `sync-r2-web-csp.sh` usage text now list the token permissions the
+  script needs: `Transform Rules Write` and `Zone Read`. They previously listed
+  `Zone Rulesets Read/Write`, which Cloudflare does not offer.
 - Home Manager `r2` wrapper now exports rclone endpoint when `enableRcloneRemote` is enabled.
 - `services.r2-sync` FUSE mount unit no longer uses mount-namespace sandboxing
   that makes mounts invisible outside the unit.
