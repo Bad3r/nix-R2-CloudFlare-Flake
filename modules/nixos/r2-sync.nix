@@ -23,6 +23,19 @@ let
       part: builtins.match "[[:space:]]*(size|modtime|checksum)[[:space:]]*" (lib.toLower part) != null
     ) (lib.splitString "," value);
 
+  # systemd.time(7) spans as systemd's parse_time reads them: "infinity", or
+  # <number>[<unit>] terms, a bare number counting seconds. systemd logs and
+  # ignores a unit setting it cannot parse, so a typo would drop the deadline
+  # or the timer interval without failing. A unit-less term must be followed
+  # by whitespace or the end: builtins.match explores every parse, and a digit
+  # run that could split into terms anywhere takes exponential time to reject.
+  timespanNum = "([0-9]+(\\.[0-9]+)?|\\.[0-9]+)";
+  timespanUnit = "(usec|us|msec|ms|seconds|second|sec|s|minutes|minute|min|m|hours|hour|hr|h|days|day|d|weeks|week|w|months|month|M|years|year|y)";
+  isValidTimespan =
+    value:
+    builtins.match "[[:space:]]*(infinity|(${timespanNum}[[:space:]]*${timespanUnit}[[:space:]]*|${timespanNum}[[:space:]]+)*${timespanNum}([[:space:]]*${timespanUnit})?)[[:space:]]*" value
+    != null;
+
   # Endpoint resolved at service runtime from the account ID env/file.
   runtimeEndpoint = r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}";
 
@@ -532,7 +545,12 @@ in
             syncInterval = lib.mkOption {
               type = lib.types.str;
               default = "5m";
-              description = "Bisync interval in systemd time format";
+              description = ''
+                Interval between bisync runs, a systemd.time(7) time span
+                passed to the timer as OnUnitActiveSec. A value systemd cannot
+                parse fails evaluation: systemd would ignore it, and the timer
+                would fire once and never again.
+              '';
             };
 
             vfsCache = {
@@ -626,7 +644,9 @@ in
                   the unit fails, so the hang is visible and the timer can
                   start the next run. The empty string passes "infinity",
                   leaving a run unbounded. A first --resync of a very large
-                  prefix can need more than the default.
+                  prefix can need more than the default. Any other value must
+                  be a systemd.time(7) time span, or evaluation fails: systemd
+                  would ignore it and leave the run unbounded.
                 '';
               };
 
@@ -751,6 +771,14 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = mount.bisync.compare == null || isValidCompare mount.bisync.compare;
       message = "services.r2-sync.mounts.${name}.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '${toString mount.bisync.compare}'";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = mount.bisync.timeout == "" || isValidTimespan mount.bisync.timeout;
+      message = "services.r2-sync.mounts.${name}.bisync.timeout must be '' (no limit) or a systemd.time(7) time span such as '24h' or '1h 30min' (systemd ignores a TimeoutStartSec it cannot parse, which leaves the run unbounded): got '${mount.bisync.timeout}'";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = isValidTimespan mount.syncInterval;
+      message = "services.r2-sync.mounts.${name}.syncInterval must be a systemd.time(7) time span such as '5m' or '1h 30min' (systemd ignores an OnUnitActiveSec it cannot parse, which leaves the timer firing once and never again): got '${mount.syncInterval}'";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: _mount: {
       # The name is also the last path segment of the local trash directory

@@ -86,7 +86,13 @@ and this project follows Conventional Commits.
   a bisync run still going after 24 hours is stopped and its unit fails,
   where it used to run without a deadline. A first `--resync` of a very
   large prefix that needs longer requires a higher value, or `""` for no
-  limit.
+  limit. Any other value must be a `systemd.time(7)` time span, or
+  evaluation fails: systemd ignores a `TimeoutStartSec` it cannot parse
+  (such as `24hrs`) and would leave the run unbounded.
+- **`services.r2-sync.mounts.<name>.syncInterval`**: must now be a
+  `systemd.time(7)` time span, or evaluation fails. systemd only logs an
+  `OnUnitActiveSec` it cannot parse (such as `5mins`), so a malformed value
+  used to load a timer that fired once after activation and never again.
 - **`services.r2-sync.mounts.<name>.localPath`**: must now be set to a
   directory that neither equals nor is nested with `mountPoint` (bisync
   must not run against or through the live FUSE mount); the previous

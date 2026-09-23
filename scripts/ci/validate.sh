@@ -806,6 +806,16 @@ let
       expect = "bisync.extraArgs must not contain --delete-excluded";
     }
     {
+      name = "unparsable bisync.timeout";
+      mounts.documents = mount { bisync.timeout = "24hrs"; };
+      expect = "bisync.timeout must be '' (no limit) or a systemd.time(7) time span";
+    }
+    {
+      name = "unparsable syncInterval";
+      mounts.documents = mount { syncInterval = "5mins"; };
+      expect = "syncInterval must be a systemd.time(7) time span";
+    }
+    {
       name = "same remote tree";
       mounts = pair { };
       expect = "both target bucket";
@@ -840,9 +850,11 @@ let
   # f after "=", none of which is the -f filter shorthand, then two listing
   # filters that must be tracked with their values, and an untracked flag the
   # --ignore-case switch must not record as its value. Mount b also lifts the
-  # run deadline, while mount a keeps the default.
+  # run deadline and syncs on a two-term time span, while mount a keeps the
+  # defaults.
   valid = evalMounts { } (pair {
     remotePrefix = "photos";
+    syncInterval = "1h 30min";
     bisync = {
       extraArgs = [
         "--fast-list"

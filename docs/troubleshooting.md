@@ -678,7 +678,8 @@ Likely root causes:
   `localPath`, two mounts targeting the same bucket/prefix or overlapping
   paths, a mount name outside `[A-Za-z0-9_.-]+` (or exactly `.` or `..`), a
   `--filter`-shaped flag passed through `extraArgs` instead of
-  `bisync.excludes`, or `--delete-excluded` in `extraArgs`.
+  `bisync.excludes`, `--delete-excluded` in `extraArgs`, or a `bisync.timeout`
+  or `syncInterval` that is not a `systemd.time(7)` time span.
 
 Repair:
 
