@@ -899,6 +899,7 @@ export class UploadSessionDurableObject {
           promotionLeaseToken: crypto.randomUUID(),
         };
         await this.state.storage.put(storageKey(body.sessionId), updated);
+        await this.scheduleNextAlarm();
         return this.createSessionResponse(updated);
       }
 
@@ -935,6 +936,7 @@ export class UploadSessionDurableObject {
           promotionLeaseExpiresAt,
         };
         await this.state.storage.put(storageKey(body.sessionId), updated);
+        await this.scheduleNextAlarm();
         return this.createSessionResponse(updated);
       }
 

@@ -342,6 +342,51 @@ describe("UploadSessionDurableObject staged transition and promotion lease (UPS-
     expect(Date.parse(payload.session.promotionLeaseExpiresAt!)).toBeGreaterThan(Date.now());
   });
 
+  it("moves the expiry alarm with the expiry that acquiring and renewing the lease defer", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    // Due to expire before the lease would end, so acquiring defers expiresAt.
+    const session = makeSessionRecord({
+      sessionId: "sess-lease-alarm",
+      uploadId: "upload-lease-alarm",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await storage.put("session:sess-lease-alarm", session);
+    await storage.setAlarm(Date.parse(session.expiresAt));
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const acquired = await durable.fetch(
+        new Request("https://upload-sessions/acquire-promotion-lease", {
+          method: "POST",
+          body: JSON.stringify({ sessionId: "sess-lease-alarm", uploadId: "upload-lease-alarm" }),
+        }),
+      );
+      const leased = ((await acquired.json()) as { session: UploadSessionRecord }).session;
+      expect(Date.parse(leased.expiresAt)).toBeGreaterThan(Date.parse(session.expiresAt));
+      expect(await storage.getAlarm()).toBe(Date.parse(leased.expiresAt));
+
+      vi.setSystemTime(Date.now() + PROMOTION_LEASE_MS / 2);
+      const renewed = await durable.fetch(
+        new Request("https://upload-sessions/renew-promotion-lease", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: "sess-lease-alarm",
+            uploadId: "upload-lease-alarm",
+            promotionLeaseToken: leased.promotionLeaseToken,
+          }),
+        }),
+      );
+      const renewedSession = ((await renewed.json()) as { session: UploadSessionRecord }).session;
+      expect(Date.parse(renewedSession.expiresAt)).toBeGreaterThan(Date.parse(leased.expiresAt));
+      expect(await storage.getAlarm()).toBe(Date.parse(renewedSession.expiresAt));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects acquire-promotion-lease for a session that is not active or staged", async () => {
     const bucket = new MemoryR2Bucket();
     const { state, storage } = createMemoryDurableObjectState();
