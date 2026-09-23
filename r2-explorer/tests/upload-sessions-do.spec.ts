@@ -240,6 +240,47 @@ describe("UploadSessionDurableObject expiry cleanup", () => {
     expect(() => bucket.resumeMultipartUpload(upload.key, upload.uploadId)).toThrow();
   });
 
+  // A late /complete retry or a duplicate /abort reaches the store through
+  // /get. Marking the record expired there skips it in every later prune, so
+  // this is the only chance to reclaim what the terminal transition left.
+  it.each([
+    { status: "completed" as const, completedAt: new Date(Date.now() - 120_000).toISOString() },
+    { status: "aborted" as const, abortedAt: new Date(Date.now() - 120_000).toISOString() },
+  ])("reclaims the leftover staged object of an expired $status session loaded via /get", async (terminal) => {
+    const bucket = new MemoryR2Bucket();
+    const { state, storage } = createMemoryDurableObjectState();
+    const durable = new UploadSessionDurableObject(state, makeEnv(bucket));
+
+    const sessionId = `sess-late-${terminal.status}`;
+    const stagingKey = `.r2e-staging/${sessionId}/uploads/late.bin`;
+    await bucket.put("uploads/late.bin", "target object");
+    await bucket.put(stagingKey, "leftover staged content");
+    await storage.put(
+      `session:${sessionId}`,
+      makeSessionRecord({
+        sessionId,
+        objectKey: "uploads/late.bin",
+        stagingKey,
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        ...terminal,
+      }),
+    );
+
+    const response = await durable.fetch(
+      new Request("https://upload-sessions/get", {
+        method: "POST",
+        body: JSON.stringify({ sessionId }),
+      }),
+    );
+    expect(response.status).toBe(410);
+
+    expect(await bucket.get(stagingKey)).toBeNull();
+    const target = await bucket.get("uploads/late.bin");
+    expect(await target?.text()).toBe("target object");
+    const stored = await storage.get<UploadSessionRecord>(`session:${sessionId}`);
+    expect(stored?.status).toBe("expired");
+  });
+
   it("schedules an alarm for the session expiry on create", async () => {
     const bucket = new MemoryR2Bucket();
     const { state, storage } = createMemoryDurableObjectState();

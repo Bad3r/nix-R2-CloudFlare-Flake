@@ -616,6 +616,22 @@ export class UploadSessionDurableObject {
     await this.reclaimStagedObject(session);
   }
 
+  /**
+   * Release what a session still holds before it is marked expired. Every
+   * transition to expired must run this first, because no later pass revisits
+   * an expired record. /complete deletes the staged object after recording
+   * completion and the abort paths delete it after recording the abort, so a
+   * completed or aborted session still holds it when that delete failed or
+   * the Worker was evicted in between.
+   */
+  private async releaseExpiringSession(session: SessionStorageRecord): Promise<void> {
+    if (isInFlight(session)) {
+      await this.releaseExpiredUploadResources(session);
+    } else if (session.status === "completed" || session.status === "aborted") {
+      await this.reclaimStagedObject(session);
+    }
+  }
+
   private async pruneExpiredSessions(nowMs: number): Promise<void> {
     const listing = await this.state.storage.list<SessionStorageRecord>({ prefix: SESSION_PREFIX });
     const updates = new Map<string, SessionStorageRecord>();
@@ -627,14 +643,7 @@ export class UploadSessionDurableObject {
       }
 
       if (value.status !== "expired") {
-        if (isInFlight(value)) {
-          await this.releaseExpiredUploadResources(value);
-        } else if (value.status === "completed" || value.status === "aborted") {
-          // /complete deletes the staged object after recording completion and
-          // the abort paths delete it after recording the abort; this catches
-          // a delete that failed or a Worker evicted in between.
-          await this.reclaimStagedObject(value);
-        }
+        await this.releaseExpiringSession(value);
         updates.set(key, {
           ...value,
           status: "expired",
@@ -700,8 +709,8 @@ export class UploadSessionDurableObject {
     assertIsoTimestamp(session.expiresAt, "session.expiresAt");
     const nowMs = Date.now();
     if (isExpired(session, nowMs)) {
-      if (session.status !== "expired" && isInFlight(session)) {
-        await this.releaseExpiredUploadResources(session);
+      if (session.status !== "expired") {
+        await this.releaseExpiringSession(session);
       }
       const updated: SessionStorageRecord = {
         ...session,
