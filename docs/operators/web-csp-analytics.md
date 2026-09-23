@@ -87,9 +87,10 @@ Expected outcomes:
 - HTML includes analytics loader markers (`/cdn-cgi/zaraz/` or
   `static.cloudflareinsights.com/beacon.min.js`), or the Zaraz init script
   (`/cdn-cgi/zaraz/i.js`) answers with a 2xx status. Cloudflare injects both
-  markers only into a response to a request that sends `Accept: text/html`,
-  as a browser page load does; the script sends that header, so a manual
-  `curl` without it sees neither marker even while analytics works.
+  markers only into a response to a request that accepts `text/html`, as a
+  browser page load does; the script sends a browser's full `Accept` value,
+  so a manual `curl` without such a header sees neither marker even while
+  analytics works.
 - HTML does not include the empty-content sha512 marker associated with broken
   SRI fetches.
 

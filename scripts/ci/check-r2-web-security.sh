@@ -160,9 +160,11 @@ fi
 
 # Cloudflare injects the Web Analytics beacon and the Zaraz loader only into a
 # response to a request that accepts text/html; curl's default */* gets neither.
+# A browser's full Accept value, since an origin that negotiates strictly may
+# answer bare text/html with 406.
 http_code="$(
   curl -sS --location "${curl_headers[@]}" \
-    -H "Accept: text/html" \
+    -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
     --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
     --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
     --dump-header "${headers_file}" \
