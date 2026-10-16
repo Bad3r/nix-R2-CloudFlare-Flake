@@ -78,4 +78,84 @@ describe("share counter durable object under workerd", () => {
       await response.text();
     }
   });
+
+  it("serializes many concurrent download starts so maxDownloads is never exceeded", async () => {
+    const app = createApp();
+    await testEnv.FILES_BUCKET.put("docs/many.txt", "many body", {
+      httpMetadata: { contentType: "text/plain" },
+    });
+
+    const createResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/share/create", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(await accessHeaders({ email: "ops@example.com", scope: "r2.share.manage" })),
+        },
+        body: JSON.stringify({ key: "docs/many.txt", ttl: "1h", maxDownloads: 2 }),
+      }),
+      testEnv,
+    );
+    expect(createResponse.status).toBe(200);
+    const { tokenId } = (await createResponse.json()) as { tokenId: string };
+
+    const attempts = 6;
+    const responses = await Promise.all(
+      Array.from({ length: attempts }, () =>
+        app.fetch(new Request(`https://files.example.com/share/${tokenId}`), testEnv),
+      ),
+    );
+    const statuses = responses.map((response) => response.status);
+    await Promise.all(responses.map((response) => response.text()));
+
+    expect(statuses.filter((status) => status === 200)).toHaveLength(2);
+    expect(statuses.filter((status) => status === 410)).toHaveLength(attempts - 2);
+  });
+
+  it("does not change the count for parallel Range continuations inside the resume window", async () => {
+    const app = createApp();
+    await testEnv.FILES_BUCKET.put("docs/parallel-resume.txt", "0123456789", {
+      httpMetadata: { contentType: "text/plain" },
+    });
+
+    const createResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/share/create", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(await accessHeaders({ email: "ops@example.com", scope: "r2.share.manage" })),
+        },
+        body: JSON.stringify({ key: "docs/parallel-resume.txt", ttl: "1h", maxDownloads: 6 }),
+      }),
+      testEnv,
+    );
+    expect(createResponse.status).toBe(200);
+    const { tokenId } = (await createResponse.json()) as { tokenId: string };
+
+    const started = await app.fetch(new Request(`https://files.example.com/share/${tokenId}`), testEnv);
+    expect(started.status).toBe(200);
+    await started.text();
+
+    const attempts = 5;
+    const responses = await Promise.all(
+      Array.from({ length: attempts }, () =>
+        app.fetch(
+          new Request(`https://files.example.com/share/${tokenId}`, { headers: { range: "bytes=5-" } }),
+          testEnv,
+        ),
+      ),
+    );
+    await Promise.all(responses.map((response) => response.text()));
+    for (const response of responses) {
+      expect(response.status).toBe(206);
+    }
+
+    // If any continuation above had wrongly consumed a slot, 1 start + 5
+    // continuations would already exhaust the cap of 6; since continuations
+    // inside the window are free, only 1 of 6 is spent, so one more fresh
+    // start still succeeds.
+    const finalDownload = await app.fetch(new Request(`https://files.example.com/share/${tokenId}`), testEnv);
+    expect(finalDownload.status).toBe(200);
+    await finalDownload.text();
+  });
 });

@@ -110,6 +110,9 @@ trap cleanup EXIT INT TERM
 require_command "curl"
 require_command "grep"
 
+WEB_CHECK_TIMEOUT_SEC="$(resolve_positive_int_env "WEB_CHECK_TIMEOUT_SEC" "60")"
+WEB_CHECK_CONNECT_TIMEOUT_SEC="$(resolve_positive_int_env "WEB_CHECK_CONNECT_TIMEOUT_SEC" "10")"
+
 base_url="$1"
 expected_csp_file="$2"
 
@@ -155,8 +158,15 @@ if [[ -n ${access_client_id} || -n ${access_client_secret} ]]; then
   )
 fi
 
+# Cloudflare injects the Web Analytics beacon and the Zaraz loader only into a
+# response to a request that accepts text/html; curl's default */* gets neither.
+# A browser's full Accept value, since an origin that negotiates strictly may
+# answer bare text/html with 406.
 http_code="$(
   curl -sS --location "${curl_headers[@]}" \
+    -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+    --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
+    --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
     --dump-header "${headers_file}" \
     --output "${body_file}" \
     --write-out '%{http_code}' \
@@ -187,15 +197,19 @@ if [[ ${actual_csp} != "${expected_csp}" ]]; then
 fi
 
 if ! grep -q "/cdn-cgi/zaraz/" "${body_file}" && ! grep -Eq 'static\.cloudflareinsights\.com/beacon\.min\.js' "${body_file}"; then
-  # Zaraz/Web Analytics may be injected at runtime by Cloudflare and absent from raw curl HTML.
+  # Zaraz may still serve the host when this HTML carries no loader. Probe the
+  # init script: s.js answers a bare GET with 400 "Invalid Zaraz parameters".
   zaraz_probe_status="$(
     curl -sS --location "${curl_headers[@]}" \
+      --max-time "${WEB_CHECK_TIMEOUT_SEC}" \
+      --connect-timeout "${WEB_CHECK_CONNECT_TIMEOUT_SEC}" \
       --output /dev/null \
       --write-out '%{http_code}' \
-      "${request_url%/}/cdn-cgi/zaraz/s.js"
+      "${request_url%/}/cdn-cgi/zaraz/i.js"
   )"
-  # Any non-2xx probe status means the analytics runtime is unavailable
-  # (404, 403, 5xx, ...); only a successful probe proves analytics is served.
+  # Any non-2xx probe status means Zaraz is not served (404, 403, 5xx, ...).
+  # The probe proves only Zaraz: a host with Web Analytics alone fails here
+  # whenever the grep above misses its beacon.
   if [[ ! ${zaraz_probe_status} =~ ^2[0-9][0-9]$ ]]; then
     fail "analytics markers not found in HTML and Zaraz endpoint probe returned HTTP ${zaraz_probe_status}"
   fi

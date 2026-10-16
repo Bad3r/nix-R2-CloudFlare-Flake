@@ -39,10 +39,12 @@ nix flake init -t "${TEMPLATE_SOURCE}#full"
 
 ## 2. Configure required values
 
-Template values to replace before deployment:
+Values to prepare before integrating the template into a real host (step 5):
 
 - `secrets/r2.yaml` content (account ID, keys, restic password)
-- SOPS policy to include `secrets/r2.yaml` and template output
+- SOPS policy to include `secrets/r2.yaml` and the host's rendered template output
+
+See `docs/credentials.md` for the runtime secret paths these values feed.
 
 ## 3. Evaluate and smoke-test template output
 
@@ -57,45 +59,102 @@ Expected result:
 
 - `nix flake check` completes without editing template structure
 
-## 4. Evaluate activation (no runtime changes)
+## 4. Build the template system (no activation)
+
+> [!WARNING]
+> Never run `nixos-rebuild switch`, `boot`, or `test` with
+> `--flake .#r2-minimal` or `.#r2-full` on a real machine.
+> `nixosConfigurations.r2-minimal` and `nixosConfigurations.r2-full` carry a
+> placeholder `fileSystems."/"` (`tmpfs`) and a placeholder
+> `boot.loader.grub.devices = [ "nodev" ]` so that `nix flake check` passes in
+> an otherwise empty repository, define no users, networking, or hardware, and
+> do not wire sops-nix, so `/run/secrets/r2/*` does not exist under them.
+> Activating one replaces the machine's real system generation with that
+> placeholder; recovery means selecting an older generation in the boot loader
+> menu. Step 5 covers running the services on a real host.
+
+Build only, nothing is activated and no `sudo` is needed.
 
 Minimal template:
 
 ```bash
-sudo nixos-rebuild dry-activate --flake .#r2-minimal
+nixos-rebuild build --flake .#r2-minimal
 ```
 
 Full template:
 
 ```bash
-sudo nixos-rebuild dry-activate --flake .#r2-full
+nixos-rebuild build --flake .#r2-full
 ```
 
 Expected result:
 
 - no module assertion failures for `services.r2-sync`, `services.r2-restic`, or `programs.git-annex-r2`
+- a `result` symlink to the built system closure
 
-## 5. Apply runtime configuration (required for service status checks)
+Optional: `nixos-rebuild build-vm --flake .#r2-minimal` builds a throwaway VM
+that boots the same unit set. No secrets exist inside it, so
+`services.r2-sync`/`services.r2-restic` still fail to start; use it only to
+inspect unit wiring, not to validate R2 connectivity.
 
-Minimal template:
+## 5. Integrate into your host configuration
 
-```bash
-sudo nixos-rebuild switch --flake .#r2-minimal
-```
+The template's `nixosConfigurations` output exists for evaluation only (step
+4). To run the services for real, copy the pieces you need into the flake
+that already builds your host:
 
-Full template:
+1. Add the `r2-cloud` input to your host flake:
 
-```bash
-sudo nixos-rebuild switch --flake .#r2-full
-```
+   ```nix
+   inputs.r2-cloud.url = "github:Bad3r/nix-R2-CloudFlare-Flake?ref=main";
+   ```
+
+2. Import `r2-cloud.nixosModules.default` into your host's NixOS
+   configuration. For the full template's CLI, also add
+   `r2-cloud.homeManagerModules.default` to your `home-manager.sharedModules`.
+3. Copy the `services.r2-sync`, `services.r2-restic`, and
+   `programs.git-annex-r2`/`programs.r2-cloud` blocks from the generated
+   template's `flake.nix` into your host configuration, in place of its
+   placeholder `fileSystems."/"` and `boot.loader.grub.devices`, which your
+   host already defines from its own `hardware-configuration.nix`.
+4. Wire the secrets each block expects (`credentialsFile`, `accountIdFile`,
+   `passwordFile`) through sops-nix as described in `docs/credentials.md`, so
+   `/run/secrets/r2/*` exists on the host before any service starts.
+5. Evaluate, then apply, against your real host (replace `<your-host>` with
+   its `nixosConfigurations` attribute name):
+
+   ```bash
+   sudo nixos-rebuild dry-activate --flake .#<your-host>
+   sudo nixos-rebuild switch --flake .#<your-host>
+   ```
 
 Expected result:
 
 - system activation succeeds without assertion errors
+- the units checked in steps 6 and 7 below appear on `<your-host>`, not on
+  the throwaway template project from step 1
+
+### Non-NixOS hosts (Home Manager only)
+
+The `full` template also defines a standalone `homeConfigurations.alice`
+output (Home Manager without NixOS) for hosts that only need the `r2` CLI.
+Replace the placeholder `username = "alice"` (and the resulting
+`home.homeDirectory`) in the generated `flake.nix`, wire the same
+`accountIdFile`/`credentialsFile` secrets described above, then activate:
+
+```bash
+home-manager switch --flake .#alice
+```
+
+If `home-manager` is not already installed, run it without installing first:
+`nix run github:nix-community/home-manager -- switch --flake .#alice`.
+This path installs `programs.r2-cloud` only; it creates no
+`services.r2-sync`/`services.r2-restic` systemd units, so skip steps 6 and 7
+and confirm with `command -v r2` instead.
 
 ## 6. Verify service wiring (minimal path)
 
-Run these checks only for the minimal template:
+Run these checks on `<your-host>` from step 5, for the minimal template's mount:
 
 ```bash
 sudo systemctl status r2-mount-documents
@@ -130,7 +189,7 @@ Expected result:
 
 ## 7. Verify service wiring (full path)
 
-Run these checks only for the full template:
+Run these checks on `<your-host>` from step 5, for the full template's blocks:
 
 ```bash
 sudo systemctl status r2-mount-workspace
@@ -155,14 +214,14 @@ set -a
 source /run/secrets/r2/credentials.env
 set +a
 
-rclone lsf :s3:nix-r2-cf-r2e-files-prod \
+rclone lsf :s3:files \
   --config=/dev/null \
   --s3-provider=Cloudflare \
   --s3-endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
   --s3-env-auth
 
 export RESTIC_PASSWORD_FILE=/run/secrets/r2/restic-password
-restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/nix-r2-cf-backups-prod" snapshots
+restic -r "s3:https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/backups" snapshots
 ```
 
 Expected result:
@@ -176,18 +235,21 @@ Expected result:
 Prerequisite: R2-Explorer is deployed and Worker admin signing inputs are available.
 In managed NixOS deployments, this is typically provided via
 `/run/secrets/r2/explorer.env` (wired through `programs.r2-cloud.explorerEnvFile`).
+Replace `files.example.com` below with your deployment's own domain.
 
 ```bash
-r2 share nix-r2-cf-r2e-files-prod workspace/demo.txt 24h
-share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 1)"
+r2 share files workspace/demo.txt 24h
+share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 2)"
 echo "${share_json}"
 share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
 token_id="$(printf '%s' "${share_json}" | jq -r '.tokenId')"
 r2 share worker list files workspace/demo.txt
-curl -I "${share_url}"
-curl -I https://files.unsigned.sh/api/v2/list
-# Best-effort cleanup (ignore if token already exhausted/revoked).
-r2 share worker revoke "${token_id}" || true
+curl -sS -o /dev/null -w '%{http_code}\n' "${share_url}"
+curl -sS -o /dev/null -w '%{http_code}\n' https://files.example.com/api/v2/list
+# Cleanup: revoke the token now that verification is done.
+if ! r2 share worker revoke "${token_id}"; then
+  echo "Warning: failed to revoke token ${token_id}; revoke it manually." >&2
+fi
 ```
 
 Expected result:
@@ -195,8 +257,8 @@ Expected result:
 - presigned command returns an R2 S3 URL
 - worker create returns a `url` on your custom domain
 - worker list includes the created token record
-- `GET <url>` returns object response headers for a valid token
-- `GET /api/v2/list` remains Cloudflare-Access protected (not public)
+- `GET <url>` prints status `200` for a valid token
+- `GET /api/v2/list` prints a non-`200` status (Cloudflare-Access protected, not public)
 
 For Access policy and Worker token behavior details, continue in `docs/sharing.md`.
 For failure diagnosis across sync/backup/share/auth flows, use

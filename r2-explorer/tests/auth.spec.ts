@@ -158,6 +158,26 @@ describe("auth middleware", () => {
     expect(response.status).toBe(200);
   });
 
+  // Cloudflare's current docs (Authorization cookie, Application token) describe
+  // only one CF_Authorization cookie per domain, plus best-effort trimming of
+  // oversized custom claims; they document no CF_Authorization_<N> chunking
+  // contract to reassemble. This pins today's fallback: take whichever
+  // CF_Authorization_* cookie appears first and treat it as a complete JWT.
+  it("accepts a complete Access JWT carried in a single CF_Authorization_* fallback cookie", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+    const jwt = createAccessJwt({ email: "ops@example.com" });
+    const response = await app.fetch(
+      new Request("https://files.example.com/api/v2/list?prefix=", {
+        headers: {
+          cookie: `CF_Authorization_0=${encodeURIComponent(jwt)}`,
+        },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+  });
+
   it("enforces required read scope on /api/v2/list", async () => {
     const { env } = await createTestEnv();
     env.R2E_ACCESS_REQUIRED_SCOPES_READ = "r2.read";

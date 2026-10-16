@@ -35,11 +35,44 @@ type CachedAuthSigningKeys = {
   fallbackByAlg: Map<SupportedJwtAlg, CryptoKey>;
 };
 
-const authSigningKeyCache = new Map<string, CachedAuthSigningKeys>();
+// A JWKS fetch failure is cached for a few seconds: long enough that an
+// Access outage does not turn into a live fetch on every single request,
+// short enough that recovery is visible almost immediately once the endpoint
+// is back.
+const NEGATIVE_CACHE_TTL_MS = 5_000;
+
+// An unknown kid forces at most one refetch per interval, independent of
+// R2E_ACCESS_JWKS_CACHE_TTL_SEC. 30s is short enough that a genuine Access
+// key rotation authenticates again well within a client's own retry window,
+// and long enough that spamming invented kids cannot turn into a live JWKS
+// fetch on every request.
+const MIN_FORCED_REFRESH_INTERVAL_MS = 30_000;
+
+type SigningKeysCacheEntry = {
+  /** Most recently resolved key set, if any fetch for this cache key has ever succeeded. */
+  resolved?: CachedAuthSigningKeys;
+  /** Shared by concurrent callers that find a cold or expired cache, so they issue one fetch, not one each. */
+  inFlight?: Promise<CachedAuthSigningKeys>;
+  /** Completion time of the most recent fetch attempt (success or failure); gates both the negative cache and the forced-refresh rate limit. */
+  lastAttemptAtMs?: number;
+  /** Error from the most recent attempt, if it failed. */
+  lastError?: unknown;
+};
+
+const authSigningKeyCache = new Map<string, SigningKeysCacheEntry>();
 
 /** Clear the JWKS signing key cache. Exported for test teardown. */
 export function resetAuthSigningKeyCache(): void {
   authSigningKeyCache.clear();
+}
+
+function signingKeysCacheEntry(cacheKey: string): SigningKeysCacheEntry {
+  let entry = authSigningKeyCache.get(cacheKey);
+  if (!entry) {
+    entry = {};
+    authSigningKeyCache.set(cacheKey, entry);
+  }
+  return entry;
 }
 
 function parseScopeList(value: string | undefined): string[] {
@@ -463,20 +496,72 @@ async function fetchAccessSigningKeys(jwksUrl: string): Promise<CachedAuthSignin
   };
 }
 
+/**
+ * Resolve the cached JWKS key set, fetching only when required:
+ * - A fresh resolved entry (age < ttlSec) is returned as-is unless forced.
+ * - Concurrent callers that find no in-flight fetch and no usable cache share
+ *   one fetch: the in-flight promise is stored before any await, so callers
+ *   racing in the same microtask turn all observe it.
+ * - A forced refresh (unknown kid) is itself rate-limited to at most one
+ *   attempt per MIN_FORCED_REFRESH_INTERVAL_MS, independent of ttlSec, so
+ *   inventing kids cannot force a fetch on every request.
+ * - A recent failure is cached for NEGATIVE_CACHE_TTL_MS and re-thrown
+ *   directly, so an outage does not become a fetch per request.
+ */
 async function accessSigningKeys(
   cacheKey: string,
   jwksUrl: string,
   ttlSec: number,
   forceRefresh = false,
 ): Promise<CachedAuthSigningKeys> {
+  const entry = signingKeysCacheEntry(cacheKey);
   const nowMs = Date.now();
-  const cached = authSigningKeyCache.get(cacheKey);
-  if (!forceRefresh && cached && nowMs - cached.fetchedAtMs < ttlSec * 1000) {
-    return cached;
+
+  if (!forceRefresh && entry.resolved && nowMs - entry.resolved.fetchedAtMs < ttlSec * 1000) {
+    return entry.resolved;
   }
-  const fresh = await fetchAccessSigningKeys(jwksUrl);
-  authSigningKeyCache.set(cacheKey, fresh);
-  return fresh;
+
+  if (entry.inFlight) {
+    return entry.inFlight;
+  }
+
+  if (
+    entry.lastError !== undefined &&
+    entry.lastAttemptAtMs !== undefined &&
+    nowMs - entry.lastAttemptAtMs < NEGATIVE_CACHE_TTL_MS
+  ) {
+    throw entry.lastError;
+  }
+
+  if (
+    forceRefresh &&
+    entry.lastAttemptAtMs !== undefined &&
+    nowMs - entry.lastAttemptAtMs < MIN_FORCED_REFRESH_INTERVAL_MS
+  ) {
+    if (entry.resolved) {
+      return entry.resolved;
+    }
+    if (entry.lastError !== undefined) {
+      throw entry.lastError;
+    }
+  }
+
+  const attempt = (async () => {
+    try {
+      const fresh = await fetchAccessSigningKeys(jwksUrl);
+      entry.resolved = fresh;
+      entry.lastError = undefined;
+      return fresh;
+    } catch (error) {
+      entry.lastError = error;
+      throw error;
+    } finally {
+      entry.lastAttemptAtMs = Date.now();
+      entry.inFlight = undefined;
+    }
+  })();
+  entry.inFlight = attempt;
+  return attempt;
 }
 
 function parseSupportedJwtAlg(raw: unknown): SupportedJwtAlg {
@@ -528,6 +613,10 @@ async function validateAccessJwt(jwt: string, env: Env): Promise<AuthJwtPayload>
   let keys = await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec);
   let key = keyForJwt(parsed.header, keys, jwtAlg);
   if (!key) {
+    // Unknown kid: force a refetch (rate-limited inside accessSigningKeys) so
+    // a genuine Access key rotation is picked up without waiting out
+    // cacheTtlSec, while spamming invented kids cannot force a fetch per
+    // request.
     keys = await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
     key = keyForJwt(parsed.header, keys, jwtAlg);
   }
@@ -545,23 +634,21 @@ async function validateAccessJwt(jwt: string, env: Env): Promise<AuthJwtPayload>
   } catch {
     verified = false;
   }
-  if (!verified) {
-    const refreshed = await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true);
-    const refreshedKey = keyForJwt(parsed.header, refreshed, jwtAlg);
-    if (!refreshedKey) {
-      throw new HttpError(
-        401,
-        "token_invalid_signature",
-        `Access JWT key id was not found in current JWKS set for alg ${jwtAlg}.`,
-      );
-    }
-    try {
-      verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey, jwtAlg);
-    } catch {
-      verified = false;
+  if (!verified && !claimString(parsed.header.kid)) {
+    // A kid-less token selects its key by algorithm, so a rotation never shows
+    // up as an unknown kid: retry once against a (rate-limited) refetch.
+    const refreshedKey = keyForJwt(parsed.header, await accessSigningKeys(cacheKey, jwksUrl, cacheTtlSec, true), jwtAlg);
+    if (refreshedKey && refreshedKey !== key) {
+      try {
+        verified = await verifyJwtSignature(signingInput, parsed.encodedSignature, refreshedKey, jwtAlg);
+      } catch {
+        verified = false;
+      }
     }
   }
   if (!verified) {
+    // A failure against a known kid is never a reason to refetch: the same key
+    // would come back, and a forged token would buy a JWKS fetch per request.
     throw new HttpError(401, "token_invalid_signature", "Access JWT signature validation failed.");
   }
 

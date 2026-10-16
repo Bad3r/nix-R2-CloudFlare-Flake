@@ -6,9 +6,9 @@ import {
   guessContentType,
   isInlinePreview,
   normalizeObjectKey,
-  responseFromObject,
+  respondToRangedObject,
 } from "../object-response";
-import { getObject, headObject, listObjects, moveObject, softDeleteObject } from "../r2";
+import { backupObjectToTrash, getObjectForRead, headObject, listObjects, moveObject, softDeleteObject } from "../r2";
 import {
   listQuerySchema,
   listResponseSchema,
@@ -21,6 +21,17 @@ import {
 } from "../schemas";
 import { UPLOAD_STAGING_PREFIX } from "./upload";
 import { jsonValidated, queryPayload, readJsonBody, requestActor, validateSchema } from "../validate";
+
+// Prefixes owned by systems outside this Worker's API. `.git-annex/` is the
+// R2-side content store for the repo's git-annex special remote (see
+// AGENTS.md's Architecture section); letting delete/move reach it can corrupt
+// that remote for every clone without this Worker ever seeing it happen.
+const RESERVED_KEY_PREFIXES = [UPLOAD_STAGING_PREFIX, ".git-annex/"];
+
+function reservedPrefixError(action: "Delete" | "Move", code: string, key: string): HttpError | null {
+  const prefix = RESERVED_KEY_PREFIXES.find((candidate) => key.startsWith(candidate));
+  return prefix ? new HttpError(400, code, `${action} cannot touch the reserved prefix: ${prefix}`) : null;
+}
 
 /**
  * Register the object routes: GET list/meta/download/preview and the POST
@@ -69,21 +80,29 @@ export function registerObjectRoutes(app: Hono<AppContext>): void {
   app.get("/api/v2/download", async (c) => {
     const query = validateSchema(metaQuerySchema, queryPayload(c.req.raw), "query");
     const key = normalizeObjectKey(query.key);
-    const object = await getObject(c.env.FILES_BUCKET, key);
-    return responseFromObject(object, key, "attachment", { hardening: "strict" });
+    // Hono maps HEAD onto this GET handler and discards the body afterward
+    // (c.req.method still reports HEAD here); Range never applies to HEAD,
+    // since a HEAD response describes the whole resource regardless of Range.
+    const isHead = c.req.method === "HEAD";
+    const result = await getObjectForRead(c.env.FILES_BUCKET, key, c.req.raw.headers, { allowRange: !isHead });
+    return respondToRangedObject(result, key, "attachment", { hardening: "strict", includeBody: !isHead });
   });
 
   app.get("/api/v2/preview", async (c) => {
     const query = validateSchema(metaQuerySchema, queryPayload(c.req.raw), "query");
     const key = normalizeObjectKey(query.key);
-    const object = await getObject(c.env.FILES_BUCKET, key);
+    const isHead = c.req.method === "HEAD";
+    const result = await getObjectForRead(c.env.FILES_BUCKET, key, c.req.raw.headers, { allowRange: !isHead });
     const tempHeaders = new Headers();
-    object.writeHttpMetadata(tempHeaders);
+    if (result.kind !== "unsatisfiable_range") {
+      result.object.writeHttpMetadata(tempHeaders);
+    }
     const sourceType = tempHeaders.get("content-type") ?? guessContentType(key);
     const inline = isInlinePreview(sourceType);
-    return responseFromObject(object, key, inline ? "inline" : "attachment", {
+    return respondToRangedObject(result, key, inline ? "inline" : "attachment", {
       forceContentType: sourceType,
       hardening: "preview",
+      includeBody: !isHead,
     });
   });
 
@@ -93,8 +112,9 @@ export function registerObjectRoutes(app: Hono<AppContext>): void {
     // The staging area belongs to in-flight multipart uploads; letting delete
     // reach it would let a writer soft-delete another session's staged bytes
     // between completion and validation.
-    if (key.startsWith(UPLOAD_STAGING_PREFIX)) {
-      throw new HttpError(400, "invalid_delete", `Delete cannot touch the reserved upload staging prefix: ${UPLOAD_STAGING_PREFIX}`);
+    const reservedError = reservedPrefixError("Delete", "invalid_delete", key);
+    if (reservedError) {
+      throw reservedError;
     }
     const result = await softDeleteObject(c.env.FILES_BUCKET, key);
     return jsonValidated(objectDeleteResponseSchema, {
@@ -110,10 +130,34 @@ export function registerObjectRoutes(app: Hono<AppContext>): void {
     // The staging area belongs to in-flight multipart uploads; letting move
     // read or write it would allow tampering with another session's staged
     // bytes between completion and validation.
-    if (fromKey.startsWith(UPLOAD_STAGING_PREFIX) || toKey.startsWith(UPLOAD_STAGING_PREFIX)) {
-      throw new HttpError(400, "invalid_move", `Move cannot touch the reserved upload staging prefix: ${UPLOAD_STAGING_PREFIX}`);
+    const reservedError =
+      reservedPrefixError("Move", "invalid_move", fromKey) ?? reservedPrefixError("Move", "invalid_move", toKey);
+    if (reservedError) {
+      throw reservedError;
     }
-    await moveObject(c.env.FILES_BUCKET, fromKey, toKey);
+    // Checked before the destination-exists probe below: otherwise a
+    // self-move would find its own key and report object_exists instead of
+    // the more specific invalid_move.
+    if (fromKey === toKey) {
+      throw new HttpError(400, "invalid_move", "Source and destination keys must be different.");
+    }
+    const existing = await headObject(c.env.FILES_BUCKET, toKey);
+    if (existing) {
+      if (!body.overwrite) {
+        throw new HttpError(409, "object_exists", `Destination key already exists: ${toKey}`, { key: toKey });
+      }
+      // Back up without deleting: moveObject's own copy below replaces the
+      // destination atomically, so a failed move leaves the prior
+      // destination object exactly as it was (plus a redundant, harmless
+      // trash copy), instead of the destination briefly holding nothing.
+      await backupObjectToTrash(c.env.FILES_BUCKET, toKey);
+    }
+    // Without overwrite, createOnlyIfAbsent closes the race between the head
+    // check above and this copy: a key created in between still fails with
+    // object_exists instead of silently overwriting whatever landed there.
+    await moveObject(c.env.FILES_BUCKET, fromKey, toKey, undefined, {
+      createOnlyIfAbsent: !body.overwrite,
+    });
     return jsonValidated(objectMoveResponseSchema, {
       fromKey,
       toKey,

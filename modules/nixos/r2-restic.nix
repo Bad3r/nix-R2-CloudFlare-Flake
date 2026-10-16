@@ -43,9 +43,22 @@ let
     set -euo pipefail
     ${resticRepositoryShell}
 
+    # Exit 3 means unreadable source files but a written snapshot (restic
+    # doc/040_backup.rst): retention must still run, then the unit fails.
+    backup_status=0
     ${pkgs.restic}/bin/restic backup \
       ${excludeFlags} \
-      ${backupPaths}
+      ${backupPaths} || backup_status=$?
+
+    if [[ "$backup_status" -ne 0 && "$backup_status" -ne 3 ]]; then
+      exit "$backup_status"
+    fi
+    if [[ "$backup_status" -eq 3 ]]; then
+      echo "Warning: restic backup exited 3: some source files could not be read; a snapshot was still created. Continuing to forget/prune." >&2
+    fi
+
+    # Only removes provably stale locks; same order as nixpkgs services.restic.
+    ${pkgs.restic}/bin/restic unlock
 
     ${pkgs.restic}/bin/restic forget \
       --keep-daily ${toString cfg.retention.daily} \
@@ -53,6 +66,10 @@ let
       --keep-monthly ${toString cfg.retention.monthly} \
       --keep-yearly ${toString cfg.retention.yearly} \
       --prune
+
+    if [[ "$backup_status" -eq 3 ]]; then
+      exit 3
+    fi
   '';
 in
 {
@@ -193,12 +210,17 @@ in
 
       environment = {
         RESTIC_PASSWORD_FILE = toString cfg.passwordFile;
+        # Not %C: restic needs the resolved path directly, and this must not
+        # depend on $HOME resolving for whatever User= a consumer sets.
+        RESTIC_CACHE_DIR = "/var/cache/r2-restic-backup";
       };
 
       serviceConfig = {
         Type = "oneshot";
         EnvironmentFile = cfg.credentialsFile;
         ExecStart = resticBackupScript;
+        CacheDirectory = "r2-restic-backup";
+        CacheDirectoryMode = "0700";
         NoNewPrivileges = true;
         PrivateTmp = true;
         ProtectKernelTunables = true;

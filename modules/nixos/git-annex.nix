@@ -84,6 +84,25 @@ let
         exit 0
       fi
 
+      # git annex initremote type=rclone reports a bare "remote does not
+      # exist or incorrectly contains a path" with no mention of rclone when
+      # the rcloneremotename section is missing. Check the effective rclone
+      # config directly first so the failure names the real cause.
+      remote_list="$(rclone listremotes)"
+      remote_configured=0
+      while IFS= read -r line; do
+        if [[ "$line" == "$rclone_remote_default:" ]]; then
+          remote_configured=1
+          break
+        fi
+      done <<<"$remote_list"
+      if [[ "$remote_configured" -ne 1 ]]; then
+        config_file_output="$(rclone config file)"
+        rclone_config_path="''${config_file_output##*$'\n'}"
+        echo "Error: rclone remote '$rclone_remote_default:' is not configured (checked: $rclone_config_path); enable programs.r2-cloud.enableRcloneRemote for this user or add an equivalent [$rclone_remote_default] section to rclone.conf." >&2
+        exit 1
+      fi
+
       git annex initremote "$remote_name" \
         type=rclone \
         rcloneremotename="$rclone_remote_default" \

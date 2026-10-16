@@ -4,7 +4,7 @@ Use this page as the primary navigation entrypoint for repository documentation.
 
 ## Core docs
 
-- [Quickstart](./quickstart.md)
+- [Quickstart](./quickstart.md) (includes a Home Manager only path for non-NixOS hosts)
 - [Credentials](./credentials.md)
 - [Sync](./sync.md)
 - [Sharing](./sharing.md)

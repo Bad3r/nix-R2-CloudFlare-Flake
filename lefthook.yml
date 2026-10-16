@@ -24,8 +24,8 @@ pre-commit:
         jobs:
           - name: treefmt
             tags: [formatting]
-            run: lefthook-treefmt
-            fail_text: "Formatting failed. Fix files and retry."
+            run: lefthook-treefmt {files}
+            fail_text: "Formatting failed. Run: nix fmt, then retry."
 
     - name: nix-linting
       priority: 2

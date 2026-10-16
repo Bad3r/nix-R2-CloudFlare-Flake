@@ -30,8 +30,13 @@ Notes:
   `~/.config/cloudflare/r2/env`).
 - System-wide deployments typically point `R2_CREDENTIALS_FILE` at
   `/run/secrets/r2/credentials.env` rendered from `secrets/r2.yaml`.
+- A bucket literally named `worker` cannot be used with `r2 share`, because
+  `worker` is the `r2 share worker` subcommand keyword. There is no escape
+  hatch; rename the bucket or use `r2 share worker` instead.
 - Required variables in the sourced credentials file:
-  - `R2_ACCOUNT_ID` (or HM-injected `R2_DEFAULT_ACCOUNT_ID`)
+  - `R2_ACCOUNT_ID` (falls back to the HM-injected `R2_DEFAULT_ACCOUNT_ID` when
+    unset; if both are set and differ, `R2_ACCOUNT_ID` wins and the CLI prints
+    a warning to stderr)
   - `AWS_ACCESS_KEY_ID`
   - `AWS_SECRET_ACCESS_KEY`
 
@@ -56,6 +61,11 @@ Multi-bucket aliases:
 - Optional `R2E_BUCKET_MAP` defines bucket aliases to Worker bindings.
 - The map must include `{"files":"FILES_BUCKET"}` to keep default behavior.
 - Each additional alias requires a matching `[[r2_buckets]]` binding in `wrangler.toml`.
+- A share record stores the bucket alias, not a resolved binding; `/share/<token-id>` resolves it
+  against the current `R2E_BUCKET_MAP` at download time. Removing an alias breaks every outstanding
+  share that used it (`bucket_unknown`); repointing an alias to a different binding silently
+  redirects those shares to the new bucket. List and revoke outstanding shares for an alias with
+  `/api/v2/share/list` before removing or repointing it.
 
 Example:
 
@@ -67,7 +77,27 @@ Behavior and constraints:
 
 - Share URL format: `https://files.unsigned.sh/share/<token-id>`
 - Token IDs are random and backed by KV record state (`R2E_SHARES_KV`).
-- `/share/<token-id>` validates expiry/revocation/download limits.
+- `/share/<token-id>` enforces expiry, revocation, and `maxDownloads` through a per-token
+  `ShareCounterDurableObject`, which stays authoritative even when a KV read at some edge is still
+  showing a stale pre-revocation or pre-exhaustion record, in both normal and readonly mode:
+  readonly mode still calls the counter's read-only status check and refuses a revoked or exhausted
+  share, it only skips writing the count, so `maxDownloads` decrementing, not enforcement, is what
+  is skipped while `R2E_READONLY` is enabled.
+- Download accounting: a request that serves a body starting at byte 0 (no `Range` header, or a
+  `Range` whose first byte is 0, including `bytes=0-`) is a download start and consumes one slot
+  before any byte is served. A request with a satisfiable `Range` starting past byte 0 is a
+  continuation: it consumes no slot when the token already has a counted download start within the
+  last 15 minutes, even if that start already reached `maxDownloads`; outside that window, or with
+  no prior counted start, it is treated as a new download start instead.
+- `HEAD`, and any request that ends in `304`/`412`/`416`, never consume a slot. Their status is
+  decided from the rule "would a GET carrying these same headers be refused": a `Range` header on
+  the request describing an offset past 0 grants the same resume-window exemption a real
+  continuation would get, even on a `HEAD`, which never honors `Range` in what it serves; a request
+  with no such `Range` header gets no exemption and is refused exactly like a fresh download start
+  would be. Revocation and expiry are never exempted by this rule.
+- `/share/<token-id>` always sends `Accept-Ranges: bytes` and supports the same `Range` and
+  `If-Match`/`If-None-Match`/`If-Modified-Since`/`If-Unmodified-Since` conditional requests as
+  `/api/v2/download`.
 - `/api/v2/*` is gated by Cloudflare Access and validated in-worker from:
   - `Cf-Access-Jwt-Assertion` request header.
   - `CF_Authorization` (or `CF_Authorization_*`) cookie.

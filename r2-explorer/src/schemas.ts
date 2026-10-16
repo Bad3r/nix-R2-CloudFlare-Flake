@@ -67,10 +67,13 @@ export const uploadInitBodySchema = z
   .object({
     filename: z.string().min(1).max(255),
     prefix: z.string().optional(),
-    declaredSize: z.number().int().positive(),
+    // 0 is schema-valid so the route can reject it with the specific
+    // upload_empty_file code instead of a generic validation_error.
+    declaredSize: z.number().int().nonnegative(),
     contentType: z.string().optional(),
     sha256: sha256String.optional(),
     clientUploadId: z.string().max(128).optional(),
+    overwrite: z.boolean().optional(),
   })
   .strict();
 
@@ -115,6 +118,7 @@ export const uploadCompleteBodySchema = z
     sessionId: z.string().min(1),
     uploadId: z.string().min(1),
     finalSize: z.number().int().positive().optional(),
+    overwrite: z.boolean().optional(),
     parts: z
       .array(
         z
@@ -169,6 +173,7 @@ export const objectMoveBodySchema = z
   .object({
     fromKey: keyString,
     toKey: keyString,
+    overwrite: z.boolean().optional(),
   })
   .strict();
 

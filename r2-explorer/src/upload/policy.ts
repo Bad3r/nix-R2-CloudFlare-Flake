@@ -24,6 +24,12 @@ export const R2_MAX_PART_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
 const DEFAULT_UPLOAD_PART_SIZE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_UPLOAD_SESSION_TTL_SEC = 3600;
 const DEFAULT_UPLOAD_SIGN_TTL_SEC = 60;
+/**
+ * Conservative minimum sustained upload throughput a signed part URL must
+ * remain valid for. Used only to fail fast when R2E_UPLOAD_SIGN_TTL_SEC is
+ * clearly too low for R2E_UPLOAD_PART_SIZE_BYTES; not a real-world guarantee.
+ */
+const MIN_UPLOAD_THROUGHPUT_BYTES_PER_SEC = 1024 * 1024;
 
 /**
  * Normalize a client-supplied upload prefix: strips leading slashes, rejects
@@ -117,6 +123,23 @@ export function parseUploadPolicy(env: Env): UploadPolicy {
     );
   }
 
+  const signPartTtlSec = envInt(
+    "R2E_UPLOAD_SIGN_TTL_SEC",
+    env.R2E_UPLOAD_SIGN_TTL_SEC,
+    DEFAULT_UPLOAD_SIGN_TTL_SEC,
+    "upload_config_invalid",
+  );
+  const minSignPartTtlSec = Math.ceil(configuredPartSize / MIN_UPLOAD_THROUGHPUT_BYTES_PER_SEC);
+  if (signPartTtlSec < minSignPartTtlSec) {
+    throw new HttpError(
+      500,
+      "upload_config_invalid",
+      `R2E_UPLOAD_SIGN_TTL_SEC (${signPartTtlSec}) is too low for R2E_UPLOAD_PART_SIZE_BYTES ` +
+        `(${configuredPartSize}) at the documented minimum throughput of 1 MiB/s; needs at least ` +
+        `${minSignPartTtlSec} seconds.`,
+    );
+  }
+
   const allowedMime = Array.from(new Set(parseList(env.R2E_UPLOAD_ALLOWED_MIME).map(normalizeMimeType)));
   const blockedMime = Array.from(new Set(parseList(env.R2E_UPLOAD_BLOCKED_MIME).map(normalizeMimeType)));
   const allowedExtensions = Array.from(
@@ -162,12 +185,7 @@ export function parseUploadPolicy(env: Env): UploadPolicy {
       DEFAULT_UPLOAD_SESSION_TTL_SEC,
       "upload_config_invalid",
     ),
-    signPartTtlSec: envInt(
-      "R2E_UPLOAD_SIGN_TTL_SEC",
-      env.R2E_UPLOAD_SIGN_TTL_SEC,
-      DEFAULT_UPLOAD_SIGN_TTL_SEC,
-      "upload_config_invalid",
-    ),
+    signPartTtlSec,
     partSizeBytes: configuredPartSize,
     allowedMime,
     blockedMime,

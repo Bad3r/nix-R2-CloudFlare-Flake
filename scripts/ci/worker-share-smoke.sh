@@ -123,40 +123,6 @@ dump_response_context() {
   fi
 }
 
-assert_no_cloudflare_access_redirect() {
-  local label="$1"
-  local url="$2"
-  local body_file="$3"
-  local headers_file="$4"
-  local status curl_exit location
-
-  set +e
-  status="$(
-    curl -sS \
-      --max-time "${SMOKE_TIMEOUT_SEC}" \
-      --connect-timeout "${SMOKE_CONNECT_TIMEOUT_SEC}" \
-      -D "${headers_file}" \
-      -o "${body_file}" \
-      -w "%{http_code}" \
-      "${url}"
-  )"
-  curl_exit=$?
-  set -e
-
-  if [[ ${curl_exit} -ne 0 ]]; then
-    fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
-  fi
-
-  if [[ ${status} == "302" ]]; then
-    location="$(
-      awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2; exit }' "${headers_file}"
-    )"
-    if [[ ${location} == *"/cdn-cgi/access/login/"* || ${location} == *"/cdn-cgi/access/login"* ]]; then
-      fail "${label} hit Cloudflare Access redirect (${location}). /api/v2/* must not be edge-gated; remove stale Access app domains for this host."
-    fi
-  fi
-}
-
 should_retry_status() {
   local status="$1"
 
@@ -189,7 +155,7 @@ assert_http_status() {
   local body_file="$4"
   local follow_redirects="$5"
   shift 5
-  local max_attempts attempt status curl_exit
+  local max_attempts attempt status curl_exit headers_file location
   local -a curl_args expected_statuses
 
   IFS=',' read -r -a expected_statuses <<<"${expected_statuses_raw}"
@@ -198,12 +164,18 @@ assert_http_status() {
   fi
 
   max_attempts=$((SMOKE_RETRIES + 1))
+  # A caller-supplied "-D" in "$@" (see preflight's call) overrides this, since
+  # curl only honors the last "-D"; that is fine because such callers already
+  # allow 302, so the redirect check below never applies to their failure path.
+  headers_file="${body_file}.headers"
   curl_args=(
     -sS
     --max-time
     "${SMOKE_TIMEOUT_SEC}"
     --connect-timeout
     "${SMOKE_CONNECT_TIMEOUT_SEC}"
+    -D
+    "${headers_file}"
     -o
     "${body_file}"
     -w
@@ -237,6 +209,16 @@ assert_http_status() {
     if [[ ${curl_exit} -ne 0 ]]; then
       fail "${label} request failed with curl exit ${curl_exit} (timeout=${SMOKE_TIMEOUT_SEC}s)"
     fi
+
+    if [[ ${status} == "302" && -s ${headers_file} ]]; then
+      location="$(
+        awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); print $2; exit }' "${headers_file}"
+      )"
+      if [[ ${location} == *"/cdn-cgi/access/login/"* || ${location} == *"/cdn-cgi/access/login"* ]]; then
+        fail "${label} hit Cloudflare Access redirect (${location}). /api/v2/* must not be edge-gated; remove stale Access app domains for this host."
+      fi
+    fi
+
     fail "${label} expected HTTP ${expected_statuses_raw}, got ${status}"
   done
 }
@@ -357,6 +339,58 @@ else
   fi
 fi
 
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke.XXXXXX")"
+token_id=""
+share_revoked="false"
+
+# Revokes the smoke share exactly once. Called from the success path below and
+# from cleanup on every exit (assertion failure, Ctrl-C, ...) so a token
+# created here never outlives the script that created it. token_id is empty
+# until the share create response is parsed below, so an exit before that
+# (including a malformed create response) is a no-op instead of a revoke call
+# with an empty token id.
+revoke_share_token() {
+  local revoke_json revoke_exit revoked
+  local revoke_stderr="${tmp_dir}/revoke.stderr"
+
+  if [[ -z ${token_id} || ${share_revoked} == "true" ]]; then
+    return 0
+  fi
+
+  set +e
+  revoke_json="$("${R2_BIN}" share worker revoke "${token_id}" 2>"${revoke_stderr}")"
+  revoke_exit=$?
+  set -e
+
+  if [[ ${revoke_exit} -ne 0 ]]; then
+    echo "ERROR: 'r2 share worker revoke ${token_id}' exited ${revoke_exit}:" >&2
+    cat "${revoke_stderr}" >&2
+    return 1
+  fi
+
+  if ! revoked="$(jq -r '.revoked // empty' <<<"${revoke_json}")"; then
+    echo "ERROR: revoke response for smoke share token ${token_id} is not valid JSON: ${revoke_json}" >&2
+    return 1
+  fi
+  if [[ ${revoked} != "true" ]]; then
+    echo "ERROR: revoke response for smoke share token ${token_id} did not confirm revoked=true: ${revoke_json}" >&2
+    return 1
+  fi
+
+  share_revoked="true"
+}
+
+cleanup() {
+  local exit_status=$?
+  if ! revoke_share_token; then
+    echo "ERROR: smoke share token ${token_id} may still be live; revoke manually with '${R2_BIN} share worker revoke ${token_id}'." >&2
+  fi
+  preflight_cleanup
+  rm -rf "${tmp_dir}"
+  exit "${exit_status}"
+}
+trap cleanup EXIT
+
 create_json="$(
   "${R2_BIN}" share worker create \
     "${SMOKE_BUCKET}" \
@@ -381,13 +415,6 @@ fi
 
 echo "Created smoke share token ${token_id} (expires ${expires_at})"
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/worker-smoke.XXXXXX")"
-cleanup() {
-  preflight_cleanup
-  rm -rf "${tmp_dir}"
-}
-trap cleanup EXIT
-
 first_download_body="${tmp_dir}/first-download.body"
 assert_http_status "200" "first download" "${share_url}" "${first_download_body}" "true"
 
@@ -409,10 +436,8 @@ if [[ -z ${api_authed_version} ]]; then
   fail "authenticated /api/v2/session/info did not return version"
 fi
 
-revoke_json="$("${R2_BIN}" share worker revoke "${token_id}")"
-revoked="$(jq -r '.revoked // empty' <<<"${revoke_json}")"
-if [[ ${revoked} != "true" ]]; then
-  fail "share revoke response did not confirm revoked=true"
+if ! revoke_share_token; then
+  fail "failed to revoke smoke share token ${token_id}"
 fi
 
 echo "Worker smoke checks passed."

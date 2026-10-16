@@ -40,11 +40,11 @@ export function useKeyboardNav(actions: KeyboardActions, prefixInput: RefObject<
           focusPrefix();
           prefixInput.current?.focus();
           return;
-        case event.key === "j":
+        case event.key === "j" || event.key === "ArrowDown":
           event.preventDefault();
           moveDown();
           return;
-        case event.key === "k":
+        case event.key === "k" || event.key === "ArrowUp":
           event.preventDefault();
           moveUp();
           return;

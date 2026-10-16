@@ -4,7 +4,7 @@ packages:
 # the workspace manifest, so the package.json copy was silently ignored and left
 # a duplicate transitive wrangler@4.50.0 in the tree alongside the pinned 4.71.0.
 overrides:
-  svgo: ^4.0.1
+  svgo: ^4.1.0
   wrangler: ^4.108.0
   # Security floors for transitive advisories (pnpm audit --audit-level=high).
   # Caret floors keep each package on its current major; a bare ">=" resolves
@@ -23,13 +23,20 @@ overrides:
   # via vite>postcss;
   # js-yaml <4.3.1 quadratic CPU in !!omap (GHSA-5p4m-2wfm-xmqj) via
   # @astrojs/cloudflare>@astrojs/internal-helpers.
-  sharp: ">=0.35.0"
+  # sharp <0.35.4 inherits libheif GHSA-g89c-p67h-r497 and GHSA-2jg2-4ch7-h545
+  # (GHSA-rgj7-g3m4-5g8c) via miniflare>sharp and astro>sharp;
+  # svgo 4.0.x removeScripts bypass (GHSA-w27v-7q3p-w38r) via astro>svgo (the
+  # override above);
+  # smol-toml <=1.7.0 denial of service (GHSA-7w5x-hrqm-74c2) via
+  # @astrojs/internal-helpers>smol-toml.
+  sharp: ">=0.35.4"
   fast-uri: ^3.1.6
   undici: ^7.29.0
   browserslist: ^4.28.7
   postcss: ^8.5.18
   nanoid: ^3.3.18
   js-yaml: ^4.3.1
+  smol-toml: ^1.7.1
 allowBuilds:
   esbuild: true
   sharp: true
