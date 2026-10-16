@@ -196,7 +196,10 @@ let
   isChecksumCacheArg = arg: lib.elem (lib.head (lib.splitString "=" arg)) checksumCacheFlagNames;
   # The Bad3r/nixpkgs rclone patches for the two upstream hasher defects
   # described at bisync.checksumCache, matched by file name so a store path or
-  # fetchpatch name ending in it counts.
+  # fetchpatch name ending in it counts. The match guards against enabling the
+  # cache on an unpatched rclone by mistake; it does not prove the fixes are
+  # present. Re-check it on every pkgs.rclone bump, and once upstream ships
+  # both fixes, gate on the version instead.
   hasherFixPatches = [
     "hasher-hash-transfers-in-stream.patch"
     "hasher-fingerprint-current-file.patch"
