@@ -1,5 +1,8 @@
 excludes = [
   ".git/*",
+  # Vendored by `npx skills add` and pinned in skills-lock.json: reformatting
+  # would diverge from upstream and return on every refresh.
+  ".agents/*",
   "result",
   "*.lock",
   "*.patch",

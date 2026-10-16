@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
@@ -298,6 +299,11 @@ describeLive("live worker integration", () => {
         expect(authenticatedPayload.actor?.actor).toBeTruthy();
         expect(authenticatedPayload.actor?.actor).not.toBe("unknown");
 
+        // A unique filename per run: the object is never cleaned up
+        // afterward, so a fixed name would already exist on every rerun
+        // against the same deployment and get 409 object_exists instead of
+        // exercising the multipart flow.
+        const uploadFilename = `live-multipart-${randomUUID()}.bin`;
         const uploadInit = await fetchWithRetry(
           `${ci.baseUrl}/api/v2/upload/init`,
           {
@@ -310,7 +316,7 @@ describeLive("live worker integration", () => {
               ...accessHeaders,
             },
             body: JSON.stringify({
-              filename: "live-multipart.bin",
+              filename: uploadFilename,
               prefix: "live/",
               declaredSize: 4096,
               contentType: "application/octet-stream",

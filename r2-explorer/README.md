@@ -30,16 +30,33 @@ Web UI dev server:
 pnpm dev:web
 ```
 
+Run both in two terminals: the web dev server proxies `/api` and `/share` to the
+local API Worker on port 8787 (see `web/README.md`). `/share/*` works fully
+locally. `/api/v2/*` needs a Cloudflare Access JWT that only Cloudflare's edge
+issues and there is no local bypass, so authenticated routes answer 401 locally:
+exercise them against the deployed preview environment or through
+`pnpm run test:api`.
+
 ## Runtime routes
 
 API routes (Cloudflare Access protected):
 
 - `GET /api/v2/list`
-- `GET /api/v2/meta`
-- `GET /api/v2/download`
-- `GET /api/v2/preview`
+- `GET /api/v2/meta` (`key` query value must be percent-encoded with
+  `encodeURIComponent`; a literal `+` decodes as a space)
+- `GET /api/v2/download` (same `key` encoding rule; supports `Range` and the
+  `If-Match`/`If-None-Match`/`If-Modified-Since`/`If-Unmodified-Since`
+  conditional headers, returning `206`/`304`/`412`/`416` as appropriate;
+  `HEAD` returns the same headers with no body)
+- `GET /api/v2/preview` (same `key` encoding and Range/conditional support as
+  `/api/v2/download`)
 - `POST /api/v2/object/delete`
-- `POST /api/v2/object/move`
+- `POST /api/v2/object/move` (optional `overwrite: boolean` body field,
+  default `false`; without it, a move onto an existing key returns
+  `409 object_exists` instead of overwriting, enforced at write time so a
+  key created after the check still fails safely and leaves the concurrent
+  write intact; with `overwrite: true`, a copy of the replaced destination
+  object is kept under `.trash/` before the move replaces it)
 - `POST /api/v2/upload/init`
 - `POST /api/v2/upload/sign-part`
 - `POST /api/v2/upload/complete`
@@ -51,7 +68,14 @@ API routes (Cloudflare Access protected):
 
 Public token route:
 
-- `GET /share/<token>`
+- `GET /share/<token>` (supports `Range` and the same
+  `If-Match`/`If-None-Match`/`If-Modified-Since`/`If-Unmodified-Since` conditional headers as
+  `/api/v2/download`, returning `206`/`304`/`412`/`416` as appropriate; `HEAD` returns the same
+  headers with no body and never consumes a download; a byte-0 `GET` consumes one `maxDownloads`
+  slot, a `Range` continuation within 15 minutes of a counted download start does not, and a
+  `HEAD`/`304`/`412`/`416` outcome gets that same grace when its own `Range` header describes a
+  continuation; revocation and exhaustion are authoritative regardless of KV read staleness,
+  including in readonly mode, which only skips writing the count)
 
 ## Required API Worker bindings
 
@@ -77,9 +101,12 @@ Upload policy vars (all optional):
 
 - `R2E_UPLOAD_MAX_FILE_BYTES` (`0` = unlimited, default `0`)
 - `R2E_UPLOAD_MAX_PARTS` (`0` = up to R2 platform limit `10000`, default `0`)
-- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` (`0` = unlimited, default `0`)
+- `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` (`0` = unlimited, default `0`; counts sessions still uploading and
+  sessions still promoting, see below)
 - `R2E_UPLOAD_SESSION_TTL_SEC` (default `3600`)
-- `R2E_UPLOAD_SIGN_TTL_SEC` (default `60`)
+- `R2E_UPLOAD_SIGN_TTL_SEC` (default `60`; must cover `R2E_UPLOAD_PART_SIZE_BYTES` at a documented minimum
+  throughput of 1 MiB/s, or `/api/v2/upload/init` fails fast with `upload_config_invalid` naming both variables
+  and the minimum TTL required)
 - `R2E_UPLOAD_PART_SIZE_BYTES` (default `8388608`, must be `5 MiB` to `5 GiB`)
 - `R2E_UPLOAD_ALLOWED_MIME` (comma-separated MIME allowlist; empty disables allowlist)
 - `R2E_UPLOAD_BLOCKED_MIME` (comma-separated MIME blacklist; always enforced if set)
@@ -87,6 +114,49 @@ Upload policy vars (all optional):
 - `R2E_UPLOAD_BLOCKED_EXT` (comma-separated extension blacklist; always enforced if set)
 - `R2E_UPLOAD_PREFIX_ALLOWLIST` (comma-separated key prefix allowlist; empty allows all)
 - `R2E_UPLOAD_ALLOWED_ORIGINS` (comma-separated Origin allowlist for upload control-plane routes)
+
+Upload semantics:
+
+- Zero-byte files are rejected at `/api/v2/upload/init` with 400 `upload_empty_file`; empty-file upload is out of
+  scope. `declaredSize` must be greater than zero.
+- `/api/v2/upload/init` and `/api/v2/upload/complete` both accept an optional boolean `overwrite` (default
+  `false`). If the final object key already exists and neither request set `overwrite: true`, the request fails
+  with 409 `object_exists` (`error.details.key` names the key); at `init` no session or multipart upload is
+  created, and at `complete` the session and multipart upload stay intact so the client can retry `complete`
+  with `overwrite: true` or call `/api/v2/upload/abort`. When overwrite is allowed and an object exists at the
+  target key, a copy of that object is kept under `.trash/` (the same recoverability as delete) before the new
+  object replaces it; without overwrite, the replacement is conditional on the target key still being absent at
+  write time, so a key created after the check still fails with `object_exists` instead of silently overwriting
+  it, and the staged upload stays retryable either way. `init` also refuses a second session for the same target
+  key (`409 upload_object_key_in_use`) while an earlier session for it is still active or staged (mid-promotion),
+  until that session completes or aborts.
+- `/api/v2/upload/complete` is idempotent and resumable: retrying it after a full success replays the original
+  response instead of erroring, and retrying it after a promotion failure (for example, hitting the Worker
+  subrequest ceiling on a very large file) resumes promotion instead of re-running multipart completion.
+- While a promotion attempt is in flight (or its lease has not yet expired), a concurrent or retried
+  `/api/v2/upload/complete` gets 409 `upload_promotion_in_progress` with `error.details.retryAfterSeconds`
+  instead of racing the in-flight attempt; retry after the advertised delay. `/api/v2/upload/abort` refuses
+  with the same code under the same condition, rather than deleting the in-flight attempt's staged object.
+  The promoter renews its lease while copying, so a long promotion keeps it; a promoter whose lease lapsed
+  and was taken over by a retry gets the same 409 with `error.details.reason` `lease_lost` and stops writing.
+  Completion is recorded before the staged object is deleted, and a retried `complete` recognizes its own
+  promoted object at the target key through the `uploadSessionId` custom metadata that every object
+  uploaded through this flow carries (next to `originalFilename` and, when declared, `declaredSha256`).
+  A session holds its `R2E_UPLOAD_MAX_CONCURRENT_PER_USER` slot until it completes or aborts, so a long
+  promotion that keeps renewing its lease occupies a slot for as long as the copy runs, after every part
+  has been uploaded.
+- A declared or client-sent Content-Type of empty string or `application/octet-stream` is treated as "no real
+  declaration": if the uploaded bytes match a known signature (PDF, PNG, JPEG, GIF, WEBP, ZIP family), that
+  detected type is accepted and reported back as the object's `contentType` instead of the placeholder value.
+  Blocked/allowed MIME policy is still enforced against the detected type in this case.
+- Large-file promotion (copying a completed staged upload to its final key once it exceeds the single-put limit)
+  is bounded by R2's own 10000-part multipart upload ceiling at the 128 MiB copy-part size used internally,
+  roughly 1.2 TiB. `wrangler.toml`'s `[limits] subrequests` is raised above the Workers Paid plan default so the
+  Worker's own subrequest ceiling does not cut in below that R2-imposed ceiling; see the comment there for the
+  math. Cloudflare accepts `[limits]` only for a Worker on the Workers Standard usage model: a Worker still on the
+  legacy Bundled or Unbound model fails to deploy with API error 10205 ("Bundled and Unbound usage models do not
+  support setting CPU limits"). Switch each Worker (production and `-preview`) under Workers & Pages, the Worker,
+  Settings, Usage Model; the account default only applies to Workers created later.
 
 Required API Worker secrets:
 
@@ -194,10 +264,11 @@ Required workflow variable in GitHub Environments (`preview` and `production`):
     are skipped with explicit notices.
   - Production: must be non-empty; deploy fails fast if not set.
 
-Required API token permissions for CSP sync:
+Required API token permissions for CSP sync, on the zone named by
+`R2E_CF_ZONE_NAME`:
 
-- `Zone Rulesets Write`
-- `Zone Rulesets Read`
+- `Transform Rules Write`
+- `Zone Read` (resolves the zone ID; not needed when `R2E_CF_ZONE_ID` is set)
 
 ## Preview host routing
 

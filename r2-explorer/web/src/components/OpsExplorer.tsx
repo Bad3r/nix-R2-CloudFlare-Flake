@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { ACCESS_API_BOOTSTRAP_PATH } from "../lib/api";
+import { buildAcceptAttribute, normalizeShareTtl, parseMaxDownloads } from "../lib/format";
 import { useActivityLog } from "../hooks/useActivityLog";
 import { useSessionBootstrap } from "../hooks/useSessionBootstrap";
 import { useObjectBrowser } from "../hooks/useObjectBrowser";
@@ -29,7 +30,17 @@ export function OpsExplorer(): JSX.Element {
   const onAuthRequired = useCallback(() => setAuthRequired(true), [setAuthRequired]);
   const onAuthOk = useCallback(() => setAuthRequired(false), [setAuthRequired]);
 
-  const browser = useObjectBrowser({ log, onAuthRequired, onAuthOk });
+  const browser = useObjectBrowser({ log, onAuthRequired, onAuthOk, session });
+
+  // Share TTL/max-downloads live here (not in ObjectDetail) so the Shift+R
+  // shortcut below reads the same values the visible form shows, instead of
+  // diverging from it with its own hardcoded defaults.
+  const [shareTtl, setShareTtl] = useState("24h");
+  const [shareMaxDownloads, setShareMaxDownloads] = useState("1");
+  const shareTtlRef = useRef(shareTtl);
+  shareTtlRef.current = shareTtl;
+  const shareMaxDownloadsRef = useRef(shareMaxDownloads);
+  shareMaxDownloadsRef.current = shareMaxDownloads;
 
   // Live mirrors so async callbacks read current values without churny deps.
   const prefixRef = useRef(browser.prefix);
@@ -79,10 +90,29 @@ export function OpsExplorer(): JSX.Element {
       moveUp: () => browser.moveSelection(-1),
       preview: () => browser.selectedKey && preview(browser.selectedKey),
       download: () => browser.selectedKey && download(browser.selectedKey),
-      createShare: () => browser.performShareCreate("24h", 1),
+      createShare: () => {
+        // Same validation and values as the visible Inspector form, read via
+        // ref mirrors so this stays a stable callback across state updates.
+        const ttlResult = normalizeShareTtl(shareTtlRef.current);
+        if (!ttlResult.ok) {
+          log.append(`Share not created: ${ttlResult.message}`, "error");
+          return;
+        }
+        const maxDownloadsResult = parseMaxDownloads(shareMaxDownloadsRef.current);
+        if (!maxDownloadsResult.ok) {
+          log.append(`Share not created: ${maxDownloadsResult.message}`, "error");
+          return;
+        }
+        void browser.performShareCreate(ttlResult.value, maxDownloadsResult.value);
+      },
       hasSelection: Boolean(browser.selectedObject),
     },
     prefixInputRef,
+  );
+
+  const uploadAccept = buildAcceptAttribute(
+    session?.limits.upload.allowedExtensions ?? [],
+    session?.limits.upload.allowedMime ?? [],
   );
 
   return (
@@ -102,8 +132,11 @@ export function OpsExplorer(): JSX.Element {
           <UploadPanel
             uploads={uploads.uploads}
             prefix={browser.prefix}
+            accept={uploadAccept}
             onEnqueue={uploads.enqueue}
             onCancel={uploads.cancel}
+            onRetryOverwrite={uploads.retryOverwrite}
+            onSkip={uploads.skip}
             onClearFinished={uploads.clearFinished}
           />
         </div>
@@ -144,6 +177,10 @@ export function OpsExplorer(): JSX.Element {
               loadingShares={browser.loadingShares}
               sharesError={browser.sharesError}
               mutating={browser.mutating}
+              shareTtl={shareTtl}
+              onShareTtlChange={setShareTtl}
+              shareMaxDownloads={shareMaxDownloads}
+              onShareMaxDownloadsChange={setShareMaxDownloads}
               onPreview={preview}
               onDownload={download}
               onMove={browser.performMove}

@@ -22,8 +22,7 @@ are typically sops-nix outputs derived from `secrets/r2.yaml`.
 
 When `manage = true`, evaluation fails if any assertion below is violated:
 
-- `programs.r2-cloud.credentials.accountId (or programs.r2-cloud.accountId) must be set when programs.r2-cloud.credentials.manage = true`
-- `programs.r2-cloud.credentials.accountIdFile (or programs.r2-cloud.accountIdFile) may be used when no literal account ID is set`
+- `programs.r2-cloud.credentials.accountId or accountIdFile (or programs.r2-cloud.accountId/accountIdFile) must be set when programs.r2-cloud.credentials.manage = true`
 - `programs.r2-cloud.credentials.accessKeyIdFile must be set when programs.r2-cloud.credentials.manage = true`
 - `programs.r2-cloud.credentials.secretAccessKeyFile must be set when programs.r2-cloud.credentials.manage = true`
 - `programs.r2-cloud.credentials.outputFile must match programs.r2-cloud.credentialsFile when both credential management and programs.r2-cloud.enable are enabled`

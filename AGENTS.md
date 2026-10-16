@@ -79,7 +79,7 @@ Available via `nix run nixpkgs#<package>` or system install:
 - **wrangler**: Cloudflare Workers CLI. Deploy, dev, and manage Workers and R2 buckets. `wrangler r2 bucket list`, `wrangler dev`, `wrangler deploy`.
 - **cloudflared**: Cloudflare Tunnel daemon. Expose local services, access private resources, test Access policies.
 - **flarectl**: Cloudflare API CLI. Manage DNS, zones, and account settings. Useful for scripting Cloudflare configuration.
-- **rclone**: File sync and mount. Test R2 connectivity with `rclone lsd r2:` or mount with `rclone mount`.
+- **rclone**: File sync and mount. Test R2 connectivity with `nix run .#r2 -- rclone lsd r2:` (the wrapper exports `RCLONE_CONFIG_<REMOTE>_ENDPOINT` for endpoint-less remotes) or mount with `rclone mount`. Bare `rclone lsd r2:` needs that variable exported manually when the remote uses `accountIdFile`; see `docs/reference/programs-r2-cloud-rclone-config.md`, "Endpoint-less mode".
 - **restic**: Backup tool. Test backup/restore workflows to R2.
 - **git-annex**: Large file management. Test special remote setup with `git annex initremote`.
 - **pnpm/nodejs**: Worker package management, typecheck, tests, and local dev.

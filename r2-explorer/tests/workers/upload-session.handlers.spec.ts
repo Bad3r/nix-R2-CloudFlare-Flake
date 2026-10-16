@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app";
 import { stagingObjectKey } from "../../src/routes/upload";
 import type { Env } from "../../src/types";
@@ -207,5 +207,105 @@ describe("upload session durable object under workerd", () => {
     );
     expect(foreignSign.status).toBe(404);
     expect(((await foreignSign.json()) as ErrorPayload).error?.code).toBe("upload_session_not_found");
+  });
+});
+
+describe("upload completion resilience under workerd (UPS-001)", () => {
+  useWorkersAccessJwks();
+
+  it("resumes and completes on retry after a real-bucket promotion failure", async () => {
+    const app = createApp();
+    const auth = { email: "resume@example.com", sub: "user-resume" };
+
+    const initResponse = await initUpload(app, testEnv, { filename: "resume.bin", auth, declaredSize: 16 });
+    expect(initResponse.status).toBe(200);
+    const init = (await initResponse.json()) as InitPayload;
+
+    const partBytes = new Uint8Array(16).fill(1);
+    const signResponse = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/sign-part", {
+        method: "POST",
+        headers: await jsonMutationHeaders(auth),
+        body: JSON.stringify({
+          sessionId: init.sessionId,
+          uploadId: init.uploadId,
+          partNumber: 1,
+          contentLength: partBytes.byteLength,
+        }),
+      }),
+      testEnv,
+    );
+    expect(signResponse.status).toBe(200);
+
+    const upload = testEnv.FILES_BUCKET.resumeMultipartUpload(
+      stagingObjectKey(init.sessionId, init.objectKey),
+      init.uploadId,
+    );
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeBody = JSON.stringify({
+      sessionId: init.sessionId,
+      uploadId: init.uploadId,
+      finalSize: partBytes.byteLength,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+
+    const putSpy = vi.spyOn(testEnv.FILES_BUCKET, "put").mockImplementationOnce(() => {
+      throw new Error("simulated promotion failure");
+    });
+    const firstComplete = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/complete", {
+        method: "POST",
+        headers: await jsonMutationHeaders(auth),
+        body: completeBody,
+      }),
+      testEnv,
+    );
+    expect(firstComplete.status).toBe(500);
+    const firstPayload = (await firstComplete.json()) as ErrorPayload;
+    expect(firstPayload.error?.code).toBe("upload_promotion_failed");
+    putSpy.mockRestore();
+
+    // Retry: completeMultipartUpload is not re-run (the uploadId is already
+    // consumed); the real Durable Object resumes from the staged status.
+    const secondComplete = await app.fetch(
+      new Request("https://files.example.com/api/v2/upload/complete", {
+        method: "POST",
+        headers: await jsonMutationHeaders(auth),
+        body: completeBody,
+      }),
+      testEnv,
+    );
+    expect(secondComplete.status).toBe(200);
+    const secondPayload = (await secondComplete.json()) as { key: string; size: number };
+    expect(secondPayload.key).toBe(init.objectKey);
+    expect(secondPayload.size).toBe(partBytes.byteLength);
+  });
+
+  it("aborts a session whose multipart upload no longer exists", async () => {
+    const app = createApp();
+    const auth = { email: "gone@example.com", sub: "user-gone" };
+
+    const initResponse = await initUpload(app, testEnv, { filename: "gone.bin", auth, declaredSize: 16 });
+    expect(initResponse.status).toBe(200);
+    const init = (await initResponse.json()) as InitPayload;
+
+    const resumeSpy = vi.spyOn(testEnv.FILES_BUCKET, "resumeMultipartUpload").mockImplementation(() => {
+      throw new Error("The specified multipart upload does not exist.");
+    });
+    try {
+      const abortResponse = await app.fetch(
+        new Request("https://files.example.com/api/v2/upload/abort", {
+          method: "POST",
+          headers: await jsonMutationHeaders(auth),
+          body: JSON.stringify({ sessionId: init.sessionId, uploadId: init.uploadId }),
+        }),
+        testEnv,
+      );
+      expect(abortResponse.status).toBe(200);
+      expect((await abortResponse.json()) as { ok: boolean }).toEqual({ ok: true });
+    } finally {
+      resumeSpy.mockRestore();
+    }
   });
 });

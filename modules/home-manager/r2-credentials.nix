@@ -113,12 +113,18 @@ in
           exit 1
         fi
         { IFS= read -r account_id || true; } < "$account_id_file"
+        # Trim whitespace/CR the same way lib/r2.nix's mkResolveAccountIdShell
+        # does, so a hand-edited or copy-pasted file resolves to the same ID.
+        account_id="''${account_id#"''${account_id%%[!$' \t\r\n']*}"}"
+        account_id="''${account_id%"''${account_id##*[!$' \t\r\n']}"}"
       elif [[ -n "$top_account_id_file" ]]; then
         if [[ ! -r "$top_account_id_file" ]]; then
           echo "Error: account ID file is missing or unreadable: $top_account_id_file" >&2
           exit 1
         fi
         { IFS= read -r account_id || true; } < "$top_account_id_file"
+        account_id="''${account_id#"''${account_id%%[!$' \t\r\n']*}"}"
+        account_id="''${account_id%"''${account_id##*[!$' \t\r\n']}"}"
       fi
 
       if [[ -z "$account_id" ]]; then
@@ -138,8 +144,7 @@ in
         exit 1
       fi
 
-      ${pkgs.coreutils}/bin/mkdir -p "$output_dir"
-      umask 077
+      ${pkgs.coreutils}/bin/mkdir -p -m 0700 "$output_dir"
       # Write to a temp file and rename: the existing output is mode 0400, so
       # truncating it in place fails on re-activation, and the rename keeps
       # the update atomic (no partially written credentials).
@@ -147,8 +152,11 @@ in
       # Any failure between mktemp and mv (e.g. ENOSPC mid-write) must not
       # leave a partial secret file behind. The trap lives in a subshell so it
       # cannot clobber traps of the surrounding home-manager activation
-      # script; after a successful mv the rm is a no-op.
+      # script; after a successful mv the rm is a no-op. umask is set first
+      # inside the same subshell so it cannot leak into later activation
+      # fragments (home-manager concatenates every fragment into one script).
       (
+        umask 077
         trap '${pkgs.coreutils}/bin/rm -f "$tmp_output_file"' EXIT
         {
           printf 'R2_ACCOUNT_ID=%s\n' "$account_id"

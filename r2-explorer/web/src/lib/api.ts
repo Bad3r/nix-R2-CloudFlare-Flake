@@ -156,11 +156,16 @@ const READ_RETRY_OPTIONS: RetryOptions = {
   maxDelayMs: 6000,
   retryableStatuses: TRANSIENT_HTTP_STATUSES,
 };
+// 403 is added on top of the shared transient set (not into it) because a
+// part PUT is signed with a short TTL and re-signs on every attempt: R2
+// returns 403 for an expired/invalid SigV4 signature, which is safe to retry
+// here but would mask a genuine permission problem on a GET/read retry.
+const UPLOAD_PART_RETRYABLE_STATUSES = new Set<number>([...TRANSIENT_HTTP_STATUSES, 403]);
 const UPLOAD_PART_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
   baseDelayMs: 500,
   maxDelayMs: 6000,
-  retryableStatuses: TRANSIENT_HTTP_STATUSES,
+  retryableStatuses: UPLOAD_PART_RETRYABLE_STATUSES,
   // Part PUTs are idempotent (same bytes, same partNumber) and each attempt
   // re-signs its URL, so a dropped connection is safe to retry instead of
   // aborting the whole upload and discarding every uploaded part.
@@ -170,6 +175,27 @@ const UPLOAD_PART_RETRY_OPTIONS: RetryOptions = {
 function isJsonResponse(response: Response): boolean {
   const header = response.headers.get("content-type");
   return Boolean(header && header.includes("application/json"));
+}
+
+const ROUTING_HINT = "The request did not reach the API. This usually means a routing or Cloudflare Access problem.";
+
+function looksLikeHtml(response: Response, text: string): boolean {
+  const contentType = response.headers.get("content-type") ?? "";
+  return contentType.includes("text/html") || /^\s*<(!doctype|html)/i.test(text);
+}
+
+/** Message for a non-JSON error body: never the raw body, which may be an entire HTML page. */
+function nonJsonErrorMessage(response: Response, text: string): string {
+  return looksLikeHtml(response, text) ? ROUTING_HINT : `${response.status} ${response.statusText}`;
+}
+
+/** Short, tag-stripped diagnostic snippet safe to keep in ApiError.details. */
+function textSnippet(text: string, max = 200): string {
+  return text
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 async function decodeResponse<T>(response: Response): Promise<T | ApiErrorPayload | string | null> {
@@ -311,10 +337,15 @@ async function apiOnce<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const payload = typeof decoded === "object" && decoded !== null ? (decoded as ApiErrorPayload) : undefined;
     const code = payload?.error?.code ?? "request_failed";
+    const rawText = typeof decoded === "string" ? decoded : "";
     const message =
-      payload?.error?.message ??
-      (typeof decoded === "string" && decoded.length > 0 ? decoded : `${response.status} ${response.statusText}`);
+      payload?.error?.message ?? (rawText ? nonJsonErrorMessage(response, rawText) : `${response.status} ${response.statusText}`);
     let details = payload?.error?.details;
+    if (rawText) {
+      // The raw body (which may be an entire HTML error page) never becomes
+      // the message; at most a short stripped snippet survives in details.
+      details = { ...(typeof details === "object" && details ? details : {}), snippet: textSnippet(rawText) };
+    }
     const retryAfterHeader = response.headers.get("retry-after");
     if (retryAfterHeader && /^\d+$/.test(retryAfterHeader)) {
       details = { ...(typeof details === "object" && details ? details : {}), retryAfterSeconds: Number(retryAfterHeader) };
@@ -396,11 +427,11 @@ export async function revokeShare(tokenId: string): Promise<void> {
   });
 }
 
-export async function moveObject(fromKey: string, toKey: string): Promise<void> {
+export async function moveObject(fromKey: string, toKey: string, overwrite = false): Promise<void> {
   await api<{ fromKey: string; toKey: string }>("/api/v2/object/move", {
     method: "POST",
     headers: jsonMutationHeaders(),
-    body: JSON.stringify({ fromKey, toKey }),
+    body: JSON.stringify({ fromKey, toKey, ...(overwrite ? { overwrite: true } : {}) }),
   });
 }
 
@@ -417,6 +448,8 @@ export {
   READ_RETRY_OPTIONS,
   UPLOAD_PART_RETRY_OPTIONS,
   jsonMutationHeaders,
+  retryAfterMs,
+  sleep,
   withRetry,
   type ApiRequestInit,
   type RetryOptions,

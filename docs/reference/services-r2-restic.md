@@ -34,6 +34,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-restic.accountId or services.r2-restic.accountIdFile must be set when services.r2-restic.enable = true`
 - `services.r2-restic.passwordFile must be set when services.r2-restic.enable = true`
 - `services.r2-restic.bucket must be set when services.r2-restic.enable = true`
+- `services.r2-restic.bucket must be a valid R2 bucket name (3-63 lowercase letters, digits, or hyphens; must start and end with a letter or digit): got '<bucket>'`
 - `services.r2-restic.paths must contain at least one path when services.r2-restic.enable = true`
 - `services.r2-restic.retention values must be >= 0`
 
@@ -43,10 +44,30 @@ under `set -euo pipefail`, so a failed `restic init` (for example, credentials
 that cannot reach an already-initialized repository) fails the unit before
 `restic backup` starts.
 
+`restic backup`'s own exit code is handled explicitly in the backup script,
+not left to `set -e`:
+
+- Exit `0`: backup succeeded; continue to `unlock`/`forget --prune`.
+- Exit `3`: some source files could not be read, but restic still created a
+  snapshot. The script prints a warning to stderr naming the condition, still
+  runs `restic unlock` and `restic forget --prune`, then exits `3` so
+  `systemctl status r2-restic-backup` reports failure instead of hiding the
+  partial read.
+- Any other exit code: fatal. The script exits immediately with that status
+  and does not run `unlock` or `forget --prune`.
+
+`restic unlock` always runs immediately before `forget --prune` (matching
+`services.restic.backups.*`'s `pruneCmd` in nixpkgs), clearing locks left by a
+crashed or killed prior run before pruning.
+
 ## Generated runtime artifacts
 
 - `r2-restic-backup.service` (`Type=oneshot`)
 - `r2-restic-backup.timer` (`OnCalendar = services.r2-restic.schedule`)
+- `CacheDirectory = "r2-restic-backup"` (mode `0700`), exported to the init
+  and backup scripts as `RESTIC_CACHE_DIR=/var/cache/r2-restic-backup`.
+  systemd creates and chowns this directory to the unit's effective
+  `User`/`Group`, including when a consuming host overrides them.
 
 ## Minimal snippet
 

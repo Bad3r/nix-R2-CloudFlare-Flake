@@ -1,4 +1,6 @@
 import { contentDisposition } from "./http";
+import { cancelUnreadBody } from "./r2";
+import type { RangedObjectResult } from "./r2";
 
 /** Strip leading slashes so object keys match their canonical R2 form. */
 export function normalizeObjectKey(key: string): string {
@@ -74,7 +76,7 @@ export function isInlineSafeContentType(contentType: string): boolean {
   return false;
 }
 
-export type ObjectResponseOptions = {
+export type RangedObjectResponseOptions = {
   /** Override the stored or guessed Content-Type on the response. */
   forceContentType?: string;
   /**
@@ -89,22 +91,56 @@ export type ObjectResponseOptions = {
    * - "strict": /api/v2/download and public /share/:token responses.
    */
   hardening: "preview" | "strict";
+  /** False for HEAD: build the same headers and status as GET, but never stream a body. */
+  includeBody: boolean;
 };
 
+function resolveContentRange(range: R2Range, size: number): { start: number; end: number } {
+  // workerd reports { offset, length, suffix: undefined }: test the values, a key check is always true.
+  const suffix = "suffix" in range ? range.suffix : undefined;
+  if (typeof suffix === "number") {
+    const start = Math.max(0, size - suffix);
+    return { start, end: Math.max(size - 1, start) };
+  }
+  const offset = "offset" in range ? range.offset : undefined;
+  const length = "length" in range ? range.length : undefined;
+  const start = offset ?? 0;
+  const end = typeof length === "number" ? start + length - 1 : Math.max(size - 1, start);
+  return { start, end };
+}
+
 /**
- * Build the streaming response for a stored R2 object with content-type,
- * disposition, cache, and content-sniffing/CSP hardening headers applied.
- * All object responses send `X-Content-Type-Options: nosniff` so browsers
- * cannot sniff stored bytes into a script-capable type.
+ * Build the response for a Range/conditional-aware object read (the result
+ * of r2.ts's getObjectForRead): 200 or 206 with a body, 304/412 with
+ * metadata headers and no body, or 416 with only Content-Range.
+ * Accept-Ranges: bytes is always sent so clients know Range is supported.
+ * `includeBody: false` (a HEAD request) reuses the exact GET header set but
+ * cancels object.body instead of streaming it, since Hono maps HEAD onto the
+ * GET handler and R2 has no head()-with-onlyIf to answer HEAD without
+ * calling get().
  */
-export async function responseFromObject(
-  object: R2ObjectBody,
+export async function respondToRangedObject(
+  result: RangedObjectResult,
   key: string,
   disposition: "attachment" | "inline",
-  options: ObjectResponseOptions,
+  options: RangedObjectResponseOptions,
 ): Promise<Response> {
   const headers = new Headers();
-  object.writeHttpMetadata(headers);
+  headers.set("accept-ranges", "bytes");
+
+  if (result.kind === "unsatisfiable_range") {
+    headers.set("content-range", `bytes */${result.size}`);
+    return new Response(null, { status: 416, headers });
+  }
+
+  result.object.writeHttpMetadata(headers);
+  headers.set("etag", result.object.httpEtag);
+  headers.set("last-modified", result.object.uploaded.toUTCString());
+
+  if (result.kind === "precondition_failed") {
+    return new Response(null, { status: result.status, headers });
+  }
+
   if (!headers.has("content-type")) {
     headers.set("content-type", options.forceContentType ?? guessContentType(key));
   } else if (options.forceContentType) {
@@ -122,5 +158,17 @@ export async function responseFromObject(
     }
   }
 
-  return new Response(object.body, { status: 200, headers });
+  if (result.status === 206 && result.object.range) {
+    const { start, end } = resolveContentRange(result.object.range, result.object.size);
+    headers.set("content-range", `bytes ${start}-${end}/${result.object.size}`);
+    headers.set("content-length", `${end - start + 1}`);
+  } else {
+    headers.set("content-length", `${result.object.size}`);
+  }
+
+  if (!options.includeBody) {
+    await cancelUnreadBody(result.object);
+    return new Response(null, { status: result.status, headers });
+  }
+  return new Response(result.object.body, { status: result.status, headers });
 }

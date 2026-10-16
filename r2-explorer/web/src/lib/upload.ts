@@ -11,7 +11,10 @@ import {
   api,
   ApiError,
   UPLOAD_PART_RETRY_OPTIONS,
+  isAbortError,
   jsonMutationHeaders,
+  retryAfterMs,
+  sleep,
   withRetry,
   type RetryOptions,
   type UploadInitResponse,
@@ -30,8 +33,32 @@ const UPLOAD_INIT_RETRY_OPTIONS: RetryOptions = {
   retryNetworkErrors: false,
 };
 
+const UPLOAD_COMPLETE_RETRY_OPTIONS: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 500,
+  maxDelayMs: 6000,
+  // Unlike init, complete is idempotent: repeating it after a success replays
+  // the same payload, and repeating it after a failed promotion resumes it
+  // instead of failing. Both the shared transient statuses (default when
+  // retryableStatuses is omitted) and network errors are safe to retry here.
+  // 409 upload_promotion_in_progress is deliberately not added here: it is
+  // not a transient failure to retry a few times, it is handled below by
+  // completeWithPromotionWait, which waits out the advertised delay instead.
+  retryNetworkErrors: true,
+};
+
+// Per-wait delay when complete answers 409 upload_promotion_in_progress:
+// honors the server's retryAfterSeconds but never below 1s or above 30s.
+const PROMOTION_WAIT_MIN_MS = 1000;
+const PROMOTION_WAIT_MAX_MS = 30000;
+// The server renews its promotion lease while it copies, so a very large
+// promotion can legitimately outlast the 15 minute lease window. This bounds
+// how long the client keeps polling before it reports the upload as still
+// finalizing server-side (the object appears once the server finishes).
+const PROMOTION_WAIT_BOUND_MS = 20 * 60 * 1000;
+
 export type UploadProgress = {
-  phase: "init" | "sign" | "upload" | "complete";
+  phase: "init" | "sign" | "upload" | "complete" | "finalizing";
   uploadedParts: number;
   totalParts: number;
 };
@@ -41,6 +68,8 @@ export type UploadOptions = {
   onProgress?: (progress: UploadProgress) => void;
   /** Max concurrent part transfers; clamped to [1, totalParts]. */
   concurrency?: number;
+  /** Replace an existing object at the target key; the server keeps a copy of it in .trash/. */
+  overwrite?: boolean;
 };
 
 const DEFAULT_CONCURRENCY = 4;
@@ -77,11 +106,38 @@ function buildUploadRequestHeaders(signedHeaders: Record<string, string> | undef
   return headers;
 }
 
+/** True for the 409 the worker returns while an earlier complete is still promoting this upload. */
+function isPromotionInProgress(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409 && error.code === "upload_promotion_in_progress";
+}
+
+/**
+ * Thrown instead of a plain AbortError when the user cancels while the server
+ * is still promoting the upload: the client stops waiting, but the server
+ * keeps going and refuses abort, so the object may still appear.
+ */
+export class UploadCancelledDuringPromotionError extends Error {
+  constructor() {
+    super("Cancelled while the server was still finalizing this upload; the object may still appear in the listing.");
+    this.name = "UploadCancelledDuringPromotionError";
+  }
+}
+
+export function isCancelledDuringPromotion(error: unknown): error is UploadCancelledDuringPromotionError {
+  return error instanceof UploadCancelledDuringPromotionError;
+}
+
+/** Server-advertised wait before re-asking, clamped to [PROMOTION_WAIT_MIN_MS, PROMOTION_WAIT_MAX_MS]. */
+function promotionRetryDelayMs(error: ApiError): number {
+  const advertised = retryAfterMs(error) ?? PROMOTION_WAIT_MIN_MS;
+  return Math.min(PROMOTION_WAIT_MAX_MS, Math.max(PROMOTION_WAIT_MIN_MS, advertised));
+}
+
 type Chunk = { partNumber: number; blob: Blob; size: number };
 
 function sliceIntoChunks(file: File, partSize: number): Chunk[] {
-  // Zero-byte files never reach this point: upload/init requires a positive
-  // declaredSize (schemas.ts), so the worker 400s before any slicing.
+  // Zero-byte files never reach this point: multipartUpload rejects them
+  // client-side, and upload/init also requires a positive declaredSize.
   const chunks: Chunk[] = [];
   for (let offset = 0, partNumber = 1; offset < file.size; offset += partSize, partNumber += 1) {
     const blob = file.slice(offset, offset + partSize);
@@ -99,7 +155,11 @@ function sliceIntoChunks(file: File, partSize: number): Chunk[] {
  * certain failure.
  */
 export async function multipartUpload(file: File, prefix: string, options: UploadOptions = {}): Promise<{ key: string }> {
-  const { signal, onProgress } = options;
+  const { signal, onProgress, overwrite = false } = options;
+
+  if (file.size === 0) {
+    throw new ApiError(400, "upload_empty_file", "Cannot upload an empty file.");
+  }
 
   const initPayload = await api<UploadInitResponse>("/api/v2/upload/init", {
     method: "POST",
@@ -110,7 +170,10 @@ export async function multipartUpload(file: File, prefix: string, options: Uploa
       filename: file.name,
       prefix,
       declaredSize: file.size,
-      contentType: file.type || "application/octet-stream",
+      // Omitted (not defaulted to a generic type) when the browser did not
+      // report one, so the server's own extension-based guess applies.
+      ...(file.type ? { contentType: file.type } : {}),
+      ...(overwrite ? { overwrite: true } : {}),
     }),
   });
 
@@ -200,6 +263,56 @@ export async function multipartUpload(file: File, prefix: string, options: Uploa
     }
   };
 
+  /**
+   * POST complete, waiting out a promotion_in_progress 409 (an earlier
+   * complete for this session is still promoting the staged upload to its
+   * final key) instead of failing. Every other error is rethrown immediately.
+   */
+  const completeWithPromotionWait = async (parts: { partNumber: number; etag: string }[]): Promise<{ key: string }> => {
+    const body = JSON.stringify({
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: file.size,
+      parts,
+      ...(overwrite ? { overwrite: true } : {}),
+    });
+    const waitDeadline = Date.now() + PROMOTION_WAIT_BOUND_MS;
+    let promoting = false;
+    for (;;) {
+      try {
+        return await api<{ key: string }>("/api/v2/upload/complete", {
+          method: "POST",
+          headers: jsonMutationHeaders(),
+          signal,
+          retry: UPLOAD_COMPLETE_RETRY_OPTIONS,
+          body,
+        });
+      } catch (error) {
+        if (promoting && isAbortError(error)) {
+          throw new UploadCancelledDuringPromotionError();
+        }
+        if (!isPromotionInProgress(error)) {
+          throw error;
+        }
+        promoting = true;
+        if (Date.now() >= waitDeadline) {
+          throw new ApiError(
+            error.status,
+            error.code,
+            "The server is still finalizing this upload; the object may appear shortly. Check the listing again in a few minutes.",
+            error.details,
+          );
+        }
+        onProgress?.({ phase: "finalizing", uploadedParts, totalParts });
+        try {
+          await sleep(promotionRetryDelayMs(error), signal);
+        } catch (sleepError) {
+          throw isAbortError(sleepError) ? new UploadCancelledDuringPromotionError() : sleepError;
+        }
+      }
+    }
+  };
+
   try {
     await Promise.all(Array.from({ length: concurrency }, () => poolWorker()));
 
@@ -213,18 +326,14 @@ export async function multipartUpload(file: File, prefix: string, options: Uploa
 
     onProgress?.({ phase: "complete", uploadedParts, totalParts });
 
-    return await api<{ key: string }>("/api/v2/upload/complete", {
-      method: "POST",
-      headers: jsonMutationHeaders(),
-      signal,
-      body: JSON.stringify({
-        sessionId: initPayload.sessionId,
-        uploadId: initPayload.uploadId,
-        finalSize: file.size,
-        parts,
-      }),
-    });
+    return await completeWithPromotionWait(parts);
   } catch (error) {
+    if (isPromotionInProgress(error) || isCancelledDuringPromotion(error)) {
+      // Never abort here: the worker refuses abort with this same 409 while
+      // its lease is held, and giving up must not race a promotion that may
+      // still succeed after the client stops waiting.
+      throw error;
+    }
     // Best-effort abort so R2 does not retain orphaned parts on failure/cancel.
     await api<{ ok: true }>("/api/v2/upload/abort", {
       method: "POST",

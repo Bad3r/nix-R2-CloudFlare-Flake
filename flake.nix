@@ -1,5 +1,5 @@
 {
-  description = "Standalone Cloudflare R2 flake (Phase 1 scaffold)";
+  description = "Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing";
   nixConfig = {
     extra-substituters = [
       "https://nix-r2-cloudflare-flake.cachix.org"
@@ -43,7 +43,6 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
 
@@ -159,23 +158,21 @@
               name = "lefthook-treefmt";
               runtimeInputs = [
                 pkgs.coreutils
-                pkgs.git
                 pkgs.treefmt
               ];
               text = ''
                 set -euo pipefail
 
-                mapfile -t changed < <(
-                  {
-                    git diff --name-only HEAD --diff-filter=ACM 2>/dev/null || true
-                    git ls-files --others --exclude-standard 2>/dev/null || true
-                  } | sort -u
-                )
-                if [ "''${#changed[@]}" -eq 0 ]; then
+                # lefthook resolves {files} (staged/changed files by default, or
+                # every git-tracked file under --all-files) and passes it here;
+                # with no args (a direct, non-lefthook invocation) check the
+                # whole tree, matching lefthook-statix's no-args behavior.
+                if [ "$#" -eq 0 ]; then
+                  treefmt --fail-on-change
                   exit 0
                 fi
 
-                treefmt --fail-on-change "''${changed[@]}"
+                treefmt --fail-on-change "$@"
               '';
             };
             lefthook-statix = pkgs.writeShellApplication {
@@ -260,12 +257,15 @@
                             bucket = "photos";
                             remotePrefix = "photos";
                             mountPoint = "/data/r2/mount/photos";
+                            localPath = "/data/r2/photos";
                           };
                           archive = {
                             bucket = "archive";
                             remotePrefix = "archive";
                             mountPoint = "/data/r2/mount/archive";
-                            localPath = "/data/r2/archive";
+                            # A trailing slash must not move the local trash into
+                            # the sync root.
+                            localPath = "/data/r2/archive/";
                             bisync = {
                               compare = "size,checksum";
                               excludes = [ "*.tmp" ];
@@ -368,6 +368,7 @@
                     # moves its listings to the _hasher__ name.
                     for needle in \
                       ' /data/r2/archive :s3:archive/archive ' \
+                      '--backup-dir1=/data/r2/.trash/archive' \
                       'from=/var/lib/r2-sync-archive/bisync/_hasher__data_r2_archive.._s3_archive_archive' \
                       'to=/var/lib/r2-sync-archive/bisync/data_r2_archive.._s3_archive_archive'; do
                       if ! grep -qF -- "$needle" ${units."r2-bisync-archive".serviceConfig.ExecStart}; then

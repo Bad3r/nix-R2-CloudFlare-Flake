@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
-import { promoteObject } from "../src/r2";
+import { HttpError } from "../src/http";
+import { completeMultipartUpload, promoteObject } from "../src/r2";
 import { stagingObjectKey } from "../src/routes/upload";
+import { acquirePromotionLease, releasePromotionLease } from "../src/upload-sessions";
 import {
   MemoryR2Bucket,
+  type MemoryUploadSessionNamespace,
   accessHeaders,
   accessSessionCookie,
   createAccessJwt,
@@ -87,6 +90,7 @@ async function initUpload(
     sha256?: string;
     origin?: string | null;
     csrf?: string | null;
+    overwrite?: boolean;
   },
 ): Promise<Response> {
   return app.fetch(
@@ -112,7 +116,40 @@ async function initUpload(
         declaredSize: options?.declaredSize ?? 1024,
         contentType: options?.contentType ?? "application/octet-stream",
         ...(options?.sha256 ? { sha256: options.sha256 } : {}),
+        ...(options?.overwrite !== undefined ? { overwrite: options.overwrite } : {}),
       }),
+    }),
+    env,
+  );
+}
+
+/** POST /api/v2/upload/complete with the given headers and JSON body. */
+async function completeUpload(
+  app: ReturnType<typeof createApp>,
+  env: Awaited<ReturnType<typeof createTestEnv>>["env"],
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return app.fetch(
+    new Request("https://files.example.com/api/v2/upload/complete", {
+      method: "POST",
+      headers: uploadHeaders(),
+      body: JSON.stringify(body),
+    }),
+    env,
+  );
+}
+
+/** POST /api/v2/upload/abort with the given headers and JSON body. */
+async function abortUpload(
+  app: ReturnType<typeof createApp>,
+  env: Awaited<ReturnType<typeof createTestEnv>>["env"],
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return app.fetch(
+    new Request("https://files.example.com/api/v2/upload/abort", {
+      method: "POST",
+      headers: uploadHeaders(),
+      body: JSON.stringify(body),
     }),
     env,
   );
@@ -723,7 +760,7 @@ describe("multipart upload flow", () => {
     expect(((await secondInit.json()) as ErrorPayload).error?.code).toBe("upload_object_key_in_use");
   });
 
-  it("allows init when target object key already exists to support overwrite flows", async () => {
+  it("rejects init when target object key already exists and overwrite is not requested", async () => {
     const { env, bucket } = await createTestEnv();
     const app = createApp();
 
@@ -734,9 +771,30 @@ describe("multipart upload flow", () => {
       declaredSize: 2048,
     });
 
+    expect(response.status).toBe(409);
+    const payload = (await response.json()) as { error?: { code?: string; details?: { key?: string } } };
+    expect(payload.error?.code).toBe("object_exists");
+    expect(payload.error?.details?.key).toBe("uploads/archive.bin");
+  });
+
+  it("allows init when target object key already exists and overwrite is true", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+
+    await bucket.put("uploads/archive.bin", new Uint8Array([1, 2, 3]));
+    const response = await initUpload(app, env, {
+      filename: "archive.bin",
+      prefix: "uploads/",
+      declaredSize: 2048,
+      overwrite: true,
+    });
+
     expect(response.status).toBe(200);
     const payload = await parseInitPayload(response);
     expect(payload.objectKey).toBe("uploads/archive.bin");
+    // The pre-existing object is untouched until a valid overwrite completes.
+    const original = await bucket.get("uploads/archive.bin");
+    expect(new Uint8Array((await original?.arrayBuffer()) ?? new ArrayBuffer(0))).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   it("preserves empty key segments when signing multipart part URLs", async () => {
@@ -970,6 +1028,7 @@ describe("multipart upload flow", () => {
       prefix: "uploads/",
       declaredSize,
       contentType: "application/pdf",
+      overwrite: true,
     });
     expect(initResponse.status).toBe(200);
     const initPayload = await parseInitPayload(initResponse);
@@ -1066,6 +1125,7 @@ describe("multipart upload flow", () => {
       prefix: "uploads/",
       declaredSize,
       contentType: "application/pdf",
+      overwrite: true,
     });
     expect(initResponse.status).toBe(200);
     const initPayload = await parseInitPayload(initResponse);
@@ -1232,6 +1292,779 @@ describe("multipart upload flow", () => {
   });
 });
 
+describe("upload completion resilience (UPS-001, UPS-005)", () => {
+  useAccessJwksFetchMock();
+
+  it("resumes and completes on retry after a promotion failure, without redoing assembly", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "resume.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(42);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    const putSpy = vi.spyOn(bucket, "put").mockImplementationOnce(() => {
+      throw new Error("simulated promotion failure");
+    });
+    const firstComplete = await completeUpload(app, env, completeBody);
+    expect(firstComplete.status).toBe(500);
+    const firstPayload = (await firstComplete.json()) as ErrorPayload;
+    expect(firstPayload.error?.code).toBe("upload_promotion_failed");
+    putSpy.mockRestore();
+
+    // The staged object must survive the failed promotion; nothing is at the
+    // final key yet, and completeMultipartUpload is not re-run on retry
+    // (the uploadId was already consumed, so resuming it would throw).
+    expect(await bucket.get(stagingKey)).not.toBeNull();
+    expect(await bucket.get("uploads/resume.bin")).toBeNull();
+
+    const secondComplete = await completeUpload(app, env, completeBody);
+    expect(secondComplete.status).toBe(200);
+    const secondPayload = (await secondComplete.json()) as { key: string; size: number };
+    expect(secondPayload.key).toBe("uploads/resume.bin");
+    expect(secondPayload.size).toBe(declaredSize);
+    expect(await bucket.get(stagingKey)).toBeNull();
+  });
+
+  it("aborts cleanly after a promotion failure, deleting the staged object", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "resume-abort.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(7);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const putSpy = vi.spyOn(bucket, "put").mockImplementationOnce(() => {
+      throw new Error("simulated promotion failure");
+    });
+    const failedComplete = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(failedComplete.status).toBe(500);
+    putSpy.mockRestore();
+
+    const abortResponse = await abortUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+    expect(abortResponse.status).toBe(200);
+    expect(await bucket.get(stagingKey)).toBeNull();
+
+    const secondAbort = await abortUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+    expect(secondAbort.status).toBe(200);
+    expect((await secondAbort.json()) as { ok: boolean }).toEqual({ ok: true });
+  });
+
+  it("returns the original success payload when complete is retried after a full success", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "twice.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(5);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const body = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+    const firstComplete = await completeUpload(app, env, body);
+    expect(firstComplete.status).toBe(200);
+    const firstPayload = await firstComplete.json();
+
+    const secondComplete = await completeUpload(app, env, body);
+    expect(secondComplete.status).toBe(200);
+    const secondPayload = await secondComplete.json();
+    expect(secondPayload).toEqual(firstPayload);
+  });
+
+  it("aborts a session whose multipart upload no longer exists, logging the cause", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+
+    const initResponse = await initUpload(app, env, {
+      filename: "gone.bin",
+      prefix: "uploads/",
+      declaredSize: 1024,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // Simulate the underlying R2 multipart upload having vanished
+    // independently of the session (already finalized, or expired on R2's
+    // own schedule).
+    await bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId).abort();
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const abortResponse = await abortUpload(app, env, {
+        sessionId: initPayload.sessionId,
+        uploadId: initPayload.uploadId,
+      });
+      expect(abortResponse.status).toBe(200);
+      expect((await abortResponse.json()) as { ok: boolean }).toEqual({ ok: true });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("resumes after completeMultipartUpload throws for an active session whose assembly already finished", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "crash-window.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(3);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // Simulate the crash window: R2 already finalized the multipart upload
+    // (the staged object exists at the declared size) but the session is
+    // still "active" because the request that ran completeMultipartUpload
+    // never got to record anything afterward. A duplicate/retried complete
+    // now calls completeMultipartUpload again against the dead uploadId.
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+
+    const completeResponse = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(completeResponse.status).toBe(200);
+    const payload = (await completeResponse.json()) as { key: string; size: number };
+    expect(payload.key).toBe("uploads/crash-window.bin");
+    expect(payload.size).toBe(declaredSize);
+  });
+
+  it("fails with a specific code, not internal_error, when completeMultipartUpload throws and no staged object exists", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "crash-no-stage.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // Abort the R2-side multipart upload out of band, so completeMultipartUpload
+    // throws and, unlike the crash-window case above, no staged object exists
+    // to resume from: this is a genuine failure, not a resumable one.
+    await bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId).abort();
+
+    const completeResponse = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: "does-not-matter" }],
+    });
+    expect(completeResponse.status).toBe(500);
+    const payload = (await completeResponse.json()) as ErrorPayload;
+    expect(payload.error?.code).toBe("upload_completion_failed");
+    expect(payload.error?.code).not.toBe("internal_error");
+  });
+
+  it("rejects a second concurrent complete while the first still holds the promotion lease, without touching the final key or trash", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    await bucket.put("uploads/race.bin", "original content");
+
+    const initResponse = await initUpload(app, env, {
+      filename: "race.bin",
+      prefix: "uploads/",
+      declaredSize,
+      overwrite: true,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(11);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // Simulate request A: assembly finished and it already holds the
+    // promotion lease, mid-promotion, from request B's point of view.
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+    await acquirePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+
+    // Request B: a duplicate/retried complete for the same session, arriving
+    // while request A is still promoting.
+    const secondComplete = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      overwrite: true,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(secondComplete.status).toBe(409);
+    const payload = (await secondComplete.json()) as {
+      error?: { code?: string; details?: { retryAfterSeconds?: number } };
+    };
+    expect(payload.error?.code).toBe("upload_promotion_in_progress");
+    expect(payload.error?.details?.retryAfterSeconds).toBeGreaterThan(0);
+
+    // Request B touched neither the final key nor .trash/: no soft delete,
+    // no promotion, ran for this rejected attempt.
+    const finalObject = await bucket.get("uploads/race.bin");
+    expect(await finalObject?.text()).toBe("original content");
+    const trashed = await bucket.list({ prefix: ".trash/" });
+    expect(trashed.objects.length).toBe(0);
+  });
+
+  it("refuses abort while the promotion lease is live, and the staged object survives", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "abort-race.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(21);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // Simulate request A: assembly finished and it holds the promotion
+    // lease, mid-promotion, when request B calls abort instead of retrying
+    // complete (for example after its connection dropped and it treated a
+    // 409 upload_promotion_in_progress from complete as a failure).
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+    const leased = await acquirePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+
+    const abortResponse = await abortUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+    expect(abortResponse.status).toBe(409);
+    const payload = (await abortResponse.json()) as {
+      error?: { code?: string; details?: { retryAfterSeconds?: number } };
+    };
+    expect(payload.error?.code).toBe("upload_promotion_in_progress");
+    expect(payload.error?.details?.retryAfterSeconds).toBeGreaterThan(0);
+
+    // The staged object survives: abort touched neither R2 nor the session.
+    expect(await bucket.get(stagingKey)).not.toBeNull();
+
+    // Once the holder releases the lease (or it expires), abort works normally.
+    await releasePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      promotionLeaseToken: leased.promotionLeaseToken ?? undefined,
+    });
+    const secondAbort = await abortUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+    expect(secondAbort.status).toBe(200);
+    expect(await bucket.get(stagingKey)).toBeNull();
+  });
+
+  it("keeps the staged object when a validation rejection meets a live promotion lease", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "lease-reject.pdf",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/pdf",
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // PNG magic bytes under a declared application/pdf fail request B's
+    // validation, standing in for a policy that request A's Worker version
+    // accepted mid-rollout.
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // Request A: assembly finished and it holds the promotion lease, still
+    // copying the staged object.
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+    await acquirePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const rejected = await completeUpload(app, env, {
+        sessionId: initPayload.sessionId,
+        uploadId: initPayload.uploadId,
+        finalSize: declaredSize,
+        parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+      });
+      expect(rejected.status).toBe(400);
+      expect(((await rejected.json()) as ErrorPayload).error?.code).toBe("upload_magic_mismatch");
+      // The store refused the abort because of A's lease; that refusal is logged.
+      expect(errorSpy.mock.calls.some(([message]) => String(message).includes("aborted"))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    // Request A's copy source is still there.
+    expect(await bucket.get(stagingKey)).not.toBeNull();
+  });
+});
+
+describe("upload overwrite contract (WEB-001)", () => {
+  useAccessJwksFetchMock();
+
+  it("rejects a complete-time overwrite conflict before assembly, then succeeds and trashes the old object on retry", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "conflict.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    // A separate write lands at the target key after init but before complete.
+    await bucket.put("uploads/conflict.bin", "raced content");
+
+    const partBytes = new Uint8Array(declaredSize).fill(3);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const conflictResponse = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(conflictResponse.status).toBe(409);
+    const conflictPayload = (await conflictResponse.json()) as {
+      error?: { code?: string; details?: { key?: string } };
+    };
+    expect(conflictPayload.error?.code).toBe("object_exists");
+    expect(conflictPayload.error?.details?.key).toBe("uploads/conflict.bin");
+
+    // The multipart upload is untouched: completeMultipartUpload never ran.
+    const stillResumable = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    expect(stillResumable.uploadId).toBe(initPayload.uploadId);
+
+    const retryResponse = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      overwrite: true,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(retryResponse.status).toBe(200);
+
+    const finalObject = await bucket.get("uploads/conflict.bin");
+    const finalBytes = new Uint8Array((await finalObject?.arrayBuffer()) ?? new ArrayBuffer(0));
+    expect(finalBytes.every((byte) => byte === 3)).toBe(true);
+
+    const trashed = await bucket.list({ prefix: ".trash/" });
+    const trashedEntry = trashed.objects.find((object) => object.key.endsWith("uploads/conflict.bin"));
+    expect(trashedEntry).toBeDefined();
+    expect(await (await bucket.get(trashedEntry!.key))?.text()).toBe("raced content");
+  });
+
+  it("completes an overwrite requested at init time and moves the old object to .trash/", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    await bucket.put("uploads/replace-init.bin", "old content");
+
+    const initResponse = await initUpload(app, env, {
+      filename: "replace-init.bin",
+      prefix: "uploads/",
+      declaredSize,
+      overwrite: true,
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(9);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(completeResponse.status).toBe(200);
+
+    const finalObject = await bucket.get("uploads/replace-init.bin");
+    const finalBytes = new Uint8Array((await finalObject?.arrayBuffer()) ?? new ArrayBuffer(0));
+    expect(finalBytes.every((byte) => byte === 9)).toBe(true);
+
+    const trashed = await bucket.list({ prefix: ".trash/" });
+    const trashedEntry = trashed.objects.find((object) => object.key.endsWith("uploads/replace-init.bin"));
+    expect(trashedEntry).toBeDefined();
+    expect(await (await bucket.get(trashedEntry!.key))?.text()).toBe("old content");
+  });
+});
+
+describe("upload magic-mime carve-out (UPS-004)", () => {
+  useAccessJwksFetchMock();
+
+  it("accepts a generic octet-stream declaration when magic bytes detect a known type", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "photo.bin",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/octet-stream",
+    });
+    expect(initResponse.status).toBe(200);
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+    const completeResponse = await completeUpload(app, env, completeBody);
+    expect(completeResponse.status).toBe(200);
+    const payload = (await completeResponse.json()) as { contentType: string | null };
+    expect(payload.contentType).toBe("image/png");
+
+    // The promoted object itself must carry the detected type, not the
+    // generic placeholder it was staged with, so downloads and previews
+    // serve it correctly.
+    const finalObject = await bucket.get("uploads/photo.bin");
+    expect(finalObject?.httpMetadata?.contentType).toBe("image/png");
+
+    // An idempotent replay must report the same content type as the first
+    // response (read from the stored object, not the stale session value).
+    const replayResponse = await completeUpload(app, env, completeBody);
+    expect(replayResponse.status).toBe(200);
+    const replayPayload = await replayResponse.json();
+    expect(replayPayload).toEqual(payload);
+  });
+
+  it("does not override a real declared Content-Type with the detected type", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "report.pdf",
+      prefix: "uploads/",
+      declaredSize,
+      contentType: "application/pdf",
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize);
+    partBytes.set([0x25, 0x50, 0x44, 0x46], 0);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeResponse = await completeUpload(app, env, {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    });
+    expect(completeResponse.status).toBe(200);
+    const finalObject = await bucket.get("uploads/report.pdf");
+    expect(finalObject?.httpMetadata?.contentType).toBe("application/pdf");
+  });
+});
+
+describe("upload policy validation (UPS-007, UPS-009)", () => {
+  useAccessJwksFetchMock();
+
+  it("fails fast when the sign TTL is too low for the configured part size", async () => {
+    const { env } = await createTestEnv();
+    env.R2E_UPLOAD_PART_SIZE_BYTES = String(5 * 1024 * 1024 * 1024);
+    env.R2E_UPLOAD_SIGN_TTL_SEC = "60";
+    const app = createApp();
+
+    const response = await initUpload(app, env, { declaredSize: 1024 });
+    expect(response.status).toBe(500);
+    const payload = (await response.json()) as { error?: { code?: string; message?: string } };
+    expect(payload.error?.code).toBe("upload_config_invalid");
+    expect(payload.error?.message).toContain("R2E_UPLOAD_SIGN_TTL_SEC");
+    expect(payload.error?.message).toContain("R2E_UPLOAD_PART_SIZE_BYTES");
+  });
+
+  it("rejects declaredSize: 0 with a specific empty-file error", async () => {
+    const { env } = await createTestEnv();
+    const app = createApp();
+
+    const response = await initUpload(app, env, { declaredSize: 0 });
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error?: { code?: string } };
+    expect(payload.error?.code).toBe("upload_empty_file");
+  });
+});
+
+describe("upload overwrite promotion resilience (RW-1, RW-3, RW-4)", () => {
+  useAccessJwksFetchMock();
+
+  it("leaves the original object at the target key when overwrite promotion fails, and a retry then succeeds leaving redundant trash backups", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    await bucket.put("uploads/overwrite-fail.bin", "original content");
+
+    const initResponse = await initUpload(app, env, {
+      filename: "overwrite-fail.bin",
+      prefix: "uploads/",
+      declaredSize,
+      overwrite: true,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(77);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    // The backup (copy to .trash/) must still succeed; only promotion's own
+    // write to the target key fails, so the put spy is keyed on that exact
+    // key rather than failing whichever put happens to run first.
+    const originalPut = bucket.put.bind(bucket);
+    const putSpy = vi.spyOn(bucket, "put").mockImplementation(async (key, value, options) => {
+      if (key === "uploads/overwrite-fail.bin") {
+        throw new Error("simulated promotion failure");
+      }
+      return originalPut(key, value, options);
+    });
+    const firstComplete = await completeUpload(app, env, completeBody);
+    expect(firstComplete.status).toBe(500);
+    putSpy.mockRestore();
+
+    // The target key still holds the ORIGINAL object: backing up never
+    // deletes it, and promoteObject's failed write never replaced it.
+    expect(await (await bucket.get("uploads/overwrite-fail.bin"))?.text()).toBe("original content");
+    // The staged upload is untouched and retryable.
+    expect(await bucket.get(stagingKey)).not.toBeNull();
+    const trashedAfterFailure = await bucket.list({ prefix: ".trash/" });
+    expect(trashedAfterFailure.objects.filter((object) => object.key.endsWith("uploads/overwrite-fail.bin")).length).toBe(
+      1,
+    );
+
+    // Retry: assembly is not redone (staged), so this re-runs the same
+    // existence-check-then-backup-then-promote sequence. The original is
+    // still there (unpromoted), so the retry backs it up again before
+    // promoting: a retry after a promotion failure can leave more than one
+    // trash copy of the same original content. Each copy is an independent,
+    // harmless duplicate (all recoverable), not a correctness problem, since
+    // backing up never deletes and the target key is only ever written by a
+    // successful promotion. The trash key embeds a millisecond timestamp, so
+    // a short delay here keeps the two attempts' keys from colliding into
+    // one, which would otherwise make this assertion flaky, not wrong.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const secondComplete = await completeUpload(app, env, completeBody);
+    expect(secondComplete.status).toBe(200);
+
+    const finalObject = await bucket.get("uploads/overwrite-fail.bin");
+    const finalBytes = new Uint8Array((await finalObject?.arrayBuffer()) ?? new ArrayBuffer(0));
+    expect(finalBytes.every((byte) => byte === 77)).toBe(true);
+    expect(await bucket.get(stagingKey)).toBeNull();
+
+    const trashedAfterRetry = await bucket.list({ prefix: ".trash/" });
+    const originalCopies = trashedAfterRetry.objects.filter((object) =>
+      object.key.endsWith("uploads/overwrite-fail.bin"),
+    );
+    expect(originalCopies.length).toBe(2);
+    for (const copy of originalCopies) {
+      expect(await (await bucket.get(copy.key))?.text()).toBe("original content");
+    }
+  });
+
+  it("fails with a specific code, not internal_error, when the promotion existence check throws", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "precheck-fail.bin",
+      prefix: "uploads/",
+      declaredSize,
+      overwrite: true,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(5);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // overwrite: true skips the pre-assembly gate's own headObject call, so
+    // this is the only bucket.head call in the request: the promotion
+    // sequence's own existence check.
+    const headSpy = vi.spyOn(bucket, "head").mockImplementationOnce(() => {
+      throw new Error("simulated transient R2 failure");
+    });
+    try {
+      const response = await completeUpload(app, env, {
+        sessionId: initPayload.sessionId,
+        uploadId: initPayload.uploadId,
+        finalSize: declaredSize,
+        parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+      });
+      expect(response.status).toBe(500);
+      const payload = (await response.json()) as ErrorPayload;
+      expect(payload.error?.code).toBe("upload_promotion_precheck_failed");
+      expect(payload.error?.code).not.toBe("internal_error");
+    } finally {
+      headSpy.mockRestore();
+    }
+  });
+
+  it("closes the check-then-act race for a non-overwrite promotion: a key that appears after the check yields 409 and leaves the concurrent write intact", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "race-promote.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+
+    const partBytes = new Uint8Array(declaredSize).fill(9);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // Without overwrite there are two head(objectKey) calls: the
+    // pre-assembly gate (before completeMultipartUpload) and the promotion
+    // sequence's own check. Only the second is where RW-3's race lives: a
+    // key appearing between that check and promoteObject's own write.
+    const originalHead = bucket.head.bind(bucket);
+    let headCallCount = 0;
+    const headSpy = vi.spyOn(bucket, "head").mockImplementation(async (key: string) => {
+      headCallCount += 1;
+      if (headCallCount === 2) {
+        await bucket.put("uploads/race-promote.bin", "concurrently written content");
+        return null;
+      }
+      return originalHead(key);
+    });
+
+    try {
+      const response = await completeUpload(app, env, {
+        sessionId: initPayload.sessionId,
+        uploadId: initPayload.uploadId,
+        finalSize: declaredSize,
+        parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+      });
+      expect(response.status).toBe(409);
+      const payload = (await response.json()) as { error?: { code?: string; details?: { key?: string } } };
+      expect(payload.error?.code).toBe("object_exists");
+      expect(payload.error?.details?.key).toBe("uploads/race-promote.bin");
+
+      const destination = await bucket.get("uploads/race-promote.bin");
+      expect(await destination?.text()).toBe("concurrently written content");
+    } finally {
+      headSpy.mockRestore();
+    }
+  });
+});
+
 describe("promoteObject", () => {
   const smallLimits = { singlePutLimitBytes: 8, copyPartSizeBytes: 4 };
 
@@ -1269,7 +2102,8 @@ describe("promoteObject", () => {
     expect(new Uint8Array(await target!.arrayBuffer())).toEqual(payload);
     expect(target?.httpMetadata?.contentType).toBe("application/octet-stream");
     expect(target?.customMetadata).toEqual({ source: "staged" });
-    expect(await bucket.get(".r2e-staging/session/big.bin")).toBeNull();
+    // The staged source stays until the session store records completion.
+    expect(await bucket.get(".r2e-staging/session/big.bin")).not.toBeNull();
   });
 
   it("keeps the single-put fast path for objects within the limit", async () => {
@@ -1290,6 +2124,236 @@ describe("promoteObject", () => {
     expect(directPutKeys).toEqual(["docs/small.bin"]);
     const target = await bucket.get("docs/small.bin");
     expect(new Uint8Array(await target!.arrayBuffer())).toEqual(payload);
-    expect(await bucket.get(".r2e-staging/session/small.bin")).toBeNull();
+    expect(await bucket.get(".r2e-staging/session/small.bin")).not.toBeNull();
+  });
+});
+
+/**
+ * Answer 503 from the upload session store for requests whose path ends with
+ * one of `paths` until end() is called, standing in for a store outage.
+ */
+function simulateSessionStoreOutage(
+  env: Awaited<ReturnType<typeof createTestEnv>>["env"],
+  paths: string[],
+): { end: () => void; restore: () => void } {
+  const namespace = env.R2E_UPLOAD_SESSIONS as unknown as MemoryUploadSessionNamespace;
+  const originalGet = namespace.get.bind(namespace);
+  let active = true;
+  const getSpy = vi.spyOn(namespace, "get").mockImplementation((id) => {
+    const stub = originalGet(id);
+    return {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (active && paths.some((path) => url.endsWith(path))) {
+          return new Response(
+            JSON.stringify({ error: { code: "upload_session_error", message: "simulated store outage" } }),
+            { status: 503, headers: { "content-type": "application/json" } },
+          );
+        }
+        return stub.fetch(input, init);
+      },
+    } as unknown as DurableObjectStub;
+  });
+  return {
+    end: () => {
+      active = false;
+    },
+    restore: () => getSpy.mockRestore(),
+  };
+}
+
+describe("promotion crash-window recovery and lease fencing", () => {
+  useAccessJwksFetchMock();
+
+  it("finalizes a session whose earlier attempt promoted the object but crashed before recording completion", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "crash-after-promote.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, new Uint8Array(declaredSize).fill(9));
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    // The session store goes down after promotion has already written the
+    // target key: the completion write fails, and so does the lease release
+    // that follows it, so the lease stays held as after a Worker crash.
+    const outage = simulateSessionStoreOutage(env, ["/complete", "/release-promotion-lease"]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const firstComplete = await completeUpload(app, env, completeBody);
+      expect(firstComplete.status).toBe(503);
+      outage.end();
+      // Promotion landed, and the staged object is still there: nothing is
+      // deleted before completion is durable.
+      expect(await bucket.get("uploads/crash-after-promote.bin")).not.toBeNull();
+      expect(await bucket.get(stagingKey)).not.toBeNull();
+
+      // The crashed attempt's lease lapses; the client retries after it.
+      vi.setSystemTime(Date.now() + 16 * 60 * 1000);
+      const retry = await completeUpload(app, env, completeBody);
+      expect(retry.status).toBe(200);
+      const payload = (await retry.json()) as { key: string; size: number };
+      expect(payload.key).toBe("uploads/crash-after-promote.bin");
+      expect(payload.size).toBe(declaredSize);
+    } finally {
+      vi.useRealTimers();
+      outage.restore();
+      errorSpy.mockRestore();
+    }
+
+    expect(await bucket.get(stagingKey)).toBeNull();
+    // Recognized as its own promoted object: no conflict, no second copy,
+    // nothing moved to trash.
+    const trashed = await bucket.list({ prefix: ".trash/" });
+    expect(trashed.objects).toHaveLength(0);
+    const target = await bucket.get("uploads/crash-after-promote.bin");
+    expect(target?.customMetadata?.uploadSessionId).toBe(initPayload.sessionId);
+  });
+
+  it("releases the lease when recording completion fails, so an immediate retry finalizes", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "record-fails.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, new Uint8Array(declaredSize).fill(7));
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    // Only the completion write fails; the lease release after it goes through.
+    const outage = simulateSessionStoreOutage(env, ["/complete"]);
+    try {
+      const firstComplete = await completeUpload(app, env, completeBody);
+      expect(firstComplete.status).toBe(503);
+      outage.end();
+
+      // No clock advance: the retry gets the lease at once.
+      const retry = await completeUpload(app, env, completeBody);
+      expect(retry.status).toBe(200);
+      const payload = (await retry.json()) as { key: string; size: number };
+      expect(payload.key).toBe("uploads/record-fails.bin");
+      expect(payload.size).toBe(declaredSize);
+    } finally {
+      outage.restore();
+    }
+
+    expect(await bucket.get(stagingKey)).toBeNull();
+    const target = await bucket.get("uploads/record-fails.bin");
+    expect(target?.customMetadata?.uploadSessionId).toBe(initPayload.sessionId);
+  });
+
+  it("releases the lease when recording a resumed completion fails, so an immediate retry finalizes", async () => {
+    const { env, bucket } = await createTestEnv();
+    const app = createApp();
+    const declaredSize = 1024;
+
+    const initResponse = await initUpload(app, env, {
+      filename: "resume-record-fails.bin",
+      prefix: "uploads/",
+      declaredSize,
+    });
+    const initPayload = await parseInitPayload(initResponse);
+    const stagingKey = stagingObjectKey(initPayload.sessionId, initPayload.objectKey);
+    const partBytes = new Uint8Array(declaredSize).fill(5);
+    const upload = bucket.resumeMultipartUpload(stagingKey, initPayload.uploadId);
+    const uploadedPart = await upload.uploadPart(1, partBytes);
+
+    // An earlier attempt assembled, promoted this session's bytes to the
+    // target and released its lease, but the staged object is gone and no
+    // completion was recorded: /complete resumes through the staged branch.
+    await completeMultipartUpload(bucket, stagingKey, initPayload.uploadId, [
+      { partNumber: 1, etag: uploadedPart.etag },
+    ]);
+    const leased = await acquirePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+    });
+    await bucket.put(initPayload.objectKey, partBytes, {
+      customMetadata: { uploadSessionId: initPayload.sessionId },
+    });
+    await bucket.delete(stagingKey);
+    await releasePromotionLease(env, "engineer@example.com", {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      promotionLeaseToken: leased.promotionLeaseToken ?? undefined,
+    });
+    const completeBody = {
+      sessionId: initPayload.sessionId,
+      uploadId: initPayload.uploadId,
+      finalSize: declaredSize,
+      parts: [{ partNumber: 1, etag: uploadedPart.etag }],
+    };
+
+    const outage = simulateSessionStoreOutage(env, ["/complete"]);
+    try {
+      const firstComplete = await completeUpload(app, env, completeBody);
+      expect(firstComplete.status).toBe(503);
+      outage.end();
+
+      const retry = await completeUpload(app, env, completeBody);
+      expect(retry.status).toBe(200);
+      const payload = (await retry.json()) as { key: string; size: number };
+      expect(payload.key).toBe(initPayload.objectKey);
+      expect(payload.size).toBe(declaredSize);
+    } finally {
+      outage.restore();
+    }
+  });
+
+  it("aborts a multipart promotion copy and writes nothing once the lease is lost mid-copy", async () => {
+    const bucket = new MemoryR2Bucket();
+    const payload = Uint8Array.from({ length: 21 }, (_, index) => index);
+    await bucket.put(".r2e-staging/session/lost.bin", payload);
+    const lostLease = new HttpError(409, "upload_promotion_in_progress", "Another request took over promoting this upload.", {
+      reason: "lease_lost",
+      retryAfterSeconds: 1,
+    });
+    let writes = 0;
+
+    await expect(
+      promoteObject(
+        bucket as unknown as R2Bucket,
+        ".r2e-staging/session/lost.bin",
+        "docs/lost.bin",
+        { singlePutLimitBytes: 8, copyPartSizeBytes: 4 },
+        {
+          beforeWrite: async () => {
+            writes += 1;
+            if (writes === 2) {
+              throw lostLease;
+            }
+          },
+        },
+      ),
+    ).rejects.toBe(lostLease);
+
+    expect(writes).toBe(2);
+    expect(await bucket.get("docs/lost.bin")).toBeNull();
+    expect(await bucket.get(".r2e-staging/session/lost.bin")).not.toBeNull();
   });
 });

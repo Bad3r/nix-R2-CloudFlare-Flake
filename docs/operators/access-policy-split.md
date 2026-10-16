@@ -51,7 +51,20 @@ export CLOUDFLARE_ACCOUNT_ID="<account-id>"
   "<service-token-client-id>"
 ```
 
-4. Validate protected API routes without identity:
+4. If the contract checker or a manual audit finds a stale Access app gating
+   `/api/v2/*` or `/share/*` (for example, one left over from a prior
+   custom-domain change), remove it with `clear-r2-access-gate.sh`. Always run
+   with `--dry-run` first and review the listed apps before passing `--yes`;
+   there is no other confirmation prompt before deletion:
+
+```bash
+export CLOUDFLARE_API_TOKEN="<api-token>"
+export CLOUDFLARE_ACCOUNT_ID="<account-id>"
+./scripts/ci/clear-r2-access-gate.sh --dry-run files.unsigned.sh
+./scripts/ci/clear-r2-access-gate.sh --yes files.unsigned.sh
+```
+
+5. Validate protected API routes without identity:
 
 ```bash
 curl -i https://files.unsigned.sh/api/v2/session/info
@@ -60,7 +73,7 @@ curl -i https://preview.files.unsigned.sh/api/v2/session/info
 
 Expected: `302` to Access login or `401 access_required`.
 
-5. Validate protected API routes with service-token headers:
+6. Validate protected API routes with service-token headers:
 
 ```bash
 curl -i \
@@ -69,7 +82,7 @@ curl -i \
   https://files.unsigned.sh/api/v2/session/info
 ```
 
-6. Validate public token route:
+7. Validate public token route:
 
 ```bash
 curl -I https://files.unsigned.sh/share/<token-id>

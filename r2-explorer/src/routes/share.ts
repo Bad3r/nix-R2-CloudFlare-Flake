@@ -4,8 +4,8 @@ import { resolveBucket } from "../buckets";
 import { envBool, envInt } from "../config";
 import { HttpError } from "../http";
 import { getShareRecord, listSharesForObject, putShareRecord } from "../kv";
-import { normalizeObjectKey, responseFromObject } from "../object-response";
-import { getObject, headObject } from "../r2";
+import { normalizeObjectKey, respondToRangedObject } from "../object-response";
+import { cancelUnreadBody, getObjectForRead, headObject } from "../r2";
 import { randomTokenId } from "../random";
 import {
   shareCreateBodySchema,
@@ -15,7 +15,7 @@ import {
   shareRevokeBodySchema,
   shareRevokeResponseSchema,
 } from "../schemas";
-import { loadServableShare, recordShareDownload } from "../share/service";
+import { loadServableShare, recordShareDownload, revokeShareCounter } from "../share/service";
 import type { Env, ShareRecord } from "../types";
 import { jsonValidated, queryPayload, readJsonBody, validateSchema } from "../validate";
 
@@ -109,6 +109,12 @@ export function registerShareRoutes(app: Hono<AppContext>): void {
       throw new HttpError(404, "share_not_found", "Share token not found.");
     }
 
+    // DO write first: it is a single global instance with no propagation
+    // delay, so a KV write failure after this leaves every future download
+    // already refused (fails closed), and retrying this call is safe since
+    // both writes are idempotent.
+    await revokeShareCounter(c.env, record);
+
     const nowEpoch = Math.floor(Date.now() / 1000);
     const expiresAtEpoch = Math.floor(Date.parse(record.expiresAt) / 1000);
     const ttl = Math.max(3600, expiresAtEpoch - nowEpoch);
@@ -145,14 +151,29 @@ export function registerShareRoutes(app: Hono<AppContext>): void {
       throw new HttpError(404, "share_not_found", "Share token missing.");
     }
     const record = await loadServableShare(c.env, tokenId);
+    // Hono maps HEAD onto the GET handler internally but c.req.method still
+    // reports HEAD (it reads request.raw.method).
+    const isHead = c.req.method === "HEAD";
+    const { bucket: r2Bucket } = resolveBucket(c.env, record.bucket);
+    const result = await getObjectForRead(r2Bucket, record.key, c.req.raw.headers, { allowRange: !isHead });
     // This route sits outside the /api/v2 readonly middleware on purpose:
-    // readonly mode keeps serving shares but must not write to KV or Durable
-    // Object storage, so download accounting (and therefore maxDownloads
-    // decrementing) is skipped while R2E_READONLY is enabled.
-    const readonly = envBool(c.env.R2E_READONLY, false);
-    const effective = await recordShareDownload(c.env, record, { readonly });
-    const { bucket: r2Bucket } = resolveBucket(c.env, effective.bucket);
-    const object = await getObject(r2Bucket, effective.key);
-    return responseFromObject(object, effective.key, effective.contentDisposition, { hardening: "strict" });
+    // readonly mode still authoritatively checks revocation and exhaustion
+    // through the counter's read-only /status endpoint, it just never
+    // writes to KV or Durable Object storage, so maxDownloads decrementing
+    // is skipped while R2E_READONLY is enabled.
+    const readonly = envBool("R2E_READONLY", c.env.R2E_READONLY, false);
+    try {
+      await recordShareDownload(c.env, record, result, c.req.raw.headers, { readonly, isHead });
+    } catch (error) {
+      // A refused download or a failed counter/KV call serves nothing.
+      if (result.kind === "ok") {
+        await cancelUnreadBody(result.object);
+      }
+      throw error;
+    }
+    return respondToRangedObject(result, record.key, record.contentDisposition, {
+      hardening: "strict",
+      includeBody: !isHead,
+    });
   });
 }

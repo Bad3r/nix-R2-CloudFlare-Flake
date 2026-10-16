@@ -76,10 +76,25 @@ export function isZipContainerMime(contentType: string): boolean {
 }
 
 /**
+ * True when contentType carries no real declaration: either empty, or the
+ * generic fallback browsers send when they cannot infer a MIME type from the
+ * filename (see web/src/lib/upload.ts). Such a value has no useful signal to
+ * validate magic bytes against.
+ */
+export function isGenericOrMissingContentType(contentType: string): boolean {
+  return contentType.length === 0 || contentType === "application/octet-stream";
+}
+
+/**
  * True when the detected magic-byte type is consistent with the declared
- * Content-Type, treating ZIP container formats as matching ZIP magic bytes.
+ * Content-Type: an undeclared/generic Content-Type accepts any detected known
+ * type, an exact match always matches, and ZIP container formats match ZIP
+ * magic bytes.
  */
 export function magicMimeMatchesDeclared(declaredContentType: string, detectedMime: string): boolean {
+  if (isGenericOrMissingContentType(declaredContentType)) {
+    return true;
+  }
   if (declaredContentType === detectedMime) {
     return true;
   }
