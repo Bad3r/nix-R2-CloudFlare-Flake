@@ -40,8 +40,7 @@ Current repository layout:
 - `docs/reference/index.md`: canonical option reference entrypoint.
 - `docs/operators/`: operational runbooks for key rotation, incident response, rollback, and maintenance.
 - `AGENTS.md`, `CLAUDE.md`: contributor guidance.
-- `.agents/skills/`, `skills-lock.json`: repository-scoped Cloudflare Agent Skills and installer lock.
-- `.mcp.json`, `.codex/config.toml`: repository-scoped MCP configuration for Cloudflare agents.
+- `.mcp.json`, `.codex/config.toml`: optional project-scoped MCP configuration.
 - `scripts/codex-mcp-login-all.sh`: Codex authentication helper for repository MCP servers.
 
 ## Build, Test, and Development Commands
@@ -91,17 +90,16 @@ Nix shortcuts:
 - `nix develop` — enter project dev shell with all tools available.
 - `nix develop nixpkgs#nodejs` — ad-hoc shell with specific packages.
 
-### Repository-scoped Cloudflare agent tooling
+### Cloudflare agent tooling
 
-The checked-in setup follows the [Cloudflare agent setup](https://developers.cloudflare.com/agent-setup/prompt.md) while keeping discovery limited to this repository.
+Use the maintained Cloudflare plugin for Codex. It supplies the current Cloudflare skills and Cloudflare API MCP server together:
 
-- Refresh every Cloudflare skill and its lock with `npx -y skills add cloudflare/skills --skill '*' --yes` from the repository root. Do not add `--global`.
-- Keep the URL-backed server names and URLs in `.mcp.json` and `.codex/config.toml` synchronized.
-- Run `./scripts/codex-mcp-login-all.sh --dry-run` after configuration changes.
-- Run `codex mcp login cloudflare` from this repository to authenticate the consolidated Cloudflare API server.
-- Restart the agent after changing skills or MCP configuration.
+```sh
+codex plugin marketplace add cloudflare/skills
+codex plugin add cloudflare@cloudflare
+```
 
-MCP configuration is repository-scoped, but OAuth credentials remain in the agent's user credential store. Never commit tokens, account identifiers, zone identifiers, or bucket identifiers to agent configuration.
+Start a new Codex session after installing or updating the plugin. For agents without plugin support, install the maintained skills from `https://github.com/cloudflare/skills` using that agent's native Agent Skills workflow. The project `.mcp.json` keeps a single Cloudflare API MCP entry for agents that read that file; Codex uses the plugin's MCP registration. OAuth credentials remain in the agent's user credential store. Never commit tokens, account identifiers, zone identifiers, or bucket identifiers to agent configuration.
 
 ## Architecture & Sharing Modes
 

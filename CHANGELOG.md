@@ -7,6 +7,14 @@ and this project follows Conventional Commits.
 
 ## [Unreleased]
 
+### Changed
+
+- Cloudflare agent tooling now follows the maintained Codex plugin, which
+  provides current skills and the Cloudflare API MCP server. Removed the
+  outdated vendored `.agents/skills` snapshot, installer lock, and redundant
+  domain-specific MCP entries. `.mcp.json` retains the consolidated API server
+  for agents that use that project configuration format.
+
 ### Added
 
 - `programs.r2-cloud.explorerEnvFile`: optional env file sourced by the `r2`
@@ -494,9 +502,6 @@ and this project follows Conventional Commits.
 - `flake.nix`'s description no longer says "(Phase 1 scaffold)"; the
   stale-phase language CI scan now also covers `flake.nix` and
   `r2-explorer/flake.nix` descriptions, not just Markdown docs.
-- `.treefmt.toml` no longer reformats the vendored `.agents/` skills tree
-  (vendored by `npx skills add` and pinned in `skills-lock.json`);
-  reformatting it would diverge from upstream and return on every refresh.
 - Every job in `release.yml` and `r2-explorer-deploy.yml` now sets
   `timeout-minutes`, so a hung step (a stuck wrangler/Cloudflare call, a
   stuck `pnpm install`) cannot block production releases/deploys for up to
