@@ -19,16 +19,15 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.2",
-    "@cloudflare/workers-types": "^5.20260708.1",
-    "hono": "^4.12.28",
-    "miniflare": "4.20260701.0",
+    "@cloudflare/vitest-plugin": "^1.4.4",
+    "@cloudflare/workers-types": "^5.20261016.1",
+    "hono": "^4.13.13",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10",
-    "wrangler": "^4.108.0"
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.1"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   }
 }
