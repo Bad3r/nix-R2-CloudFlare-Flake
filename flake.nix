@@ -227,6 +227,19 @@
                         fsType = "tmpfs";
                       };
                       boot.loader.grub.devices = [ "nodev" ];
+                      # The checksumCache assertion finds the hasher patches by
+                      # file name. Naming them on the upstream package keeps its
+                      # derivation, so this check builds no patched rclone.
+                      nixpkgs.overlays = [
+                        (_: prev: {
+                          rclone = prev.rclone // {
+                            patches = (prev.rclone.patches or [ ]) ++ [
+                              "hasher-hash-transfers-in-stream.patch"
+                              "hasher-fingerprint-current-file.patch"
+                            ];
+                          };
+                        })
+                      ];
 
                       programs.fuse.userAllowOther = true;
                       services.r2-sync = {

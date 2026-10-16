@@ -84,6 +84,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-sync.mounts.<name>.remotePrefix must not be '.trash' or nested under it (the bisync remote backup-dir '<bucket>/.trash/<remotePrefix>' must stay outside the sync root): got '<remotePrefix>'`
 - `services.r2-sync.mounts.<name>.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '<compare>'`
 - `services.r2-sync.mounts.<name>.bisync.checksumCache requires bisync.compare to include checksum (bisync hashes the local tree only when comparing checksums): got compare = <compare>`
+- `services.r2-sync.mounts.<name>.bisync.checksumCache needs an rclone carrying the hasher patches hasher-hash-transfers-in-stream.patch and hasher-fingerprint-current-file.patch (Bad3r/nixpkgs pkgs/by-name/rc/rclone): upstream rclone 1.75 caches R2's MD5 for a download without hashing the received bytes, so a corrupted download passes verification, and answers with a file's MD5 as listed, so a file changed since then uploads with a stale checksum; pkgs.rclone <version> lacks <patches>`
 - `services.r2-sync.mounts.<name>.bisync.timeout must be '' (no limit) or a systemd.time(7) time span such as '24h' or '1h 30min' (systemd ignores a TimeoutStartSec it cannot parse, which leaves the run unbounded): got '<timeout>'`
 - `services.r2-sync.mounts.<name>.syncInterval must be a systemd.time(7) time span such as '5m' or '1h 30min' (systemd ignores an OnUnitActiveSec it cannot parse, which leaves the timer firing once and never again): got '<syncInterval>'`
 - `services.r2-sync.mounts.<name> is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name, and must not be '.' or '..', which would put the local bisync trash directory .trash/<name> outside itself): got '<name>'`
@@ -207,8 +208,8 @@ address this:
   rclone's `--s3-upload-cutoff`). The local tree is hashed on every run unless
   `bisync.checksumCache` is set, and without `modtime` bisync only
   distinguishes `changed` from `unchanged`, not `newer` from `older`.
-- `bisync.checksumCache = true`: hash only new or changed local files (see
-  "Checksum cache" below).
+- `bisync.checksumCache = true`: hash only new or changed local files; needs a
+  patched rclone (see "Checksum cache" below).
 - `bisync.excludes`: keep build and dependency trees such as `node_modules/**`
   and `.venv/**` out of both listings entirely (rclone filtering syntax,
   relative to the sync root).
@@ -219,7 +220,7 @@ address this:
 {
   services.r2-sync.mounts.docs.bisync = {
     compare = "size,checksum";
-    checksumCache = true;
+    checksumCache = true; # needs a patched rclone, see "Checksum cache"
     excludes = [
       "node_modules/**"
       ".venv/**"
@@ -266,7 +267,13 @@ already read.
   hashing the received bytes, so rclone's post-transfer check compares R2's MD5
   with itself; and it fingerprints a file as listed, so a file of 256 MiB or
   more that changes after the listing uploads with its old MD5, fails
-  verification, and is uploaded again by a later run.
+  verification, and is uploaded again by a later run. Evaluation fails unless
+  `pkgs.rclone.patches` includes both patches by file name,
+  `hasher-hash-transfers-in-stream.patch` and
+  `hasher-fingerprint-current-file.patch`
+  (<https://github.com/Bad3r/nixpkgs/tree/nixpkgs-unstable/pkgs/by-name/rc/rclone>).
+  A system built from Bad3r/nixpkgs has both; on another nixpkgs, overlay
+  `rclone` with the same files.
 - Entries for files removed outside rclone, or moved into the local trash, stay
   in the database, and turning the option off leaves the database in place.
   Deleting `/var/lib/r2-sync-<name>/checksum-cache` between runs resets it; the

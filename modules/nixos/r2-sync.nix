@@ -194,6 +194,16 @@ let
     "--cache-dir"
   ];
   isChecksumCacheArg = arg: lib.elem (lib.head (lib.splitString "=" arg)) checksumCacheFlagNames;
+  # The Bad3r/nixpkgs rclone patches for the two upstream hasher defects
+  # described at bisync.checksumCache, matched by file name so a store path or
+  # fetchpatch name ending in it counts.
+  hasherFixPatches = [
+    "hasher-hash-transfers-in-stream.patch"
+    "hasher-fingerprint-current-file.patch"
+  ];
+  missingHasherFixPatches = lib.filter (
+    fix: !lib.any (patch: lib.hasSuffix fix (toString patch)) (pkgs.rclone.patches or [ ])
+  ) hasherFixPatches;
 
   mkMountService =
     name: mount:
@@ -812,7 +822,11 @@ in
                   rclone's multi-thread copy. Changing this on a mount with
                   existing bisync state moves the listings to the new Path1
                   name; a path outside rclone's plain naming triggers one
-                  automatic --resync instead.
+                  automatic --resync instead. Evaluation fails unless
+                  pkgs.rclone carries the Bad3r/nixpkgs hasher patches for
+                  two upstream 1.75 defects: downloads cached with R2's MD5
+                  unchecked, and stale checksums for files changed after
+                  the listing.
                 '';
               };
 
@@ -947,6 +961,12 @@ in
       message = "services.r2-sync.mounts.${name}.bisync.checksumCache requires bisync.compare to include checksum (bisync hashes the local tree only when comparing checksums): got compare = ${
         if mount.bisync.compare == null then "null" else "'${mount.bisync.compare}'"
       }";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !mount.bisync.checksumCache || missingHasherFixPatches == [ ];
+      message = "services.r2-sync.mounts.${name}.bisync.checksumCache needs an rclone carrying the hasher patches ${lib.concatStringsSep " and " hasherFixPatches} (Bad3r/nixpkgs pkgs/by-name/rc/rclone): upstream rclone 1.75 caches R2's MD5 for a download without hashing the received bytes, so a corrupted download passes verification, and answers with a file's MD5 as listed, so a file changed since then uploads with a stale checksum; pkgs.rclone ${
+        pkgs.rclone.version or "(no version)"
+      } lacks ${lib.concatStringsSep " and " missingHasherFixPatches}";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
       assertion = mount.bisync.timeout == "" || isValidTimespan mount.bisync.timeout;

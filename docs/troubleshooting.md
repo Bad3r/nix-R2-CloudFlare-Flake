@@ -381,14 +381,17 @@ prefix", to make the run itself faster):
 ```nix
 services.r2-sync.mounts.<name>.bisync = {
   compare = "size,checksum";
-  checksumCache = true;
+  checksumCache = true; # needs a patched rclone, see below
   excludes = [ "node_modules/**" ".venv/**" ];
   extraArgs = [ "--fast-list" "--checkers" "16" ];
 };
 ```
 
 `checksumCache` keeps local checksums across runs, so a retry after an
-interrupted run does not re-hash files it already read.
+interrupted run does not re-hash files it already read. It needs an rclone
+carrying the hasher patches listed under "Checksum cache" in
+`docs/reference/services-r2-sync.md`, and evaluation fails without them; leave
+the line out on an upstream rclone.
 
 A `compare` or `excludes` change on a mount that already has listing state
 makes the next run perform one automatic `--resync`, which rclone requires

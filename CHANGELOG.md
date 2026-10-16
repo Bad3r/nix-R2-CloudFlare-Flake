@@ -37,6 +37,8 @@ and this project follows Conventional Commits.
   are unchanged are not re-read. Toggling it on a mount with existing bisync
   state moves the listings to the new Path1 name instead of running `--resync`,
   and a cache database rclone cannot open is discarded and the run retried.
+  It needs an rclone carrying the Bad3r/nixpkgs hasher patches, found by file
+  name in `pkgs.rclone.patches`; evaluation fails without them.
 - `/api/v2/download`, `/api/v2/preview`, and `/share/<token>` now support `Range`
   and conditional request headers (`If-Match`, `If-None-Match`,
   `If-Modified-Since`, `If-Unmodified-Since`), answering
