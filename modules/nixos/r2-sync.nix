@@ -544,9 +544,7 @@ let
           done
           if [[ "$cleared_lock" == true ]]; then
             echo "Retrying bisync for ${name} after clearing orphaned lock." >&2
-            run_bisync "''${resync_flags[@]}"
-            record_flags
-            exit 0
+            attempt_bisync "''${resync_flags[@]}"
           fi
         fi
 
