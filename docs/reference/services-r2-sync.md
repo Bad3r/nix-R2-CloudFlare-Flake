@@ -33,6 +33,7 @@ create the bucket before writing to it.
 | `services.r2-sync.mounts.<name>.bisync.maxLock`           | string                                                       | `"15m"`       | no                                    | Passed to `rclone bisync --max-lock`; `""` omits it so locks never expire.                                            |
 | `services.r2-sync.mounts.<name>.bisync.timeout`           | string                                                       | `"24h"`       | no                                    | Deadline for one bisync run (the service's `TimeoutStartSec`), a systemd time span; `""` means no limit.              |
 | `services.r2-sync.mounts.<name>.bisync.compare`           | `null` or string                                             | `null`        | no                                    | Passed to `rclone bisync --compare` (`size`, `modtime`, `checksum`); `null` keeps rclone's `size,modtime`.            |
+| `services.r2-sync.mounts.<name>.bisync.checksumCache`     | boolean                                                      | `false`       | no                                    | Caches local checksums between runs (rclone hasher overlay); requires `compare` to include `checksum`.                |
 | `services.r2-sync.mounts.<name>.bisync.excludes`          | list of strings                                              | `[]`          | no                                    | Each entry becomes a `- <pattern>` filter rule, behind a `+ /<checkFilename>` rule that keeps the check file visible. |
 | `services.r2-sync.mounts.<name>.bisync.extraArgs`         | list of strings                                              | `[]`          | no                                    | Appended verbatim, one argv element each. Pattern filters are rejected (use `excludes`); listing filters are tracked. |
 | `services.r2-sync.mounts.<name>.vfsCache.mode`            | enum `off`, `minimal`, `writes`, `full`                      | `"full"`      | no                                    | Passed to `--vfs-cache-mode`.                                                                                         |
@@ -82,6 +83,8 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-sync.mounts.<name>.remotePrefix must be non-empty after normalization (required for bisync trash backup-dir outside sync root): got '<remotePrefix>'`
 - `services.r2-sync.mounts.<name>.remotePrefix must not be '.trash' or nested under it (the bisync remote backup-dir '<bucket>/.trash/<remotePrefix>' must stay outside the sync root): got '<remotePrefix>'`
 - `services.r2-sync.mounts.<name>.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '<compare>'`
+- `services.r2-sync.mounts.<name>.bisync.checksumCache requires bisync.compare to include checksum (bisync hashes the local tree only when comparing checksums): got compare = <compare>`
+- `services.r2-sync.mounts.<name>.bisync.checksumCache needs an rclone carrying the hasher patches hasher-hash-transfers-in-stream.patch and hasher-fingerprint-current-file.patch (Bad3r/nixpkgs pkgs/by-name/rc/rclone): upstream rclone 1.75 caches R2's MD5 for a download without hashing the received bytes, so a corrupted download passes verification, and answers with a file's MD5 as listed, so a file changed since then uploads with a stale checksum; pkgs.rclone <version> lacks <patches>`
 - `services.r2-sync.mounts.<name>.bisync.timeout must be '' (no limit) or a systemd.time(7) time span such as '24h' or '1h 30min' (systemd ignores a TimeoutStartSec it cannot parse, which leaves the run unbounded): got '<timeout>'`
 - `services.r2-sync.mounts.<name>.syncInterval must be a systemd.time(7) time span such as '5m' or '1h 30min' (systemd ignores an OnUnitActiveSec it cannot parse, which leaves the timer firing once and never again): got '<syncInterval>'`
 - `services.r2-sync.mounts.<name> is not a valid mount name (must match [A-Za-z0-9_.-]+ so it can be used safely in a systemd unit name, and must not be '.' or '..', which would put the local bisync trash directory .trash/<name> outside itself): got '<name>'`
@@ -89,6 +92,7 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 - `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain filter flags (--filter, --filter-from, --exclude, --exclude-from, --exclude-if-present, --include, --include-from, --filters-file, --files-from, --files-from-raw, --files-from0, --metadata-filter-from, --metadata-exclude-from, --metadata-include-from, or -f alone, attached as -f=X or -fX, or in a shorthand cluster such as -vf; a separate option value such as -offsite, a single '-' and then only letters or digits up to an 'f', reads as one, so pass it as --flag=value): put pattern rules in services.r2-sync.mounts.<name>.bisync.excludes and metadata rules in inline --metadata-filter, --metadata-exclude or --metadata-include flags, which are tracked for the automatic --resync`
 - `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain --delete-excluded: rclone bisync applies it to every copy a run makes, which then deletes each file on the receiving side that the copy does not carry, excluded or not, and bisync.maxDelete does not count those deletions`
 - `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain flags the module already passes to rclone bisync (--max-delete, --backup-dir1, --backup-dir2, --max-lock, --recover, --resilient, --workdir, --check-access, --check-filename, --compare): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, move the check file --check-access looks for away from the one the module already copied under checkFilename, or turn off the crash and transient-error recovery that bisync.timeout now relies on to leave a usable listing behind; set bisync.maxDelete, bisync.maxLock, bisync.checkFilename or bisync.compare, the four of these with a dedicated option; the rest are fixed by the module and have none: the backup directories follow localPath/remotePrefix, the workdir is /var/lib/r2-sync-<name>/bisync, and --check-access, --recover and --resilient are always on`
+- `services.r2-sync.mounts.<name>.bisync.extraArgs must not contain --hasher-remote, --hasher-hashes, --cache-dir while bisync.checksumCache is on: the module passes them for the hasher overlay, and rclone takes the last occurrence of a repeated flag, so a repeat would re-root the overlay behind Path1 and --backup-dir1 or move the cache database away from /var/lib/r2-sync-<name>/checksum-cache, which the unit discards when rclone cannot open it`
 - `services.r2-sync.mounts.<name> runs r2-mount-<name>.service as non-root user '<user>' without programs.fuse.userAllowOther = true (rclone mount passes --allow-other unconditionally, which requires user_allow_other for non-root mounts): set programs.fuse.userAllowOther = true`
 - `services.r2-sync.mounts.<name-a> and services.r2-sync.mounts.<name-b> both target bucket '<bucket>' prefix '<prefix>': two mounts must not target the same remote tree`
 - `services.r2-sync.mounts.<name-a> (bucket '<bucket>' prefix '<prefix-a>') and services.r2-sync.mounts.<name-b> (prefix '<prefix-b>') have nested remote prefixes in the same bucket: concurrent bisync runs must not overlap trees`
@@ -137,10 +141,10 @@ these messages at the same time.
   holder PID is no longer running and retries once. Setting `maxLock = ""` omits
   `--max-lock` and disables that cleanup, restoring rclone's native behavior
   where an orphaned lock blocks every later run until removed by hand. This
-  fast-path lock clear and the stale-listing retry below both match rclone's
-  literal log text (upstream `cmd/bisync/lockfile.go` and
-  `cmd/bisync/operations.go`, named next to each match in
-  `modules/nixos/r2-sync.nix`). A future rclone version that rewords that text
+  fast-path lock clear, the stale-listing retry below and the checksum-cache
+  discard (see "Checksum cache") all match rclone's literal log text (upstream
+  `cmd/bisync/lockfile.go`, `cmd/bisync/operations.go` and `lib/kv/bolt.go`,
+  named next to each match in `modules/nixos/r2-sync.nix`). A future rclone version that rewords that text
   disables the self-heal with no test failure, so re-check it against the
   `pkgs.rclone` source on every version bump.
 - `bisync.compare`, `bisync.excludes`, and the listing filters passed in
@@ -162,7 +166,8 @@ these messages at the same time.
   rules files are rejected in `extraArgs` by
   assertion (see "Failure semantics"): patterns belong in `excludes`, and a
   rules file can change without the configuration changing, so it could not
-  be tracked.
+  be tracked. `bisync.checksumCache` is recorded there too, but a
+  change to it alone only renames the listings (see "Checksum cache" below).
 - Exclude patterns are rendered as `--filter '- <pattern>'` rules behind a
   leading `--filter '+ /<checkFilename>'` rule. rclone evaluates every
   `--exclude` before any `--filter` and gives `--include` an implied trailing
@@ -195,14 +200,16 @@ rclone's default comparison is `size,modtime`. On S3-class backends such as R2
 the modtime lives in object metadata, so every listing costs one HEAD request
 per object on top of the ListObjects pages. A prefix of tens of thousands of
 objects can outlast a bounded unit, and because bisync writes its listings only
-after the walk completes, every retry starts from zero. Three per-mount knobs
+after the walk completes, every retry starts from zero. Four per-mount knobs
 address this:
 
 - `bisync.compare = "size,checksum"`: size and ETag both come from the listing,
   so no per-object HEAD is needed for single-part uploads (objects below
-  rclone's `--s3-upload-cutoff`). The local tree is hashed on every run, and
-  without `modtime` bisync only distinguishes `changed` from `unchanged`, not
-  `newer` from `older`.
+  rclone's `--s3-upload-cutoff`). The local tree is hashed on every run unless
+  `bisync.checksumCache` is set, and without `modtime` bisync only
+  distinguishes `changed` from `unchanged`, not `newer` from `older`.
+- `bisync.checksumCache = true`: hash only new or changed local files; needs a
+  patched rclone (see "Checksum cache" below).
 - `bisync.excludes`: keep build and dependency trees such as `node_modules/**`
   and `.venv/**` out of both listings entirely (rclone filtering syntax,
   relative to the sync root).
@@ -213,6 +220,7 @@ address this:
 {
   services.r2-sync.mounts.docs.bisync = {
     compare = "size,checksum";
+    checksumCache = true; # needs a patched rclone, see "Checksum cache"
     excludes = [
       "node_modules/**"
       ".venv/**"
@@ -225,6 +233,57 @@ address this:
   };
 }
 ```
+
+## Checksum cache
+
+`bisync.checksumCache = true` routes the local side of every bisync run through
+rclone's [hasher](https://rclone.org/hasher/) overlay, which rclone marks
+experimental. hasher stores each local file's MD5 in
+`/var/lib/r2-sync-<name>/checksum-cache/kv/local~hasher.bolt` and returns the
+stored value while the file's size and modification time are unchanged, so a
+run reads only new or changed local files. Each checksum is committed as soon
+as it is computed, so a run that was interrupted does not re-hash what it
+already read.
+
+- A cached checksum is trusted while size and modification time match, so a
+  local edit that keeps both goes undetected. rclone's default `size,modtime`
+  comparison makes the same assumption.
+- Path1 becomes `:hasher:<localPath>` and `--backup-dir1` becomes
+  `:hasher:<dirOf(localPath)>/.trash/<name>`, since rclone requires the backup
+  dir on Path1's remote. bisync names its listings after Path1, so toggling the
+  option renames them: the next run moves the existing listings to the new name
+  and syncs normally. When `localPath` or `remotePrefix` contains a character
+  other than letters, digits and `._@%+=,~-`, the module cannot derive the
+  name, and the toggle triggers one automatic `--resync` instead.
+- Every new checksum is its own synced database write, so the first run over a
+  tree of many small files pays one flush per file. The cache saves the most on
+  larger files that rarely change.
+- hasher has no random-access writes, so a download into `localPath` above
+  `--multi-thread-cutoff` (256 MiB by default) runs as one stream instead of
+  rclone's multi-thread copy. hasher also reports hashing as fast, so
+  `--no-slow-hash` and `--slow-hash-sync-only` in `extraArgs` have no effect.
+- Upstream rclone 1.75 has two hasher defects that the Bad3r/nixpkgs rclone
+  package patches: hasher stores R2's MD5 for a downloaded file instead of
+  hashing the received bytes, so rclone's post-transfer check compares R2's MD5
+  with itself; and it fingerprints a file as listed, so a file of 256 MiB or
+  more that changes after the listing uploads with its old MD5, fails
+  verification, and is uploaded again by a later run. Evaluation fails unless
+  `pkgs.rclone.patches` includes both patches by file name,
+  `hasher-hash-transfers-in-stream.patch` and
+  `hasher-fingerprint-current-file.patch`
+  (<https://github.com/Bad3r/nixpkgs/tree/nixpkgs-unstable/pkgs/by-name/rc/rclone>).
+  A system built from Bad3r/nixpkgs has both; on another nixpkgs, overlay
+  `rclone` with the same files.
+- Entries for files removed outside rclone, or moved into the local trash, stay
+  in the database, and turning the option off leaves the database in place.
+  Deleting `/var/lib/r2-sync-<name>/checksum-cache` between runs resets it; the
+  next run with the option on hashes the whole tree again. When rclone cannot
+  open the database (a damaged file, for example), the unit deletes the
+  directory and retries the run once; `cannot open db: ...: timeout` instead
+  means another rclone process holds the database, and the unit leaves it.
+- `extraArgs = [ "--hasher-max-age=30d" ]` re-hashes entries older than the
+  given age. `--hasher-remote`, `--hasher-hashes` and `--cache-dir` are
+  rejected there while the option is on, since the module sets them.
 
 ## Generated runtime artifacts
 

@@ -836,6 +836,32 @@ let
       expect = "bisync.extraArgs must not contain flags the module already passes";
     }
     {
+      name = "checksumCache without a checksum compare";
+      mounts.documents = mount { bisync.checksumCache = true; };
+      expect = "bisync.checksumCache requires bisync.compare to include checksum";
+    }
+    {
+      name = "--cache-dir in extraArgs moves the checksum cache";
+      mounts.documents = mount {
+        bisync = {
+          compare = "size,checksum";
+          checksumCache = true;
+          extraArgs = [ "--cache-dir=/tmp/x" ];
+        };
+      };
+      expect = "while bisync.checksumCache is on";
+    }
+    {
+      name = "checksumCache with an rclone lacking the hasher patches";
+      mounts.documents = mount {
+        bisync = {
+          compare = "size,checksum";
+          checksumCache = true;
+        };
+      };
+      expect = "bisync.checksumCache needs an rclone carrying the hasher patches";
+    }
+    {
       name = "unparsable bisync.timeout";
       mounts.documents = mount { bisync.timeout = "24hrs"; };
       expect = "bisync.timeout must be '' (no limit) or a systemd.time(7) time span";

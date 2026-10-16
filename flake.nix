@@ -227,28 +227,62 @@
                         fsType = "tmpfs";
                       };
                       boot.loader.grub.devices = [ "nodev" ];
+                      # The checksumCache assertion finds the hasher patches by
+                      # file name. Naming them on the upstream package keeps its
+                      # derivation, so this check builds no patched rclone.
+                      nixpkgs.overlays = [
+                        (_: prev: {
+                          rclone = prev.rclone // {
+                            patches = (prev.rclone.patches or [ ]) ++ [
+                              "hasher-hash-transfers-in-stream.patch"
+                              "hasher-fingerprint-current-file.patch"
+                            ];
+                          };
+                        })
+                      ];
 
                       programs.fuse.userAllowOther = true;
                       services.r2-sync = {
                         enable = true;
                         accountId = "abc123";
                         credentialsFile = "/run/secrets/r2/credentials.env";
-                        mounts.documents = {
-                          bucket = "documents";
-                          remotePrefix = "documents";
-                          mountPoint = "/data/r2/mount/documents";
-                          localPath = "/data/r2/documents";
-                          bisync = {
-                            compare = "size,checksum";
-                            excludes = [
-                              "node_modules/**"
-                              ".venv/**"
-                            ];
-                            extraArgs = [
-                              "--fast-list"
-                              "--checkers"
-                              "16"
-                            ];
+                        mounts = {
+                          documents = {
+                            bucket = "documents";
+                            remotePrefix = "documents";
+                            mountPoint = "/data/r2/mount/documents";
+                            localPath = "/data/r2/documents";
+                            bisync = {
+                              compare = "size,checksum";
+                              checksumCache = true;
+                              excludes = [
+                                "node_modules/**"
+                                ".venv/**"
+                              ];
+                              extraArgs = [
+                                "--fast-list"
+                                "--checkers"
+                                "16"
+                              ];
+                            };
+                          };
+                          photos = {
+                            bucket = "photos";
+                            remotePrefix = "photos";
+                            mountPoint = "/data/r2/mount/photos";
+                            localPath = "/data/r2/photos";
+                          };
+                          archive = {
+                            bucket = "archive";
+                            remotePrefix = "archive";
+                            mountPoint = "/data/r2/mount/archive";
+                            # A trailing slash must not move the local trash into
+                            # the sync root.
+                            localPath = "/data/r2/archive/";
+                            bisync = {
+                              compare = "size,checksum";
+                              excludes = [ "*.tmp" ];
+                            };
                           };
                         };
                       };
@@ -301,18 +335,26 @@
                       exit 1
                     fi
                     # Regression guard for per-mount bisync tuning (issue #150):
-                    # compare, excludes and extraArgs must reach the rclone
-                    # command line, and compare/exclude changes must be tracked
-                    # in the workdir so they force the --resync rclone requires.
+                    # compare, excludes, extraArgs and checksumCache must reach
+                    # the rclone command line, and their changes must be tracked
+                    # in the workdir. rclone requires --backup-dir1 on Path1's
+                    # remote, so both go through the hasher overlay, and a
+                    # checksumCache toggle moves the listings between the plain
+                    # and the _hasher__ session names.
                     for needle in \
                       '--compare=size,checksum' \
                       "--filter='+ /.r2-check'" \
                       "--filter='- node_modules/**'" \
                       "--filter='- .venv/**'" \
                       '--fast-list --checkers 16' \
-                      '.r2-bisync-flags'; do
+                      '.r2-bisync-flags' \
+                      ':hasher:/data/r2/documents :s3:documents/documents' \
+                      '--backup-dir1=:hasher:/data/r2/.trash/documents' \
+                      '--hasher-remote=/ --hasher-hashes=md5 --cache-dir=/var/lib/r2-sync-documents/checksum-cache' \
+                      'from=/var/lib/r2-sync-documents/bisync/data_r2_documents.._s3_documents_documents' \
+                      'to=/var/lib/r2-sync-documents/bisync/_hasher__data_r2_documents.._s3_documents_documents'; do
                       if ! grep -qF -- "$needle" ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
-                        echo "r2-bisync ExecStart is missing $needle; bisync.compare/excludes/extraArgs are not reaching rclone" >&2
+                        echo "r2-bisync ExecStart is missing $needle; per-mount bisync settings are not reaching rclone" >&2
                         exit 1
                       fi
                     done
@@ -324,6 +366,33 @@
                     } | head -1)"
                     if [[ "$first_rule" != "--filter='+ /.r2-check'" ]]; then
                       echo "r2-bisync ExecStart must pin the check file ahead of user excludes; first filter rule is $first_rule" >&2
+                      exit 1
+                    fi
+                    # checksumCache adds --hasher-remote=/ as the last tracked flag
+                    # so a toggle is detected rather than resuming listings left
+                    # under the other session name.
+                    if ! grep -qxF -- "--hasher-remote=/'" ${units."r2-bisync-documents".serviceConfig.ExecStart}; then
+                      echo "r2-bisync ExecStart does not track bisync.checksumCache in its flag set" >&2
+                      exit 1
+                    fi
+                    # A mount without checksumCache, including one that compares
+                    # checksums, must keep a plain Path1 and its tracked flag set,
+                    # or upgrading forces a resync; turning the cache on later
+                    # moves its listings to the _hasher__ name.
+                    for needle in \
+                      ' /data/r2/archive :s3:archive/archive ' \
+                      '--backup-dir1=/data/r2/.trash/archive' \
+                      'from=/var/lib/r2-sync-archive/bisync/_hasher__data_r2_archive.._s3_archive_archive' \
+                      'to=/var/lib/r2-sync-archive/bisync/data_r2_archive.._s3_archive_archive'; do
+                      if ! grep -qF -- "$needle" ${units."r2-bisync-archive".serviceConfig.ExecStart}; then
+                        echo "r2-bisync ExecStart for a mount without bisync.checksumCache is missing $needle" >&2
+                        exit 1
+                      fi
+                    done
+                    if grep -qF -- ':hasher:' ${units."r2-bisync-archive".serviceConfig.ExecStart} \
+                      || grep -qxF -- "--hasher-remote=/'" ${units."r2-bisync-archive".serviceConfig.ExecStart} \
+                      || grep -qF -- 'hasher' ${units."r2-bisync-photos".serviceConfig.ExecStart}; then
+                      echo "r2-bisync ExecStart for a mount without bisync.checksumCache uses or tracks the hasher overlay; it must stay opt-in" >&2
                       exit 1
                     fi
                     touch "$out"

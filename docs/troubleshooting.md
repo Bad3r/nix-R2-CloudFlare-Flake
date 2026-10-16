@@ -381,17 +381,25 @@ prefix", to make the run itself faster):
 ```nix
 services.r2-sync.mounts.<name>.bisync = {
   compare = "size,checksum";
+  checksumCache = true; # needs a patched rclone, see below
   excludes = [ "node_modules/**" ".venv/**" ];
   extraArgs = [ "--fast-list" "--checkers" "16" ];
 };
 ```
+
+`checksumCache` keeps local checksums across runs, so a retry after an
+interrupted run does not re-hash files it already read. It needs an rclone
+carrying the hasher patches listed under "Checksum cache" in
+`docs/reference/services-r2-sync.md`, and evaluation fails without them; leave
+the line out on an upstream rclone.
 
 A `compare` or `excludes` change on a mount that already has listing state
 makes the next run perform one automatic `--resync`, which rclone requires
 after a filter change. So does a change to a size, age, depth, hash, metadata
 or `--ignore-case` filter in `extraArgs`; pattern filters are rejected there,
 so keep them in `excludes`. Reordering `excludes` or those `extraArgs` filters
-triggers the resync too, since the module records them in the order given.
+triggers the resync too, since the module records them in the order given. A
+`checksumCache` change alone moves the listings to the new Path1 name instead.
 
 When the tuned first run still needs more than `bisync.timeout`, raise the
 deadline for that mount, or set `""` for no limit until the first run has
@@ -405,11 +413,13 @@ services.r2-sync.mounts.<name>.bisync.timeout = "72h";
 
 Verify:
 
-- The first run after the change completes and `journalctl` shows a
-  `Bisync successful` line.
+- The first run after the change completes: `journalctl -u r2-bisync-<name>`
+  shows `Finished R2 bisync for <name>.`, since rclone logs nothing on success
+  at its default level.
 - `/var/lib/r2-sync-<name>/bisync/` contains `.lst` files and
   `.r2-bisync-flags` listing the configured `--compare` flag and exclude filter
-  rules.
+  rules, plus `--hasher-remote=/` when `checksumCache` is on, in which case the
+  listing names start with `_hasher__`.
 
 ### C. Bisync aborts with a max-delete safety message
 

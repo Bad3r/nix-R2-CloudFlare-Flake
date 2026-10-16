@@ -31,6 +31,14 @@ and this project follows Conventional Commits.
   Reordering them triggers the resync as well: rclone takes the last value of
   a repeated flag and the first matching `--metadata-filter` rule, so the
   recorded order is significant.
+- `services.r2-sync.mounts.*.bisync.checksumCache` (default `false`): with a
+  `compare` that includes `checksum`, keeps local MD5s between bisync runs
+  through rclone's hasher overlay, so files whose size and modification time
+  are unchanged are not re-read. Toggling it on a mount with existing bisync
+  state moves the listings to the new Path1 name instead of running `--resync`,
+  and a cache database rclone cannot open is discarded and the run retried.
+  It needs an rclone carrying the Bad3r/nixpkgs hasher patches, found by file
+  name in `pkgs.rclone.patches`; evaluation fails without them.
 - `/api/v2/download`, `/api/v2/preview`, and `/share/<token>` now support `Range`
   and conditional request headers (`If-Match`, `If-None-Match`,
   `If-Modified-Since`, `If-Unmodified-Since`), answering
@@ -295,6 +303,9 @@ and this project follows Conventional Commits.
 - auto-runs `--resync` on first run when bisync state is missing
 - passes `--max-delete` as an integer percentage (0-100, default `50`; see
   Changed for the corrected default)
+- `services.r2-sync` bisync ignores trailing slashes on `localPath` and
+  `mountPoint`, which put the local trash inside the sync root and made every
+  run fail rclone's backup-dir overlap check.
 - CLI worker share signing now includes `awk` via `gawk` runtime input.
 - Worker share quickstart/docs now use the correct `url` response field.
 - Worker share quickstart now uses `tokenId` (and best-effort revoke cleanup)

@@ -17,11 +17,23 @@ let
 
   # Mirrors rclone's --compare parser (cmd/bisync/compare.go, setFromCompareFlag):
   # split on ",", trim, lowercase; each part must be size, modtime or checksum.
-  isValidCompare =
+  # A part that is none of them parses to null.
+  compareParts =
     value:
-    lib.all (
-      part: builtins.match "[[:space:]]*(size|modtime|checksum)[[:space:]]*" (lib.toLower part) != null
-    ) (lib.splitString "," value);
+    map (part: builtins.match "[[:space:]]*(size|modtime|checksum)[[:space:]]*" (lib.toLower part)) (
+      lib.splitString "," value
+    );
+  isValidCompare = value: !lib.elem null (compareParts value);
+  comparesChecksum = value: value != null && lib.elem [ "checksum" ] (compareParts value);
+
+  # types.path keeps a trailing slash given in a string, and dirOf would then
+  # return the path itself, putting the local trash inside the sync root.
+  stripTrailingSlashes =
+    path:
+    let
+      trimmed = builtins.match "(.*[^/])/+" path;
+    in
+    if trimmed == null then path else lib.head trimmed;
 
   # systemd.time(7) spans as systemd's parse_time reads them: "infinity", or
   # <number>[<unit>] terms, a bare number counting seconds. systemd logs and
@@ -55,12 +67,15 @@ let
   # The mountPoint fallback only exists so the localPath assertion below can
   # report it: a passing config always has a separate bisync directory.
   resolveLocalPath =
-    mount: if mount.localPath != null then toString mount.localPath else toString mount.mountPoint;
+    mount:
+    stripTrailingSlashes (
+      if mount.localPath != null then toString mount.localPath else toString mount.mountPoint
+    );
 
   localRoots = mount: [
     {
       role = "mountPoint";
-      path = toString mount.mountPoint;
+      path = stripTrailingSlashes (toString mount.mountPoint);
     }
     {
       role = "localPath";
@@ -78,7 +93,7 @@ let
   ) mountList;
 
   # Rejected in bisync.extraArgs, since neither can be tracked for the automatic
-  # --resync (trackedFlags below): pattern rules belong in bisync.excludes, and
+  # --resync (trackedFlagsArgFor below): pattern rules belong in bisync.excludes, and
   # a rules file can change without the config changing.
   bisyncFilterFlagNames = [
     "--filter"
@@ -171,6 +186,27 @@ let
     "--compare"
   ];
   isBisyncManagedArg = arg: lib.elem (lib.head (lib.splitString "=" arg)) bisyncManagedFlagNames;
+  # Also passed by run_bisync, but only with bisync.checksumCache on
+  # (checksumCacheArgs), so they are rejected only then.
+  checksumCacheFlagNames = [
+    "--hasher-remote"
+    "--hasher-hashes"
+    "--cache-dir"
+  ];
+  isChecksumCacheArg = arg: lib.elem (lib.head (lib.splitString "=" arg)) checksumCacheFlagNames;
+  # The Bad3r/nixpkgs rclone patches for the two upstream hasher defects
+  # described at bisync.checksumCache, matched by file name so a store path or
+  # fetchpatch name ending in it counts. The match guards against enabling the
+  # cache on an unpatched rclone by mistake; it does not prove the fixes are
+  # present. Re-check it on every pkgs.rclone bump, and once upstream ships
+  # both fixes, gate on the version instead.
+  hasherFixPatches = [
+    "hasher-hash-transfers-in-stream.patch"
+    "hasher-fingerprint-current-file.patch"
+  ];
+  missingHasherFixPatches = lib.filter (
+    fix: !lib.any (patch: lib.hasSuffix fix (toString patch)) (pkgs.rclone.patches or [ ])
+  ) hasherFixPatches;
 
   mkMountService =
     name: mount:
@@ -282,6 +318,19 @@ let
       compareArg = lib.optionalString (
         mount.bisync.compare != null
       ) "--compare=${lib.escapeShellArg mount.bisync.compare}";
+      # rclone's hasher overlay keys cached checksums by absolute path and
+      # reuses them while size and modtime match. --backup-dir1 must be on the
+      # same remote as Path1, so both go through one overlay rooted at "/".
+      # bisync compares md5 with R2, so the cache keeps only md5 instead of
+      # hasher's default md5,sha1. Downloads are hashed from the received
+      # stream only by an rclone whose hasher hashes every transfer (the
+      # Bad3r/nixpkgs build); upstream 1.75 stores R2's MD5 unchecked.
+      hasherPrefix = lib.optionalString mount.bisync.checksumCache ":hasher:";
+      path1Arg = lib.escapeShellArg "${hasherPrefix}${localPath}";
+      backupDir1Arg = lib.escapeShellArg "${hasherPrefix}${localTrashPath}";
+      checksumCacheDir = "/var/lib/r2-sync-${name}/checksum-cache";
+      checksumCacheDirArg = lib.escapeShellArg checksumCacheDir;
+      checksumCacheArgs = lib.optionalString mount.bisync.checksumCache "--hasher-remote=/ --hasher-hashes=md5 --cache-dir=${checksumCacheDirArg}";
       # rclone evaluates every --exclude before any --filter and gives --include
       # an implied trailing "- **", so the access-check file can only be pinned
       # ahead of user excludes when all rules share the --filter flag, where
@@ -310,13 +359,73 @@ let
       # are recorded in the workdir after each successful run so a change
       # forces the resync instead of a listing that silently drops files or
       # lacks the compared attribute. Of extraArgs, only the tracked filter
-      # flags (trackedFilterArgs) are recorded.
-      trackedFlags =
-        lib.optional (mount.bisync.compare != null) "--compare=${mount.bisync.compare}"
-        ++ map (rule: "--filter=${rule}") excludeRules
-        ++ trackedFilterArgs mount.bisync.extraArgs;
-      trackedFlagsArg = lib.escapeShellArg (lib.concatStringsSep "\n" trackedFlags);
+      # flags (trackedFilterArgs) are recorded. checksumCache changes Path1 and
+      # with it the listing file names, so it is tracked too: a toggle must not
+      # fail on missing listings or resume from listings an earlier run left
+      # under the other name.
+      trackedFlagsArgFor =
+        checksumCache:
+        lib.escapeShellArg (
+          lib.concatStringsSep "\n" (
+            lib.optional (mount.bisync.compare != null) "--compare=${mount.bisync.compare}"
+            ++ map (rule: "--filter=${rule}") excludeRules
+            ++ trackedFilterArgs mount.bisync.extraArgs
+            ++ lib.optional checksumCache "--hasher-remote=/"
+          )
+        );
       flagsFileArg = lib.escapeShellArg "${workdirPath}/.r2-bisync-flags";
+      # bisync names its listings after both remotes (SessionName in rclone's
+      # cmd/bisync/bilib/canonical.go). For paths made of these characters
+      # that turns "/" and ":" into "_", and a :hasher: Path1 only prefixes
+      # "_hasher__"; the listing contents stay the same. When checksumCache is
+      # the only tracked change, the listings move to the new name instead of
+      # a --resync, whose copy-only pass would undo deletions and remote edits
+      # made since the last run. Other paths fall back to the --resync.
+      sessionChars = "[[:alnum:]._@%+=,~-]+";
+      canCarryListings =
+        comparesChecksum mount.bisync.compare
+        && builtins.match "(/${sessionChars})+" localPath != null
+        && builtins.match "${sessionChars}(/${sessionChars})*" layout.path != null;
+      sessionPathArgFor =
+        checksumCache:
+        lib.escapeShellArg "${workdirPath}/${lib.optionalString checksumCache "_hasher__"}${
+          lib.replaceStrings [ "/" ] [ "_" ] (lib.removePrefix "/" localPath)
+        }.._s3_${lib.replaceStrings [ "/" ] [ "_" ] layout.path}";
+      otherChecksumCache = !mount.bisync.checksumCache;
+      carryListingsFunction =
+        if canCarryListings then
+          ''
+            carry_listings() {
+              local from=${sessionPathArgFor otherChecksumCache} to=${sessionPathArgFor mount.bisync.checksumCache} listing
+              [[ "$stored_flags" == ${trackedFlagsArgFor otherChecksumCache} ]] || return 1
+              [[ -f "$from.path1.lst" && -f "$from.path2.lst" ]] || return 1
+              ${pkgs.coreutils}/bin/rm -f -- "$to".path1.lst* "$to".path2.lst* || return 1
+              for listing in "$from".path1.lst* "$from".path2.lst*; do
+                ${pkgs.coreutils}/bin/mv -- "$listing" "$to''${listing#"$from"}" || return 1
+              done
+              record_flags || return 1
+              echo "Bisync checksumCache for ${name} changed since the last successful run; moved the listings to the new Path1 name instead of running --resync." >&2
+            }
+          ''
+        else
+          ''
+            carry_listings() { return 1; }
+          '';
+      # The cache only spares re-reading unchanged files, so a database rclone
+      # cannot open is discarded and the run retried once. A failed retry goes
+      # on to the lock and listing recovery below, since the crash that damaged
+      # the database can also orphan a lock. A timeout means another rclone
+      # holds its lock, which clears on its own. The matches are rclone log
+      # text (lib/kv/bolt.go), not an API: re-check them on every pkgs.rclone
+      # bump.
+      discardChecksumCacheShell = lib.optionalString mount.bisync.checksumCache ''
+        if [[ "$bisync_output" == *"cannot open db: "* ]] \
+          && [[ "$bisync_output" != *"cannot open db: "*": timeout"* ]]; then
+          echo "Discarding the checksum cache for ${name}, which rclone cannot open: ${checksumCacheDir}" >&2
+          ${pkgs.coreutils}/bin/rm -rf -- ${checksumCacheDirArg}
+          attempt_bisync "''${resync_flags[@]}"
+        fi
+      '';
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
         set -euo pipefail
         ${resolveAccountIdShell}
@@ -344,22 +453,26 @@ let
           resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
-        # Compare and filter flags recorded by the last successful run. A missing
-        # file reads as the empty flag set, which is what every run before the
-        # file existed used, so an unchanged default config never resyncs.
-        current_flags=${trackedFlagsArg}
+        # Compare and filter flags the listings in the workdir belong to,
+        # written after each successful run and after the listings move to a
+        # new name. A missing file reads as the empty flag set, which is what
+        # every run before the file existed used, so an unchanged default
+        # config never resyncs.
+        current_flags=${trackedFlagsArgFor mount.bisync.checksumCache}
         stored_flags=""
         if [[ -f ${flagsFileArg} ]]; then
           stored_flags="$(< ${flagsFileArg})"
-        fi
-        if [[ "$has_bisync_state" == true ]] && [[ "$stored_flags" != "$current_flags" ]]; then
-          echo "Bisync compare/filter flags for ${name} changed since the last successful run; running --resync as rclone requires after a filter change." >&2
-          resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
         fi
 
         record_flags() {
           printf '%s\n' "$current_flags" > ${flagsFileArg}
         }
+
+        ${carryListingsFunction}
+        if [[ "$has_bisync_state" == true ]] && [[ "$stored_flags" != "$current_flags" ]] && ! carry_listings; then
+          echo "Bisync compare/filter flags or checksumCache for ${name} changed since the last successful run; running --resync to rebuild the listings." >&2
+          resync_flags=(--resync --resync-mode ${lib.escapeShellArg mount.bisync.initialResyncMode})
+        fi
 
         run_bisync() {
           ${pkgs.rclone}/bin/rclone bisync \
@@ -368,8 +481,8 @@ let
             --s3-endpoint="$endpoint" \
             --s3-env-auth \
             --s3-no-check-bucket \
-            ${localPathArg} ${remoteArg} \
-            --backup-dir1=${localTrashArg} \
+            ${path1Arg} ${remoteArg} \
+            --backup-dir1=${backupDir1Arg} \
             --backup-dir2=${remoteTrashArg} \
             --max-delete=${toString mount.bisync.maxDelete} \
             ${maxLockArg} \
@@ -379,24 +492,29 @@ let
             --check-access \
             --check-filename=${checkFilenameArg} \
             ${compareArg} \
+            ${checksumCacheArgs} \
             ${filterArgs} \
             ${extraArgs} \
             "$@"
         }
 
-        set +e
-        bisync_output="$(run_bisync "''${resync_flags[@]}" 2>&1)"
-        bisync_status=$?
-        set -e
+        # Exits on success; otherwise leaves bisync_output and bisync_status
+        # for the recovery steps below.
+        attempt_bisync() {
+          set +e
+          bisync_output="$(run_bisync "$@" 2>&1)"
+          bisync_status=$?
+          set -e
+          if [[ "$bisync_status" -eq 0 ]]; then
+            printf '%s\n' "$bisync_output"
+            record_flags
+            exit 0
+          fi
+          printf '%s\n' "$bisync_output" >&2
+        }
 
-        if [[ "$bisync_status" -eq 0 ]]; then
-          printf '%s\n' "$bisync_output"
-          record_flags
-          exit 0
-        fi
-
-        printf '%s\n' "$bisync_output" >&2
-
+        attempt_bisync "''${resync_flags[@]}"
+        ${discardChecksumCacheShell}
         # A crash or shutdown can orphan a .lck that then blocks every later run
         # with "prior lock file found". The workdir is host-local and
         # single-writer, so clearing a lock whose holder PID is dead and retrying
@@ -429,9 +547,7 @@ let
           done
           if [[ "$cleared_lock" == true ]]; then
             echo "Retrying bisync for ${name} after clearing orphaned lock." >&2
-            run_bisync "''${resync_flags[@]}"
-            record_flags
-            exit 0
+            attempt_bisync "''${resync_flags[@]}"
           fi
         fi
 
@@ -685,8 +801,33 @@ in
                   per object on every listing, so "size,checksum" turns the
                   listing of a large prefix into a plain object walk (the ETag
                   is the MD5 for single-part uploads) at the price of hashing
-                  the local tree each run. Changing this on a mount with
-                  existing bisync state triggers one automatic --resync.
+                  the local tree each run unless checksumCache is set.
+                  Changing this on a mount with existing bisync state
+                  triggers one automatic --resync.
+                '';
+              };
+
+              checksumCache = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Cache local checksums between bisync runs through rclone's
+                  hasher overlay (marked experimental upstream), so a file
+                  whose size and modification time are unchanged is not read
+                  again to hash it. Requires compare to include checksum. A
+                  cached checksum is trusted while size and modification time
+                  match, so a local edit that keeps both goes unnoticed, as
+                  with rclone's default size,modtime comparison. The cache is
+                  kept under /var/lib/r2-sync-<name>/checksum-cache. Downloads
+                  into the local tree run as a single stream instead of
+                  rclone's multi-thread copy. Changing this on a mount with
+                  existing bisync state moves the listings to the new Path1
+                  name; a path outside rclone's plain naming triggers one
+                  automatic --resync instead. Evaluation fails unless
+                  pkgs.rclone carries the Bad3r/nixpkgs hasher patches for
+                  two upstream 1.75 defects: downloads cached with R2's MD5
+                  unchecked, and stale checksums for files changed after
+                  the listing.
                 '';
               };
 
@@ -757,7 +898,9 @@ in
                   fixed by the module and have none: the backup directories
                   follow localPath/remotePrefix, the workdir is
                   /var/lib/r2-sync-<name>/bisync, and --check-access,
-                  --recover and --resilient are always on.
+                  --recover and --resilient are always on. With
+                  checksumCache on, --hasher-remote, --hasher-hashes and
+                  --cache-dir are rejected the same way.
                 '';
               };
             };
@@ -815,6 +958,18 @@ in
       message = "services.r2-sync.mounts.${name}.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got '${toString mount.bisync.compare}'";
     }) cfg.mounts
     ++ lib.mapAttrsToList (name: mount: {
+      assertion = !mount.bisync.checksumCache || comparesChecksum mount.bisync.compare;
+      message = "services.r2-sync.mounts.${name}.bisync.checksumCache requires bisync.compare to include checksum (bisync hashes the local tree only when comparing checksums): got compare = ${
+        if mount.bisync.compare == null then "null" else "'${mount.bisync.compare}'"
+      }";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !mount.bisync.checksumCache || missingHasherFixPatches == [ ];
+      message = "services.r2-sync.mounts.${name}.bisync.checksumCache needs an rclone carrying the hasher patches ${lib.concatStringsSep " and " hasherFixPatches} (Bad3r/nixpkgs pkgs/by-name/rc/rclone): upstream rclone 1.75 caches R2's MD5 for a download without hashing the received bytes, so a corrupted download passes verification, and answers with a file's MD5 as listed, so a file changed since then uploads with a stale checksum; pkgs.rclone ${
+        pkgs.rclone.version or "(no version)"
+      } lacks ${lib.concatStringsSep " and " missingHasherFixPatches}";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
       assertion = mount.bisync.timeout == "" || isValidTimespan mount.bisync.timeout;
       message = "services.r2-sync.mounts.${name}.bisync.timeout must be '' (no limit) or a systemd.time(7) time span such as '24h' or '1h 30min' (systemd ignores a TimeoutStartSec it cannot parse, which leaves the run unbounded): got '${mount.bisync.timeout}'";
     }) cfg.mounts
@@ -843,6 +998,10 @@ in
     ++ lib.mapAttrsToList (name: mount: {
       assertion = !lib.any isBisyncManagedArg mount.bisync.extraArgs;
       message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain flags the module already passes to rclone bisync (${lib.concatStringsSep ", " bisyncManagedFlagNames}): rclone takes the last occurrence of a repeated scalar flag, so repeating one here silently overrides the module's own value, which can disable the bisync.maxDelete abort guard, turn the backup-dir soft delete into a real delete, desync bisync's on-disk state from the module's own workdir and resync tracking, disable the --check-access safety check, move the check file --check-access looks for away from the one the module already copied under checkFilename, or turn off the crash and transient-error recovery that bisync.timeout now relies on to leave a usable listing behind; set bisync.maxDelete, bisync.maxLock, bisync.checkFilename or bisync.compare, the four of these with a dedicated option; the rest are fixed by the module and have none: the backup directories follow localPath/remotePrefix, the workdir is /var/lib/r2-sync-${name}/bisync, and --check-access, --recover and --resilient are always on";
+    }) cfg.mounts
+    ++ lib.mapAttrsToList (name: mount: {
+      assertion = !mount.bisync.checksumCache || !lib.any isChecksumCacheArg mount.bisync.extraArgs;
+      message = "services.r2-sync.mounts.${name}.bisync.extraArgs must not contain ${lib.concatStringsSep ", " checksumCacheFlagNames} while bisync.checksumCache is on: the module passes them for the hasher overlay, and rclone takes the last occurrence of a repeated flag, so a repeat would re-root the overlay behind Path1 and --backup-dir1 or move the cache database away from /var/lib/r2-sync-${name}/checksum-cache, which the unit discards when rclone cannot open it";
     }) cfg.mounts
     ++ lib.mapAttrsToList (
       name: _mount:

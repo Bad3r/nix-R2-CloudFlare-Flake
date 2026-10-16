@@ -1,9 +1,9 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 /*
  * Second Vitest project running tests/workers/** inside workerd via
- * @cloudflare/vitest-pool-workers, so the real Durable Objects
+ * @cloudflare/vitest-plugin, so the real Durable Objects
  * (ShareCounterDurableObject, UploadSessionDurableObject) and R2/KV
  * simulators are exercised instead of the node-suite memory fakes.
  *

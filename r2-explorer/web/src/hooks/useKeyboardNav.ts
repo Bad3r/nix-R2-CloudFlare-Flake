@@ -21,7 +21,7 @@ const INTERACTIVE = "input, textarea, select, button, a, [contenteditable], [rol
  * implementation hijacked Enter everywhere, making Delete/Revoke unreachable by
  * keyboard).
  */
-export function useKeyboardNav(actions: KeyboardActions, prefixInput: RefObject<HTMLInputElement>): void {
+export function useKeyboardNav(actions: KeyboardActions, prefixInput: RefObject<HTMLInputElement | null>): void {
   const { focusPrefix, moveDown, moveUp, preview, download, createShare, hasSelection } = actions;
 
   useEffect(() => {

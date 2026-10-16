@@ -5,7 +5,7 @@ type PrefixToolbarProps = {
   loading: boolean;
   canGoBack: boolean;
   canGoNext: boolean;
-  inputRef: RefObject<HTMLInputElement>;
+  inputRef: RefObject<HTMLInputElement | null>;
   onPrefixInput: (value: string) => void;
   onSubmit: () => void;
   onUp: () => void;
