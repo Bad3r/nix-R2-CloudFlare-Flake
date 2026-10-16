@@ -41,7 +41,7 @@ overrides:
   # (GHSA-ch52-4w7c-c8xp) via astro>http-cache-semantics;
   # source-map-js <1.2.2 event-loop denial of service through indexed source
   # maps (GHSA-68fv-2mgg-jv7q) via vite>postcss>source-map-js.
-  sharp: ">=0.35.5"
+  sharp: ^0.35.5
   fast-uri: ^3.1.6
   undici: ^7.29.1
   browserslist: ^4.28.7
