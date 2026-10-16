@@ -399,18 +399,18 @@ let
             carry_listings() { return 1; }
           '';
       # The cache only spares re-reading unchanged files, so a database rclone
-      # cannot open is discarded and the run retried once. A timeout means
-      # another rclone holds its lock, which clears on its own. The matches are
-      # rclone log text (lib/kv/bolt.go), not an API: re-check them on every
-      # pkgs.rclone bump.
+      # cannot open is discarded and the run retried once. A failed retry goes
+      # on to the lock and listing recovery below, since the crash that damaged
+      # the database can also orphan a lock. A timeout means another rclone
+      # holds its lock, which clears on its own. The matches are rclone log
+      # text (lib/kv/bolt.go), not an API: re-check them on every pkgs.rclone
+      # bump.
       discardChecksumCacheShell = lib.optionalString mount.bisync.checksumCache ''
         if [[ "$bisync_output" == *"cannot open db: "* ]] \
           && [[ "$bisync_output" != *"cannot open db: "*": timeout"* ]]; then
           echo "Discarding the checksum cache for ${name}, which rclone cannot open: ${checksumCacheDir}" >&2
           ${pkgs.coreutils}/bin/rm -rf -- ${checksumCacheDirArg}
-          run_bisync "''${resync_flags[@]}"
-          record_flags
-          exit 0
+          attempt_bisync "''${resync_flags[@]}"
         fi
       '';
       bisyncScript = pkgs.writeShellScript "r2-bisync-${name}" ''
@@ -485,18 +485,22 @@ let
             "$@"
         }
 
-        set +e
-        bisync_output="$(run_bisync "''${resync_flags[@]}" 2>&1)"
-        bisync_status=$?
-        set -e
+        # Exits on success; otherwise leaves bisync_output and bisync_status
+        # for the recovery steps below.
+        attempt_bisync() {
+          set +e
+          bisync_output="$(run_bisync "$@" 2>&1)"
+          bisync_status=$?
+          set -e
+          if [[ "$bisync_status" -eq 0 ]]; then
+            printf '%s\n' "$bisync_output"
+            record_flags
+            exit 0
+          fi
+          printf '%s\n' "$bisync_output" >&2
+        }
 
-        if [[ "$bisync_status" -eq 0 ]]; then
-          printf '%s\n' "$bisync_output"
-          record_flags
-          exit 0
-        fi
-
-        printf '%s\n' "$bisync_output" >&2
+        attempt_bisync "''${resync_flags[@]}"
         ${discardChecksumCacheShell}
         # A crash or shutdown can orphan a .lck that then blocks every later run
         # with "prior lock file found". The workdir is host-local and
