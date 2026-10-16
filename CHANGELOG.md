@@ -23,6 +23,12 @@ and this project follows Conventional Commits.
   listing (#150). A `compare` or `excludes` change on a mount with existing
   bisync state triggers one automatic `--resync`, which rclone requires after
   a filter change.
+- `services.r2-sync.mounts.*.bisync.checksumCache` (default `false`): with a
+  `compare` that includes `checksum`, keeps local MD5s between bisync runs
+  through rclone's hasher overlay, so files whose size and modification time
+  are unchanged are not re-read. Toggling it on a mount with existing bisync
+  state moves the listings to the new Path1 name instead of running `--resync`,
+  and a cache database rclone cannot open is discarded and the run retried.
 
 ### Changed
 
@@ -64,6 +70,9 @@ and this project follows Conventional Commits.
 - uses an explicit workdir under `/var/lib/r2-sync-<name>/bisync`
 - auto-runs `--resync` on first run when bisync state is missing
 - uses an integer `--max-delete` value (avoids parse errors from `50%`-style values)
+- `services.r2-sync` bisync ignores trailing slashes on `localPath` and
+  `mountPoint`, which put the local trash inside the sync root and made every
+  run fail rclone's backup-dir overlap check.
 - CLI worker share signing now includes `awk` via `gawk` runtime input.
 - Worker share quickstart/docs now use the correct `url` response field.
 - Worker share quickstart now uses `tokenId` (and best-effort revoke cleanup)

@@ -423,14 +423,24 @@ let
             mountPoint = "/mnt/r2/documents";
             bisync.compare = "size,mtime";
           };
+          mounts.photos = {
+            bucket = "my-photos";
+            remotePrefix = "photos";
+            mountPoint = "/mnt/r2/photos";
+            bisync.checksumCache = true;
+          };
         };
       }
     ];
   };
   failed = builtins.filter (a: !(a.assertion)) systemEval.config.assertions;
-  expected = "services.r2-sync.mounts.documents.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got 'size,mtime'";
+  expected = [
+    "services.r2-sync.mounts.documents.bisync.compare must be a comma-separated list of size, modtime, or checksum (rclone bisync --compare; null omits the flag): got 'size,mtime'"
+    "services.r2-sync.mounts.photos.bisync.checksumCache requires bisync.compare to include checksum (bisync hashes the local tree only when comparing checksums): got compare = null"
+  ];
+  missing = builtins.filter (m: !(builtins.any (a: a.message == m) failed)) expected;
 in
-if builtins.any (a: a.message == expected) failed then "ok" else builtins.throw "Missing expected r2-sync bisync.compare assertion"
+if missing == [ ] then "ok" else builtins.throw "Missing expected r2-sync bisync assertion: ${builtins.head missing}"
 NIX
 )"
 
@@ -661,7 +671,7 @@ run_target_root_cli_module_eval() {
   nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"
   nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
   nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"
-  nix_eval_expect "r2-sync bisync.compare assertion (negative)" "ok" "${R2_SYNC_COMPARE_ASSERTION_EXPR}"
+  nix_eval_expect "r2-sync bisync.compare/checksumCache assertions (negative)" "ok" "${R2_SYNC_COMPARE_ASSERTION_EXPR}"
   nix_eval_expect "r2-restic assertions (negative)" "ok" "${R2_RESTIC_ASSERTION_EXPR}"
   nix_eval_expect "git-annex module (positive)" "ok" "${GIT_ANNEX_POSITIVE_EXPR}"
   nix_eval_expect "git-annex assertions (negative)" "ok" "${GIT_ANNEX_ASSERTION_EXPR}"

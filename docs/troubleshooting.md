@@ -378,23 +378,30 @@ prefix"):
 ```nix
 services.r2-sync.mounts.<name>.bisync = {
   compare = "size,checksum";
+  checksumCache = true;
   excludes = [ "node_modules/**" ".venv/**" ];
   extraArgs = [ "--fast-list" "--checkers" "16" ];
 };
 ```
 
-A `compare` or `excludes` change on a mount that already has listing state
-makes the next run perform one automatic `--resync`, which rclone requires
-after a filter change. Filter flags passed through `extraArgs` are not tracked;
+`checksumCache` keeps local checksums across runs, so a retry after an
+interrupted run does not re-hash files it already read.
+
+A `compare` or `excludes` change on a mount that already has listing state makes
+the next run perform one automatic `--resync`, which rclone requires after a
+filter change. A `checksumCache` change alone moves the listings to the new
+Path1 name instead. Filter flags passed through `extraArgs` are not tracked;
 keep them in `excludes`.
 
 Verify:
 
-- The first run after the change completes and `journalctl` shows a
-  `Bisync successful` line.
+- The first run after the change completes: `journalctl -u r2-bisync-<name>`
+  shows `Finished R2 bisync for <name>.`, since rclone logs nothing on success
+  at its default level.
 - `/var/lib/r2-sync-<name>/bisync/` contains `.lst` files and
   `.r2-bisync-flags` listing the configured `--compare` flag and exclude filter
-  rules.
+  rules, plus `--hasher-remote=/` when `checksumCache` is on, in which case the
+  listing names start with `_hasher__`.
 
 ## 4) `restic`
 
