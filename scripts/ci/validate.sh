@@ -21,10 +21,8 @@ CACHE_URL_DEFAULT="https://cache.nixos.org"
 CACHE_URL="${NIX_VALIDATE_CACHE_URL:-${CACHE_URL_DEFAULT}}"
 CACHE_INFO_URL="${CACHE_URL%/}/nix-cache-info"
 PROJECT_CACHE_URL="https://nix-r2-cloudflare-flake.cachix.org/"
-WRANGLER_CACHE_URL="https://wrangler.cachix.org/"
 CACHE_NIXOS_KEY="cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 PROJECT_CACHE_KEY="nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw="
-WRANGLER_CACHE_KEY="wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs="
 
 # Force deterministic cache settings for CI and local reproducibility.
 # This avoids inheriting slow/unreachable user-level extra substituters.
@@ -38,14 +36,14 @@ fi
 if [[ -n ${NIX_VALIDATE_SUBSTITUTERS:-} ]]; then
   SUBSTITUTERS_LINE="substituters = ${NIX_VALIDATE_SUBSTITUTERS}"
 elif curl -fsSI --max-time 5 "${CACHE_INFO_URL}" >/dev/null 2>&1; then
-  SUBSTITUTERS_LINE="substituters = ${CACHE_URL%/}/ ${PROJECT_CACHE_URL} ${WRANGLER_CACHE_URL}"
+  SUBSTITUTERS_LINE="substituters = ${CACHE_URL%/}/ ${PROJECT_CACHE_URL}"
 else
-  echo "Warning: ${CACHE_INFO_URL} is unreachable. Using ${PROJECT_CACHE_URL} and ${WRANGLER_CACHE_URL} only." >&2
+  echo "Warning: ${CACHE_INFO_URL} is unreachable. Using ${PROJECT_CACHE_URL} only." >&2
   echo "Set NIX_VALIDATE_SUBSTITUTERS to override default substituters for this run." >&2
-  SUBSTITUTERS_LINE="substituters = ${PROJECT_CACHE_URL} ${WRANGLER_CACHE_URL}"
+  SUBSTITUTERS_LINE="substituters = ${PROJECT_CACHE_URL}"
 fi
 
-PINNED_NIX_CONFIG="accept-flake-config = true"$'\n'"${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = ${CACHE_NIXOS_KEY} ${PROJECT_CACHE_KEY} ${WRANGLER_CACHE_KEY}"$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
+PINNED_NIX_CONFIG="accept-flake-config = true"$'\n'"${SUBSTITUTERS_LINE}"$'\n'"extra-substituters ="$'\n'"trusted-public-keys = ${CACHE_NIXOS_KEY} ${PROJECT_CACHE_KEY}"$'\n'"extra-trusted-public-keys ="$'\n'"http-connections = 50"$'\n'"${CACHE_TUNING}"
 
 if [[ -n ${NIX_CONFIG:-} ]]; then
   export NIX_CONFIG="${NIX_CONFIG}"$'\n'"${PINNED_NIX_CONFIG}"

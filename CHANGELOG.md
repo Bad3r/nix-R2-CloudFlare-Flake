@@ -20,6 +20,10 @@ and this project follows Conventional Commits.
   outdated vendored `.agents/skills` snapshot, installer lock, and redundant
   domain-specific MCP entries. `.mcp.json` retains the consolidated API server
   for agents that use that project configuration format.
+- The flake `nixConfig`, CI, and `scripts/ci/validate.sh` no longer configure
+  `wrangler.cachix.org`, which stopped serving wrangler builds. Wrangler
+  follows this flake's `nixpkgs` again and is cached in
+  `nix-r2-cloudflare-flake.cachix.org` with the other CI build results.
 
 ### Added
 

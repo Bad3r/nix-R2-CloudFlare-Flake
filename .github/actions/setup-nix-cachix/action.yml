@@ -33,13 +33,12 @@ runs:
         extra-conf: |
           experimental-features = nix-command flakes
           require-sigs = true
-          extra-substituters = https://nix-r2-cloudflare-flake.cachix.org https://wrangler.cachix.org
-          extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw= wrangler.cachix.org-1:N/FIcG2qBQcolSpklb2IMDbsfjZKWg+ctxx0mSMXdSs=
+          extra-substituters = https://nix-r2-cloudflare-flake.cachix.org
+          extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-r2-cloudflare-flake.cachix.org-1:pmYucG85iBm6Y+8TxNwqU5j/lmY1UBReZxIXslMFntw=
 
     - name: Configure Cachix
       uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
       with:
         name: nix-r2-cloudflare-flake
-        extraPullNames: wrangler
         authToken: ${{ inputs.cachix-auth-token }}
         skipPush: ${{ inputs.skip-push }}
