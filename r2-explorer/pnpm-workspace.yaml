@@ -41,6 +41,9 @@ overrides:
   # (GHSA-ch52-4w7c-c8xp) via astro>http-cache-semantics;
   # source-map-js <1.2.2 event-loop denial of service through indexed source
   # maps (GHSA-68fv-2mgg-jv7q) via vite>postcss>source-map-js.
+  # zod <4.6.6 memory exhaustion on oversized constrained collections
+  # (GHSA-mrhx-c7xc-m3w5) via @cloudflare/vitest-plugin>zod; the floor matches
+  # the direct zod dependency so the override does not lower it.
   sharp: ^0.35.5
   fast-uri: ^3.1.6
   undici: ^7.29.1
@@ -51,6 +54,7 @@ overrides:
   smol-toml: ^1.7.1
   http-cache-semantics: ^4.3.0
   source-map-js: ^1.2.2
+  zod: ^4.6.7
 allowBuilds:
   esbuild: true
   sharp: true
