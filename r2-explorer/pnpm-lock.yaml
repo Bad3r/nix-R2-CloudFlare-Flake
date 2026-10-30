@@ -17,6 +17,7 @@ overrides:
   smol-toml: ^1.7.1
   http-cache-semantics: ^4.3.0
   source-map-js: ^1.2.2
+  zod: ^4.6.7
 
 importers:
 
@@ -2347,9 +2348,6 @@ packages:
   zimmerframe@1.1.5:
     resolution: {integrity: sha512-msJxIvYDYcoNL+PJsu+7qmpDWsYmAxTY+2TNYXXF0hzBzBk0BMecOqDOG/EckUoKCuKwObfbugIl8QpqHDXeFA==}
 
-  zod@4.6.5:
-    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
-
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
@@ -2751,7 +2749,7 @@ snapshots:
       miniflare: 5.20261019.2-beta
       vitest: 5.0.5(vite@8.3.4(esbuild@0.28.2)(yaml@2.9.1))
       wrangler: 4.152.0(@cloudflare/workers-types@5.20261023.1)
-      zod: 4.6.5
+      zod: 4.6.7
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
       - '@types/node'
@@ -4532,8 +4530,6 @@ snapshots:
       youch-core: 0.3.3
 
   zimmerframe@1.1.5: {}
-
-  zod@4.6.5: {}
 
   zod@4.6.7: {}
 
