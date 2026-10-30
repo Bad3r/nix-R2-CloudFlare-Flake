@@ -34,7 +34,7 @@ in
     ];
 
     # Installs wrapped CLI from package derivation:
-    # - r2 (primary package-backed subcommand CLI)
+    # - r2c (primary package-backed subcommand CLI)
     #
     # HM wrappers only inject default env/config and delegate to package binaries.
     home.packages = [ r2Wrapper ];

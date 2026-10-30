@@ -153,7 +153,7 @@
         in
         {
           packages = {
-            r2 = r2Package;
+            r2c = r2Package;
             lefthook-treefmt = pkgs.writeShellApplication {
               name = "lefthook-treefmt";
               runtimeInputs = [
@@ -202,7 +202,7 @@
             default = pkgs.symlinkJoin {
               name = "r2-cloud-tools";
               paths = [
-                self.packages.${system}.r2
+                self.packages.${system}.r2c
                 self.packages.${system}.lefthook-treefmt
                 self.packages.${system}.lefthook-statix
               ];

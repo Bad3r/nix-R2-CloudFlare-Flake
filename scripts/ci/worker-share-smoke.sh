@@ -290,14 +290,14 @@ SERVICE_TOKEN_CLIENT_SECRET="$(resolve_required_prefixed_value "SERVICE_TOKEN_CL
 require_command "jq"
 require_command "curl"
 
-R2_BIN="$(resolve_optional_prefixed_value "R2_BIN" "r2")"
+R2_BIN="$(resolve_optional_prefixed_value "R2_BIN" "r2c")"
 if [[ ${R2_BIN} == */* ]]; then
   if [[ ! -x ${R2_BIN} ]]; then
-    fail "r2 binary is not executable: ${R2_BIN}"
+    fail "r2c binary is not executable: ${R2_BIN}"
   fi
 else
   if ! command -v "${R2_BIN}" >/dev/null 2>&1; then
-    fail "r2 command is not available in PATH: ${R2_BIN}"
+    fail "r2c command is not available in PATH: ${R2_BIN}"
   fi
 fi
 
@@ -363,7 +363,7 @@ revoke_share_token() {
   set -e
 
   if [[ ${revoke_exit} -ne 0 ]]; then
-    echo "ERROR: 'r2 share worker revoke ${token_id}' exited ${revoke_exit}:" >&2
+    echo "ERROR: 'r2c share worker revoke ${token_id}' exited ${revoke_exit}:" >&2
     cat "${revoke_stderr}" >&2
     return 1
   fi

@@ -110,16 +110,16 @@ Configure in Cloudflare dashboard:
 
 #### Presigned URLs (S3 endpoint only)
 
-Use the `r2 share` CLI for quick sharing. These links are always on the S3 endpoint
+Use the `r2c share` CLI for quick sharing. These links are always on the S3 endpoint
 (`https://<account_id>.r2.cloudflarestorage.com`) and **do not** pass through the custom
 domain or Cloudflare Access.
 
 ```bash
 # Share file for 24 hours (default)
-r2 share documents report.pdf
+r2c share documents report.pdf
 
 # Share for 7 days
-r2 share documents report.pdf 168h
+r2c share documents report.pdf 168h
 ```
 
 #### Worker Share Links (custom domain)
@@ -129,7 +129,7 @@ domain. Links are served under `https://files.unsigned.sh/share/<token>` and use
 KV-backed random token records with expiry/revocation/download-limit checks.
 
 `/api/v2/*` routes require Cloudflare Access identity. CLI-driven Worker share
-operations (`r2 share worker ...`) authenticate with admin HMAC headers
+operations (`r2c share worker ...`) authenticate with admin HMAC headers
 validated against `R2E_KEYS_KV`.
 
 Note: `/api/v2/share/*` is part of the protected API surface and should not be
@@ -141,7 +141,7 @@ machine authentication at the edge.
 
 | File                                             | Purpose                                                   |
 | ------------------------------------------------ | --------------------------------------------------------- |
-| `packages/r2-cli.nix`                            | Primary `r2` CLI with presigned + Worker share commands   |
+| `packages/r2-cli.nix`                            | Primary `r2c` CLI with presigned + Worker share commands  |
 | `r2-explorer/flake.nix`                          | Worker subflake tooling/dev shell/deploy helper           |
 | `r2-explorer/wrangler.toml`                      | Worker bindings + runtime vars (`R2E_*`)                  |
 | `r2-explorer/src/index.ts`                       | Worker entrypoint                                         |

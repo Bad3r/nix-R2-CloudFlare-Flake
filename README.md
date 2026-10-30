@@ -10,7 +10,7 @@ Standalone Nix flake for Cloudflare R2 storage, sync, backup, and sharing.
 - NixOS sync module: `services.r2-sync` (rclone mount + bisync services/timers)
 - NixOS backup module: `services.r2-restic` (scheduled restic snapshots to R2)
 - NixOS annex helper module: `programs.git-annex-r2`
-- Home Manager CLI surface: `programs.r2-cloud` (`r2` wrapper + tool installation)
+- Home Manager CLI surface: `programs.r2-cloud` (`r2c` wrapper + tool installation)
 - Home Manager credentials assembly: `programs.r2-cloud.credentials`
 - Home Manager managed `rclone.conf`: generated from `programs.r2-cloud` options
 - Worker subflake: split API + web Workers (Hono API + Astro/Preact UI)

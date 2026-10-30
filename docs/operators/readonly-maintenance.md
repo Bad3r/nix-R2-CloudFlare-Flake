@@ -47,13 +47,13 @@ wrangler deploy
 4. Validate mutating admin paths are blocked:
 
 ```bash
-r2 share worker create files documents/test.txt 1h --max-downloads 1
+r2c share worker create files documents/test.txt 1h --max-downloads 1
 ```
 
 5. Validate non-mutating operations still work:
 
 ```bash
-r2 share worker list files documents/test.txt
+r2c share worker list files documents/test.txt
 curl -I "https://files.unsigned.sh/share/<token-id>"
 ```
 

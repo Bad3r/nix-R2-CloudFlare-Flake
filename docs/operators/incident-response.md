@@ -41,7 +41,7 @@ Provide a repeatable response workflow for R2-Explorer sharing incidents.
 ```bash
 curl -I https://files.unsigned.sh/api/v2/list
 curl -I https://files.unsigned.sh/share/<token-id>
-r2 share worker list files documents/test.txt
+r2c share worker list files documents/test.txt
 ```
 
 4. Investigate:

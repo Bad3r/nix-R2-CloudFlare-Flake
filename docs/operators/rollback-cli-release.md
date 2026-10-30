@@ -3,13 +3,13 @@
 ## Purpose
 
 Restore the last known-good CLI behavior when a release introduces a regression
-in `r2` command behavior.
+in `r2c` command behavior.
 
 ## When to Use
 
 - Release workflow `verify-cli-smoke` fails for a candidate release.
 - Post-release user reports confirm command-level regressions.
-- `r2` command usage/help surfaces no longer match documented behavior.
+- `r2c` command usage/help surfaces no longer match documented behavior.
 
 ## Prerequisites
 
@@ -27,10 +27,10 @@ in `r2` command behavior.
 
 1. Confirm scope of regression:
    - run CLI smoke commands against the failing artifact:
-   - `r2 help`
-   - `r2 bucket help`
-   - `r2 share help`
-   - `r2 share worker help`
+   - `r2c help`
+   - `r2c bucket help`
+   - `r2c share help`
+   - `r2c share worker help`
 2. Create a rollback PR on top of `main`:
    - revert the offending commit(s), or
    - cherry-pick the minimal fix if full revert is unsafe.

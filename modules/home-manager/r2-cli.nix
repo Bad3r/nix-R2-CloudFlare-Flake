@@ -28,18 +28,18 @@ let
     outputVar = "R2_RESOLVED_ACCOUNT_ID";
   };
   r2Wrapper = pkgs.writeShellApplication {
-    name = "r2";
-    derivationArgs.name = "r2-wrapper-${r2DerivationVersion}";
+    name = "r2c";
+    derivationArgs.name = "r2c-wrapper-${r2DerivationVersion}";
     passthru.version = r2DerivationVersion;
     text = ''
       set -euo pipefail
 
       # help/version and a bare invocation must reach the inner CLI without
       # resolving an account ID or reading any file: a missing or broken
-      # secret must not block `r2 help`.
+      # secret must not block `r2c help`.
       first_arg="''${1:-}"
       if [[ "$#" -eq 0 || "$first_arg" =~ ^(help|-h|--help|version|--version)$ ]]; then
-        exec ${cfg.package}/bin/r2 "$@"
+        exec ${cfg.package}/bin/r2c "$@"
       fi
 
       ${r2lib.sourceEnvFileShellFunction}
@@ -70,7 +70,7 @@ let
         fi
         export "RCLONE_CONFIG_''${remote_env_name}_ENDPOINT=${r2lib.mkR2Endpoint "\${R2_RESOLVED_ACCOUNT_ID}"}"
       fi
-      exec ${cfg.package}/bin/r2 "$@"
+      exec ${cfg.package}/bin/r2c "$@"
     '';
   };
   toolPackages = [
@@ -90,10 +90,10 @@ in
       default = defaultR2Package;
       defaultText = lib.literalExpression "pkgs.callPackage ../../packages/r2-cli.nix { inherit (pkgs) wrangler; }";
       description = ''
-        The `r2` CLI package wrapped by this module. Defaults to the CLI built
+        The `r2c` CLI package wrapped by this module. Defaults to the CLI built
         from this flake's `packages/r2-cli.nix` using `pkgs.wrangler`. Set it
-        to the flake's `packages.<system>.r2` output to reuse the exact CLI
-        provided by `nix run .#r2`.
+        to the flake's `packages.<system>.r2c` output to reuse the exact CLI
+        provided by `nix run .#r2c`.
       '';
     };
 

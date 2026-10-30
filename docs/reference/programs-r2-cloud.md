@@ -1,6 +1,6 @@
 # `programs.r2-cloud` Reference
 
-Home Manager wrapper surface for the `r2` CLI and optional tooling.
+Home Manager wrapper surface for the `r2c` CLI and optional tooling.
 
 Activation condition: `programs.r2-cloud.enable = true`.
 
@@ -8,8 +8,8 @@ Activation condition: `programs.r2-cloud.enable = true`.
 
 | Option                                 | Type           | Default                                       | Required when enabled                | Notes                                                                                                           |
 | -------------------------------------- | -------------- | --------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `programs.r2-cloud.enable`             | boolean        | `false`                                       | no                                   | Installs wrapper `r2` command into `home.packages`.                                                             |
-| `programs.r2-cloud.package`            | package        | the flake's `r2` CLI (`packages/r2-cli.nix`)  | no                                   | Override the `r2` wrapper package installed into `home.packages`.                                               |
+| `programs.r2-cloud.enable`             | boolean        | `false`                                       | no                                   | Installs wrapper `r2c` command into `home.packages`.                                                            |
+| `programs.r2-cloud.package`            | package        | the flake's `r2c` CLI (`packages/r2-cli.nix`) | no                                   | Override the `r2c` wrapper package installed into `home.packages`.                                              |
 | `programs.r2-cloud.accountId`          | string         | `""`                                          | yes                                  | Exported to wrapper as `R2_DEFAULT_ACCOUNT_ID`.                                                                 |
 | `programs.r2-cloud.accountIdFile`      | path or `null` | `null`                                        | yes (if `accountId` empty)           | File-based account ID source; used when literal is unset.                                                       |
 | `programs.r2-cloud.credentialsFile`    | path           | `${config.xdg.configHome}/cloudflare/r2/env`  | no                                   | Exported as `R2_CREDENTIALS_FILE`. Parsed as `KEY=VALUE` data (see "Env file format").                          |
@@ -29,9 +29,9 @@ When `enable = true`, evaluation fails if any assertion below is violated:
 
 ## Generated runtime artifacts
 
-- wrapper command: `r2`
-- delegated CLI derivation: versioned as `r2-0.1.0+git.<rev>` (fallback `r2-0.1.0+src.<hash>`) so `nh`/`nvd` can detect source/revision changes while executable stays `r2`
-- `r2 version` / `r2 --version` prints that same version string (matches the derivation's `passthru.version`); the Home Manager wrapper forwards `version`/`--version` straight to the inner CLI without resolving an account ID or reading any file
+- wrapper command: `r2c`
+- delegated CLI derivation: versioned as `r2c-0.1.0+git.<rev>` (fallback `r2c-0.1.0+src.<hash>`) so `nh`/`nvd` can detect source/revision changes while executable stays `r2c`
+- `r2c version` / `r2c --version` prints that same version string (matches the derivation's `passthru.version`); the Home Manager wrapper forwards `version`/`--version` straight to the inner CLI without resolving an account ID or reading any file
 - wrapper exports:
   - `R2_CREDENTIALS_FILE`
   - variables from `programs.r2-cloud.explorerEnvFile` (if configured and readable)

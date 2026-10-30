@@ -128,7 +128,7 @@ CI automation does not remove break-glass/manual deployment workflows.
   - Flake lock/input policy scan: `flake-checker` (`--check-outdated`,
     `--check-owner`, `--check-supported`) on root and worker lockfiles
   - Worker dependency audit: `pnpm audit --audit-level=high`
-  - Nix closure scan: `vulnix` against built `.#r2` output with tracked
+  - Nix closure scan: `vulnix` against built `.#r2c` output with tracked
     baseline allowlist `scripts/ci/vulnix-whitelist.toml`
 - Secret scanning is enforced through `lefthook` pre-commit `ripsecrets`,
   and CI execution of `lefthook run pre-commit --all-files`.
@@ -158,7 +158,7 @@ CI automation does not remove break-glass/manual deployment workflows.
   - releases restricted to refs resolving to `main`
   - hard-fail if tag `vX.Y.Z` already exists
 - Release artifact gates:
-  - root build: `nix build .#r2` plus Nix output/closure metadata artifacts
+  - root build: `nix build .#r2c` plus Nix output/closure metadata artifacts
   - worker build: `pnpm install --frozen-lockfile`, `pnpm run check`,
     `pnpm test`, then packaged worker release artifacts
 - Changelog and notes automation:
@@ -184,7 +184,7 @@ CI automation does not remove break-glass/manual deployment workflows.
   - `deploy-production` has no CI smoke/live test stage.
 - Preview smoke checks are implemented in
   `scripts/ci/worker-share-smoke.sh` and validate:
-  - Worker share creation via `r2 share worker create`
+  - Worker share creation via `r2c share worker create`
   - first `/share/<token>` access success
   - second `/share/<token>` access converges to expected token exhaustion
     (`410`) with bounded retries for KV propagation delays
@@ -197,12 +197,12 @@ CI automation does not remove break-glass/manual deployment workflows.
   - `rollback-guidance-preview` runs only when `smoke-preview` fails.
 - Added CLI-impacting release gate in `.github/workflows/release.yml`:
   - `verify-cli-smoke` validates packaged CLI commands before publish:
-    - `r2 help`
-    - `r2 bucket help`
-    - `r2 share help`
-    - `r2 share worker help`
+    - `r2c help`
+    - `r2c bucket help`
+    - `r2c share help`
+    - `r2c share worker help`
   - gate installs Nix and imports exported closure metadata before executing the
-    packaged `r2` artifact, so runtime store dependencies are present
+    packaged `r2c` artifact, so runtime store dependencies are present
 - Added operator runbook for CLI rollback:
   - `docs/operators/rollback-cli-release.md`
   - linked from `docs/operators/index.md` and `docs/versioning.md`
@@ -226,7 +226,7 @@ CI automation does not remove break-glass/manual deployment workflows.
    - if authenticated `/api/v2/session/info` fails to return `200`
    - preview smoke checks fail with explicit status mismatch
 5. CLI release smoke gate:
-   - `verify-cli-smoke` must pass (`r2 help`, `bucket help`, `share help`,
+   - `verify-cli-smoke` must pass (`r2c help`, `bucket help`, `share help`,
      `share worker help`) before release publish/tag steps
 
 ### 7.5 Operational Acceptance Note (Updated 2026-03-07)

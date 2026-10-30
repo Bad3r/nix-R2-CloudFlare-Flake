@@ -11,8 +11,8 @@ high-level architecture diagram and key design decisions.
 
 1. [x] **Phase 1**: [Repository scaffold + flake.nix](./plan/phase-1-scaffold.md)
 2. [x] **Phase 2**: [NixOS modules (r2-sync.nix, r2-restic.nix)](./plan/phase-2-nixos-modules.md)
-3. [x] **Phase 3**: [Home Manager modules (`r2` wrapper, credentials assembly, managed `rclone.conf`)](./plan/phase-3-home-manager-modules.md)
-4. [x] **Phase 4**: [CLI package extraction/refactor (single `r2` package CLI + HM wrapper delegation)](./plan/phase-4-cli.md)
+3. [x] **Phase 3**: [Home Manager modules (`r2c` wrapper, credentials assembly, managed `rclone.conf`)](./plan/phase-3-home-manager-modules.md)
+4. [x] **Phase 4**: [CLI package extraction/refactor (single `r2c` package CLI + HM wrapper delegation)](./plan/phase-4-cli.md)
 5. [x] **Phase 5**: [R2-Explorer subflake (Hono+Zod contracts, middleware layering, `/api/v2/session/info`, worker tests)](./plan/phase-5-worker.md)
 6. [x] **Phase 6**: [Templates and documentation](./plan/phase-6-templates-docs.md)
 7. [x] **Phase 7**: [CI/CD setup](./plan/phase-7-ci-cd.md)

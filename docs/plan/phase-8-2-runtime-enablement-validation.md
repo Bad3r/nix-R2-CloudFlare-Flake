@@ -37,13 +37,13 @@ Implication:
 
 ## Production Blocker Register (2026-02-15)
 
-| ID     | Blocker                                                                                                    | Status              | Evidence                                                                                                                                                                            | Action                                                               |
-| ------ | ---------------------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `B-01` | `files.unsigned.sh` unresolved                                                                             | closed              | `wrangler triggers deploy` attached custom domain; `dig` now returns A records                                                                                                      | keep `routes.custom_domain` config under change control              |
-| `B-02` | `/run/secrets/r2/credentials.env` rendered as literal `{{ ... }}` placeholders in `~/nixos`                | closed (2026-02-15) | fixed in `~/nixos/modules/security/r2-cloud-secrets.nix` by switching to `config.sops.placeholder.*`; verified runtime file is readable and no longer contains template braces      | none (keep SOPS placeholders; recheck after secret edits)            |
-| `B-03` | runtime options still disabled in `~/nixos`                                                                | closed (2026-02-15) | `nix eval ...services.r2-sync.enable` / `...r2-restic.enable` / `...git-annex-r2.enable` / HM `...r2-cloud.enable` all return `true`; host units/timers active                      | keep staged enablement in `~/nixos/modules/system76/r2-runtime.nix`  |
-| `B-04` | Worker admin signing env for `r2 share worker create` not yet proven on host                               | closed (2026-02-15) | added SOPS-backed `explorer_admin_{kid,secret}` + rendered `/run/secrets/r2/explorer.env`; updated remote `admin:keyset:active` in `R2E_KEYS_KV`; `r2 share worker create` succeeds | keep KV writes explicit and always use `wrangler ... --remote`       |
-| `B-05` | `r2-sync` mount/bisync units fail in real-user mode (FUSE hardening + bisync flags/trash/workdir defaults) | closed (2026-02-15) | `r2-mount-workspace` is stable, mount is visible host-wide (`mountpoint -q /data/r2/mount/workspace`), and `r2-bisync-workspace` timer runs cleanly on schedule                     | keep mount unit unsandboxed enough to share the host mount namespace |
+| ID     | Blocker                                                                                                    | Status              | Evidence                                                                                                                                                                             | Action                                                               |
+| ------ | ---------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `B-01` | `files.unsigned.sh` unresolved                                                                             | closed              | `wrangler triggers deploy` attached custom domain; `dig` now returns A records                                                                                                       | keep `routes.custom_domain` config under change control              |
+| `B-02` | `/run/secrets/r2/credentials.env` rendered as literal `{{ ... }}` placeholders in `~/nixos`                | closed (2026-02-15) | fixed in `~/nixos/modules/security/r2-cloud-secrets.nix` by switching to `config.sops.placeholder.*`; verified runtime file is readable and no longer contains template braces       | none (keep SOPS placeholders; recheck after secret edits)            |
+| `B-03` | runtime options still disabled in `~/nixos`                                                                | closed (2026-02-15) | `nix eval ...services.r2-sync.enable` / `...r2-restic.enable` / `...git-annex-r2.enable` / HM `...r2-cloud.enable` all return `true`; host units/timers active                       | keep staged enablement in `~/nixos/modules/system76/r2-runtime.nix`  |
+| `B-04` | Worker admin signing env for `r2c share worker create` not yet proven on host                              | closed (2026-02-15) | added SOPS-backed `explorer_admin_{kid,secret}` + rendered `/run/secrets/r2/explorer.env`; updated remote `admin:keyset:active` in `R2E_KEYS_KV`; `r2c share worker create` succeeds | keep KV writes explicit and always use `wrangler ... --remote`       |
+| `B-05` | `r2-sync` mount/bisync units fail in real-user mode (FUSE hardening + bisync flags/trash/workdir defaults) | closed (2026-02-15) | `r2-mount-workspace` is stable, mount is visible host-wide (`mountpoint -q /data/r2/mount/workspace`), and `r2-bisync-workspace` timer runs cleanly on schedule                      | keep mount unit unsandboxed enough to share the host mount namespace |
 
 ## Summary
 
@@ -398,7 +398,7 @@ sudo systemctl status r2-restic-backup.service --no-pager
 
 Fail Gate `C` if service/timer units are missing or oneshot runs fail.
 
-### Gate D: Stage 3 Add `git-annex` + `r2` Wrapper
+### Gate D: Stage 3 Add `git-annex` + `r2c` Wrapper
 
 Extend `~/nixos/modules/system76/r2-runtime.nix` with system and HM CLI
 surfaces:
@@ -426,7 +426,7 @@ Apply and verify:
 ```bash
 sudo nixos-rebuild switch --flake ~/nixos#system76
 command -v git-annex-r2-init
-command -v r2
+command -v r2c
 test -r /run/secrets/r2/credentials.env
 test -r /run/secrets/r2/explorer.env
 ```
@@ -451,7 +451,7 @@ Acceptance:
 - mount unit(s) active (or expected state for configuration)
 - bisync timer present and next run scheduled
 - restic timer present and invokable
-- `git-annex-r2-init` and `r2` resolve in expected PATH context
+- `git-annex-r2-init` and `r2c` resolve in expected PATH context
 
 ### Gate F: Milestone `8.4` Remote Connectivity Validation
 
@@ -487,8 +487,8 @@ Preflight (Worker admin signing):
 ```bash
 set -euo pipefail
 
-# This is the system-scoped env file used by the `r2` wrapper to run
-# `r2 share worker ...` without manual exports.
+# This is the system-scoped env file used by the `r2c` wrapper to run
+# `r2c share worker ...` without manual exports.
 test -r /run/secrets/r2/explorer.env
 
 	# IMPORTANT: always use --remote for KV operations.
@@ -546,22 +546,22 @@ CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
 Presigned and Worker checks:
 
 ````bash
-r2 share "$R2_SYNC_BUCKET" "$R2_SHARE_OBJECT_KEY" 24h
+r2c share "$R2_SYNC_BUCKET" "$R2_SHARE_OBJECT_KEY" 24h
 
-	share_json="$(r2 share worker create "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY" 24h --max-downloads 1)"
+	share_json="$(r2c share worker create "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY" 24h --max-downloads 1)"
 	printf '%s\n' "${share_json}"
 	share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
 	token_id="$(printf '%s' "${share_json}" | jq -r '.tokenId')"
 	test -n "${token_id}"
 	test "${token_id}" != "null"
 
-	r2 share worker list "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY"
+	r2c share worker list "$R2_WORKER_BUCKET_ALIAS" "$R2_SHARE_OBJECT_KEY"
 	curl -I "${share_url}"
 	curl -I https://files.unsigned.sh/api/v2/list
 
 	# Cleanup: do not leave tokens around after validation.
 	# Ignore 404 if token was already exhausted/revoked during validation.
-	r2 share worker revoke "${token_id}" || true
+	r2c share worker revoke "${token_id}" || true
 	```
 
 Acceptance:

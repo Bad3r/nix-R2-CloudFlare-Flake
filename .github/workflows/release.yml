@@ -128,23 +128,23 @@ jobs:
       - name: Build root CLI package
         run: |
           set -euo pipefail
-          nix --accept-flake-config build .#r2
+          nix --accept-flake-config build .#r2c
 
       - name: Package root release artifacts
         run: |
           set -euo pipefail
 
           mkdir -p artifacts/root artifacts/runtime
-          out_path="$(nix --accept-flake-config path-info .#r2)"
-          system="$(nix --accept-flake-config eval --raw .#r2.system)"
+          out_path="$(nix --accept-flake-config path-info .#r2c)"
+          system="$(nix --accept-flake-config eval --raw .#r2c.system)"
 
           if [[ ! -d "${out_path}" ]]; then
             echo "Expected Nix output path does not exist: ${out_path}" >&2
             exit 1
           fi
 
-          nix --accept-flake-config path-info .#r2 > artifacts/root/path-info.txt
-          nix --accept-flake-config path-info -S .#r2 > artifacts/root/path-info-size.txt
+          nix --accept-flake-config path-info .#r2c > artifacts/root/path-info.txt
+          nix --accept-flake-config path-info -S .#r2c > artifacts/root/path-info-size.txt
           echo "${system}" > artifacts/root/system.txt
           nix-store --query --requisites "${out_path}" > artifacts/root/closure-paths.txt
           mapfile -t closure_paths < artifacts/root/closure-paths.txt
@@ -154,7 +154,7 @@ jobs:
           fi
           nix-store --export "${closure_paths[@]}" > artifacts/runtime/closure.nar
 
-          tar -czf "artifacts/root/r2-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
+          tar -czf "artifacts/root/r2c-${RELEASE_TAG}-${system}.tar.gz" -C "${out_path}" .
 
       - name: Upload root release artifacts
         uses: actions/upload-artifact@v7
@@ -290,7 +290,7 @@ jobs:
             find release-artifacts/root \
               -maxdepth 1 \
               -type f \
-              -name "r2-${RELEASE_TAG}-*.tar.gz" \
+              -name "r2c-${RELEASE_TAG}-*.tar.gz" \
               -print
           )
 
@@ -310,10 +310,10 @@ jobs:
           trap 'rm -rf "${extract_dir}"' EXIT
 
           tar -xzf "${tarballs[0]}" -C "${extract_dir}"
-          r2_bin="${extract_dir}/bin/r2"
+          r2_bin="${extract_dir}/bin/r2c"
 
           if [[ ! -x "${r2_bin}" ]]; then
-            echo "Extracted r2 binary is missing or not executable: ${r2_bin}" >&2
+            echo "Extracted r2c binary is missing or not executable: ${r2_bin}" >&2
             exit 1
           fi
 

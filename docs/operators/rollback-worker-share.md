@@ -54,8 +54,8 @@ wrangler deploy --config wrangler.ci.toml
 5. Validate lifecycle and route behavior:
 
 ```bash
-r2 share worker create files documents/test.txt 1h --max-downloads 2
-r2 share worker list files documents/test.txt
+r2c share worker create files documents/test.txt 1h --max-downloads 2
+r2c share worker list files documents/test.txt
 curl -I https://files.unsigned.sh/api/v2/list
 curl -s -o /dev/null -w 'share GET status: %{http_code}\n' https://files.unsigned.sh/share/<token-id>
 ```

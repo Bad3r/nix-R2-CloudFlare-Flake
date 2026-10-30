@@ -207,7 +207,7 @@ Extend account ID resolution to include file-based sources:
 
 - In endpoint-less mode, bare `rclone ... r2:` requires manual
   `RCLONE_CONFIG_<REMOTE>_ENDPOINT` export.
-- `r2` wrapper and `git-annex-r2-init` set runtime env automatically.
+- `r2c` wrapper and `git-annex-r2-init` set runtime env automatically.
 
 ### A6. `modules/nixos/git-annex.nix`
 

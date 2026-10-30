@@ -1,6 +1,6 @@
 # `programs.r2-cloud.credentials` Reference
 
-Home Manager credential file assembly for the `r2` CLI and related tooling.
+Home Manager credential file assembly for the `r2c` CLI and related tooling.
 
 Activation condition: `programs.r2-cloud.credentials.manage = true`.
 

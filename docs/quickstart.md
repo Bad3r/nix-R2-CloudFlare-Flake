@@ -137,7 +137,7 @@ Expected result:
 ### Non-NixOS hosts (Home Manager only)
 
 The `full` template also defines a standalone `homeConfigurations.alice`
-output (Home Manager without NixOS) for hosts that only need the `r2` CLI.
+output (Home Manager without NixOS) for hosts that only need the `r2c` CLI.
 Replace the placeholder `username = "alice"` (and the resulting
 `home.homeDirectory`) in the generated `flake.nix`, wire the same
 `accountIdFile`/`credentialsFile` secrets described above, then activate:
@@ -150,7 +150,7 @@ If `home-manager` is not already installed, run it without installing first:
 `nix run github:nix-community/home-manager -- switch --flake .#alice`.
 This path installs `programs.r2-cloud` only; it creates no
 `services.r2-sync`/`services.r2-restic` systemd units, so skip steps 6 and 7
-and confirm with `command -v r2` instead.
+and confirm with `command -v r2c` instead.
 
 ## 6. Verify service wiring (minimal path)
 
@@ -198,14 +198,14 @@ sudo systemctl list-timers | grep r2-bisync-workspace
 sudo systemctl status r2-restic-backup
 sudo systemctl list-timers | grep r2-restic-backup
 command -v git-annex-r2-init
-command -v r2
+command -v r2c
 ```
 
 Expected result:
 
 - `r2-mount-workspace` is active
 - bisync and restic timers/services are present and invokable
-- `git-annex-r2-init` and `r2` are available in PATH
+- `git-annex-r2-init` and `r2c` are available in PATH
 
 Full remote checkpoints:
 
@@ -238,16 +238,16 @@ In managed NixOS deployments, this is typically provided via
 Replace `files.example.com` below with your deployment's own domain.
 
 ```bash
-r2 share files workspace/demo.txt 24h
-share_json="$(r2 share worker create files workspace/demo.txt 24h --max-downloads 2)"
+r2c share files workspace/demo.txt 24h
+share_json="$(r2c share worker create files workspace/demo.txt 24h --max-downloads 2)"
 echo "${share_json}"
 share_url="$(printf '%s' "${share_json}" | jq -r '.url')"
 token_id="$(printf '%s' "${share_json}" | jq -r '.tokenId')"
-r2 share worker list files workspace/demo.txt
+r2c share worker list files workspace/demo.txt
 curl -sS -o /dev/null -w '%{http_code}\n' "${share_url}"
 curl -sS -o /dev/null -w '%{http_code}\n' https://files.example.com/api/v2/list
 # Cleanup: revoke the token now that verification is done.
-if ! r2 share worker revoke "${token_id}"; then
+if ! r2c share worker revoke "${token_id}"; then
   echo "Warning: failed to revoke token ${token_id}; revoke it manually." >&2
 fi
 ```
@@ -273,4 +273,4 @@ For failure diagnosis across sync/backup/share/auth flows, use
 | full     | `services.r2-sync.mounts.workspace`              | `systemctl status r2-mount-workspace`               | mount service exists       |
 | full     | `services.r2-restic.bucket`                      | `systemctl status r2-restic-backup`                 | restic oneshot unit exists |
 | full     | `programs.git-annex-r2.*`                        | `command -v git-annex-r2-init`                      | helper is installed        |
-| full     | `programs.r2-cloud.enable`                       | `command -v r2`                                     | wrapper CLI is installed   |
+| full     | `programs.r2-cloud.enable`                       | `command -v r2c`                                    | wrapper CLI is installed   |

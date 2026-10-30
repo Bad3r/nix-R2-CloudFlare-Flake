@@ -158,7 +158,7 @@ r2-cloud-nix/
 │       └── rclone-config.nix    # rclone remote configuration
 │
 ├── packages/
-│   └── r2-cli.nix               # Primary `r2` subcommand CLI
+│   └── r2-cli.nix               # Primary `r2c` subcommand CLI
 │
 ├── lib/
 │   └── r2.nix                   # Shared library functions
@@ -275,11 +275,11 @@ r2-cloud-nix/
       perSystem = { pkgs, system, ... }: {
         # CLI packages
         packages = {
-          r2 = pkgs.callPackage ./packages/r2-cli.nix { };
+          r2c = pkgs.callPackage ./packages/r2-cli.nix { };
           default = pkgs.symlinkJoin {
             name = "r2-cloud-tools";
             paths = [
-              self.packages.${system}.r2
+              self.packages.${system}.r2c
             ];
           };
         };
@@ -310,14 +310,14 @@ r2-cloud-nix/
 ```bash
 # Build and check
 nix flake check
-nix build .#r2
+nix build .#r2c
 
 # Test CLI tools
-nix run .#r2 -- help
-nix run .#r2 -- bucket help
-nix run .#r2 -- share help
-nix run .#r2 -- share worker help
-nix run .#r2 -- rclone --help
+nix run .#r2c -- help
+nix run .#r2c -- bucket help
+nix run .#r2c -- share help
+nix run .#r2c -- share worker help
+nix run .#r2c -- rclone --help
 
 # Run full local validation (formats + hooks + module eval + worker tests)
 ./scripts/ci/validate.sh

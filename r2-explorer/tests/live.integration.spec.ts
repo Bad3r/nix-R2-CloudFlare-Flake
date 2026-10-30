@@ -119,7 +119,7 @@ function resolveCiContext(): CiContext {
     key: readRequiredPrefixed(environment, "SMOKE_KEY"),
     serviceTokenClientId: readRequiredPrefixed(environment, "SERVICE_TOKEN_CLIENT_ID"),
     serviceTokenClientSecret: readRequiredPrefixed(environment, "SERVICE_TOKEN_CLIENT_SECRET"),
-    r2Bin: readOptionalPrefixed(environment, "R2_BIN", "r2"),
+    r2Bin: readOptionalPrefixed(environment, "R2_BIN", "r2c"),
     smokeTtl: readOptionalPrefixed(environment, "SMOKE_TTL", "10m"),
     retries,
     retryDelayMs: retryDelaySec * 1000,

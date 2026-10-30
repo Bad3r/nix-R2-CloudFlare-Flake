@@ -28,7 +28,7 @@ Note on permissions:
 
 Failure signature:
 
-- `rclone lsf` or `r2 share` fails with authentication or signature errors.
+- `rclone lsf` or `r2c share` fails with authentication or signature errors.
 
 Confirm:
 
@@ -68,7 +68,7 @@ and re-run the confirm command.
 Verify:
 
 - `rclone lsf` succeeds without auth/signature errors.
-- `r2 share <bucket> <key>` returns a presigned URL.
+- `r2c share <bucket> <key>` returns a presigned URL.
 
 Escalate:
 
@@ -78,7 +78,7 @@ Escalate:
 
 Failure signature:
 
-- `r2 share worker create|list|revoke ...` returns unauthorized/forbidden.
+- `r2c share worker create|list|revoke ...` returns unauthorized/forbidden.
 - `/api/v2/*` calls fail with `access_required`, `token_invalid_signature`,
   `token_claim_mismatch`, or `insufficient_scope`.
 - Browser preview/download (`/api/v2/preview`, `/api/v2/download`) opens an
@@ -93,7 +93,7 @@ test -r /run/secrets/r2/explorer.env
 grep -E '^(R2_EXPLORER_BASE_URL|R2_EXPLORER_ACCESS_CLIENT_ID)=' /run/secrets/r2/explorer.env
 grep -q '^R2_EXPLORER_ACCESS_CLIENT_SECRET=' /run/secrets/r2/explorer.env
 
-r2 share worker list files workspace/demo.txt
+r2c share worker list files workspace/demo.txt
 ```
 
 Likely root causes:
@@ -125,8 +125,8 @@ curl -i \
 
 Verify:
 
-- `r2 share worker create ...` succeeds and returns a `url`.
-- `r2 share worker list ...` returns token records.
+- `r2c share worker create ...` succeeds and returns a `url`.
+- `r2c share worker list ...` returns token records.
 - Browser web UI can list objects and open preview/download without `401`.
 
 Escalate:
@@ -628,7 +628,7 @@ Confirm:
 curl -I https://files.example.com/share/<token-id>
 curl -I https://files.example.com/share/<token-id>
 curl -I https://files.example.com/api/v2/list
-r2 share worker list files workspace/demo.txt
+r2c share worker list files workspace/demo.txt
 ```
 
 Likely root causes:
@@ -642,7 +642,7 @@ Repair:
 
 ```bash
 # Mint a fresh token and retest immediately
-r2 share worker create files workspace/demo.txt 1h --max-downloads 1
+r2c share worker create files workspace/demo.txt 1h --max-downloads 1
 ```
 
 If the bucket mapping is suspect, verify Worker settings:

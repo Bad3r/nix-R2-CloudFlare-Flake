@@ -26,5 +26,5 @@ with `docs/troubleshooting.md`.
   - `R2E_ACCESS_TEAM_DOMAIN`
   - `R2E_ACCESS_AUD`
   - `R2E_READONLY`
-- `r2` CLI available for Worker share lifecycle checks.
+- `r2c` CLI available for Worker share lifecycle checks.
 - Access to the deployment target for `https://files.unsigned.sh`.

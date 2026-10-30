@@ -29,7 +29,7 @@ Known-good production inventory (as validated on `system76`):
 - `/run/secrets/r2/account-id`
 - `/run/secrets/r2/credentials.env`
 - `/run/secrets/r2/restic-password`
-- `/run/secrets/r2/explorer.env` (Worker OAuth client credentials for `r2 share worker ...`)
+- `/run/secrets/r2/explorer.env` (Worker OAuth client credentials for `r2c share worker ...`)
 
 Acceptance checks that passed on `system76`:
 
@@ -42,9 +42,9 @@ Acceptance checks that passed on `system76`:
 - `rclone lsf :s3:nix-r2-cf-r2e-files-prod ...` succeeds
 - `restic ... snapshots` succeeds against `nix-r2-cf-backups-prod`
 - Sharing UX:
-- `r2 share nix-r2-cf-r2e-files-prod workspace/demo.txt 1h` returns a URL
+- `r2c share nix-r2-cf-r2e-files-prod workspace/demo.txt 1h` returns a URL
 - Worker token share works:
-  `r2 share worker create files workspace/demo.txt 10m --max-downloads 1`
+  `r2c share worker create files workspace/demo.txt 10m --max-downloads 1`
   returns a URL under `files.unsigned.sh/share/<token>` and enforces max-downloads
 - Direct IdP auth remains enforced:
   `curl -I https://files.unsigned.sh/api/v2/list` returns `401` with `token_missing`

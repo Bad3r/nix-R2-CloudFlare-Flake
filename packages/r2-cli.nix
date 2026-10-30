@@ -23,8 +23,8 @@ let
       };
 in
 writeShellApplication {
-  name = "r2";
-  derivationArgs.name = "r2-${packageVersion}";
+  name = "r2c";
+  derivationArgs.name = "r2c-${packageVersion}";
   passthru.version = packageVersion;
   runtimeInputs = [
     coreutils
@@ -45,7 +45,7 @@ writeShellApplication {
 
     usage_main() {
       printf '%s\n' \
-        "Usage: r2 <command> [args]" \
+        "Usage: r2c <command> [args]" \
         "" \
         "Commands:" \
         "  bucket <subcommand> ...              Manage R2 buckets with wrangler" \
@@ -56,15 +56,15 @@ writeShellApplication {
         "  version                              Show CLI version" \
         "" \
         "Examples:" \
-        "  r2 bucket list" \
-        "  r2 share documents report.pdf 24h" \
-        "  r2 share worker create files report.pdf 7d --max-downloads 5" \
-        "  r2 rclone ls r2:documents/"
+        "  r2c bucket list" \
+        "  r2c share documents report.pdf 24h" \
+        "  r2c share worker create files report.pdf 7d --max-downloads 5" \
+        "  r2c rclone ls r2:documents/"
     }
 
     usage_bucket() {
       printf '%s\n' \
-        "Usage: r2 bucket <subcommand> [args]" \
+        "Usage: r2c bucket <subcommand> [args]" \
         "" \
         "Subcommands:" \
         "  create <name>         Create a bucket" \
@@ -77,10 +77,10 @@ writeShellApplication {
     usage_bucket_lifecycle() {
       printf '%s\n' \
         "Usage:" \
-        "  r2 bucket lifecycle list <bucket>" \
-        "  r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]" \
-        "  r2 bucket lifecycle remove <bucket> <rule-id>" \
-        "  r2 bucket lifecycle <bucket> [days]   # legacy alias for trash-cleanup" \
+        "  r2c bucket lifecycle list <bucket>" \
+        "  r2c bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]" \
+        "  r2c bucket lifecycle remove <bucket> <rule-id>" \
+        "  r2c bucket lifecycle <bucket> [days]   # legacy alias for trash-cleanup" \
         "" \
         "Notes:" \
         "  - The legacy alias updates rule 'trash-cleanup' for prefix '.trash/' without overwriting full lifecycle config." \
@@ -90,8 +90,8 @@ writeShellApplication {
     usage_share() {
       printf '%s\n' \
         "Usage:" \
-        "  r2 share <bucket> <key> [expiry]" \
-        "  r2 share worker <subcommand> ..." \
+        "  r2c share <bucket> <key> [expiry]" \
+        "  r2c share worker <subcommand> ..." \
         "" \
         "Presigned mode:" \
         "  Generates an S3 endpoint URL via rclone link." \
@@ -106,7 +106,7 @@ writeShellApplication {
 
     usage_share_worker() {
       printf '%s\n' \
-        "Usage: r2 share worker <subcommand> [args]" \
+        "Usage: r2c share worker <subcommand> [args]" \
         "" \
         "Subcommands:" \
         "  create <bucket> <key> [ttl] [--max-downloads N]" \
@@ -122,7 +122,7 @@ writeShellApplication {
 
     usage_rclone() {
       printf '%s\n' \
-        "Usage: r2 rclone <rclone-args...>" \
+        "Usage: r2c rclone <rclone-args...>" \
         "" \
         "Runs:" \
         "  rclone --config \"\$R2_RCLONE_CONFIG_OR_DEFAULT\" <rclone-args...>"
@@ -253,7 +253,7 @@ writeShellApplication {
 
     run_bucket_create() {
       local name="''${1:-}"
-      [[ -n "$name" ]] || fail "bucket name is required (usage: r2 bucket create <name>)"
+      [[ -n "$name" ]] || fail "bucket name is required (usage: r2c bucket create <name>)"
 
       load_credentials
       ensure_wrangler
@@ -269,7 +269,7 @@ writeShellApplication {
 
     run_bucket_delete() {
       local name="''${1:-}"
-      [[ -n "$name" ]] || fail "bucket name is required (usage: r2 bucket delete <name>)"
+      [[ -n "$name" ]] || fail "bucket name is required (usage: r2c bucket delete <name>)"
 
       load_credentials
       ensure_wrangler
@@ -294,7 +294,7 @@ writeShellApplication {
 
     run_bucket_lifecycle_list() {
       local bucket="''${1:-}"
-      [[ -n "$bucket" ]] || fail "usage: r2 bucket lifecycle list <bucket>"
+      [[ -n "$bucket" ]] || fail "usage: r2c bucket lifecycle list <bucket>"
 
       load_credentials
       ensure_wrangler
@@ -312,9 +312,9 @@ writeShellApplication {
       local lifecycle_cmd=()
 
       [[ -n "$bucket" && -n "$rule_id" ]] || \
-        fail "usage: r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
+        fail "usage: r2c bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
       [[ -n "$prefix" ]] || \
-        fail "prefix is required (r2 bucket lifecycle add does not currently support whole-bucket rules; pass a non-empty prefix)"
+        fail "prefix is required (r2c bucket lifecycle add does not currently support whole-bucket rules; pass a non-empty prefix)"
 
       shift 3 || true
 
@@ -370,7 +370,7 @@ writeShellApplication {
     run_bucket_lifecycle_remove() {
       local bucket="''${1:-}"
       local rule_id="''${2:-}"
-      [[ -n "$bucket" && -n "$rule_id" ]] || fail "usage: r2 bucket lifecycle remove <bucket> <rule-id>"
+      [[ -n "$bucket" && -n "$rule_id" ]] || fail "usage: r2c bucket lifecycle remove <bucket> <rule-id>"
 
       load_credentials
       ensure_wrangler
@@ -382,12 +382,12 @@ writeShellApplication {
       local bucket="''${1:-}"
       local days="''${2:-30}"
 
-      [[ -n "$bucket" ]] || fail "usage: r2 bucket lifecycle <bucket> [days]"
+      [[ -n "$bucket" ]] || fail "usage: r2c bucket lifecycle <bucket> [days]"
       [[ "$days" =~ ^[0-9]+$ ]] || \
-        fail "'$bucket' is not a recognized 'bucket lifecycle' subcommand; assuming the deprecated 'r2 bucket lifecycle <bucket> [days]' form, retention days must be a non-negative integer (got '$days')"
+        fail "'$bucket' is not a recognized 'bucket lifecycle' subcommand; assuming the deprecated 'r2c bucket lifecycle <bucket> [days]' form, retention days must be a non-negative integer (got '$days')"
 
-      echo "Warning: 'r2 bucket lifecycle <bucket> [days]' is deprecated." >&2
-      echo "Warning: use 'r2 bucket lifecycle add <bucket> trash-cleanup .trash/ --expire-days <days>' instead." >&2
+      echo "Warning: 'r2c bucket lifecycle <bucket> [days]' is deprecated." >&2
+      echo "Warning: use 'r2c bucket lifecycle add <bucket> trash-cleanup .trash/ --expire-days <days>' instead." >&2
       run_bucket_lifecycle_add "$bucket" "trash-cleanup" ".trash/" --expire-days "$days"
     }
 
@@ -401,22 +401,22 @@ writeShellApplication {
       case "$subcommand" in
         list)
           shift || true
-          [[ "$#" -eq 1 ]] || fail "usage: r2 bucket lifecycle list <bucket>"
+          [[ "$#" -eq 1 ]] || fail "usage: r2c bucket lifecycle list <bucket>"
           run_bucket_lifecycle_list "$1"
           ;;
         add)
           shift || true
           [[ "$#" -ge 3 ]] || \
-            fail "usage: r2 bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
+            fail "usage: r2c bucket lifecycle add <bucket> <rule-id> <prefix> [--expire-days N] [--ia-transition-days N] [--abort-multipart-days N]"
           run_bucket_lifecycle_add "$@"
           ;;
         remove)
           shift || true
-          [[ "$#" -eq 2 ]] || fail "usage: r2 bucket lifecycle remove <bucket> <rule-id>"
+          [[ "$#" -eq 2 ]] || fail "usage: r2c bucket lifecycle remove <bucket> <rule-id>"
           run_bucket_lifecycle_remove "$1" "$2"
           ;;
         *)
-          [[ "$#" -ge 1 && "$#" -le 2 ]] || fail "usage: r2 bucket lifecycle <bucket> [days]"
+          [[ "$#" -ge 1 && "$#" -le 2 ]] || fail "usage: r2c bucket lifecycle <bucket> [days]"
           run_bucket_lifecycle_legacy_alias "$@"
           ;;
       esac
@@ -427,8 +427,8 @@ writeShellApplication {
       local key="''${2:-}"
       local expiry="''${3:-24h}"
 
-      [[ -n "$bucket" ]] || fail "bucket is required (usage: r2 share <bucket> <key> [expiry])"
-      [[ -n "$key" ]] || fail "key is required (usage: r2 share <bucket> <key> [expiry])"
+      [[ -n "$bucket" ]] || fail "bucket is required (usage: r2c share <bucket> <key> [expiry])"
+      [[ -n "$key" ]] || fail "key is required (usage: r2c share <bucket> <key> [expiry])"
 
       load_credentials
       ensure_aws_credentials
@@ -447,7 +447,7 @@ writeShellApplication {
     run_share_worker_create() {
       local bucket key ttl max_downloads body response next
 
-      [[ "$#" -ge 2 ]] || fail "usage: r2 share worker create <bucket> <key> [ttl] [--max-downloads N]"
+      [[ "$#" -ge 2 ]] || fail "usage: r2c share worker create <bucket> <key> [ttl] [--max-downloads N]"
       bucket="$1"
       key="$2"
       shift 2
@@ -491,7 +491,7 @@ writeShellApplication {
       local token_id body response
 
       token_id="''${1:-}"
-      [[ -n "$token_id" ]] || fail "usage: r2 share worker revoke <token-id>"
+      [[ -n "$token_id" ]] || fail "usage: r2c share worker revoke <token-id>"
 
       body="$(jq -n --arg tokenId "$token_id" '{tokenId: $tokenId}')"
       response="$(worker_api_json "POST" "/api/v2/share/revoke" "" "$body")"
@@ -503,7 +503,7 @@ writeShellApplication {
 
       bucket="''${1:-}"
       key="''${2:-}"
-      [[ -n "$bucket" && -n "$key" ]] || fail "usage: r2 share worker list <bucket> <key>"
+      [[ -n "$bucket" && -n "$key" ]] || fail "usage: r2c share worker list <bucket> <key>"
 
       bucket_escaped="$(uri_escape "$bucket")"
       key_escaped="$(uri_escape "$key")"
@@ -526,11 +526,11 @@ writeShellApplication {
           run_share_worker_create "$@"
           ;;
         revoke)
-          [[ "$#" -eq 1 ]] || fail "usage: r2 share worker revoke <token-id>"
+          [[ "$#" -eq 1 ]] || fail "usage: r2c share worker revoke <token-id>"
           run_share_worker_revoke "$1"
           ;;
         list)
-          [[ "$#" -eq 2 ]] || fail "usage: r2 share worker list <bucket> <key>"
+          [[ "$#" -eq 2 ]] || fail "usage: r2c share worker list <bucket> <key>"
           run_share_worker_list "$1" "$2"
           ;;
         *)
@@ -553,7 +553,7 @@ writeShellApplication {
         return
       fi
 
-      [[ "$#" -ge 2 && "$#" -le 3 ]] || fail "usage: r2 share <bucket> <key> [expiry]"
+      [[ "$#" -ge 2 && "$#" -le 3 ]] || fail "usage: r2c share <bucket> <key> [expiry]"
       run_share_presigned "$@"
     }
 
@@ -578,15 +578,15 @@ writeShellApplication {
 
       case "$subcommand" in
         create)
-          [[ "$#" -eq 1 ]] || fail "usage: r2 bucket create <name>"
+          [[ "$#" -eq 1 ]] || fail "usage: r2c bucket create <name>"
           run_bucket_create "$1"
           ;;
         list)
-          [[ "$#" -eq 0 ]] || fail "usage: r2 bucket list"
+          [[ "$#" -eq 0 ]] || fail "usage: r2c bucket list"
           run_bucket_list
           ;;
         delete)
-          [[ "$#" -eq 1 ]] || fail "usage: r2 bucket delete <name>"
+          [[ "$#" -eq 1 ]] || fail "usage: r2c bucket delete <name>"
           run_bucket_delete "$1"
           ;;
         lifecycle)
@@ -627,7 +627,7 @@ writeShellApplication {
         printf '%s\n' "$r2_version"
         ;;
       *)
-        fail "unknown command '$cmd' (run: r2 help)"
+        fail "unknown command '$cmd' (run: r2c help)"
         ;;
     esac
   '';

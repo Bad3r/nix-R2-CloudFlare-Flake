@@ -543,10 +543,10 @@ let
   hasR2 =
     builtins.any (
       name:
-      name == "r2" || (builtins.match "^r2-wrapper-[0-9].*$" name != null)
+      name == "r2c" || (builtins.match "^r2c-wrapper-[0-9].*$" name != null)
     ) packageNames;
 in
-if hasR2 then "ok" else builtins.throw "Missing expected r2 CLI wrapper in home.packages"
+if hasR2 then "ok" else builtins.throw "Missing expected r2c CLI wrapper in home.packages"
 NIX
 )"
 
@@ -1107,23 +1107,23 @@ expect_failure_output() {
 run_cli_behavior_checks() {
   local r2_bin cli_home expected_version actual_version
 
-  r2_bin="$(nix build .#r2 --no-link --print-out-paths)/bin/r2"
+  r2_bin="$(nix build .#r2c --no-link --print-out-paths)/bin/r2c"
   cli_home="$(mktemp -d "${TMPDIR:-/tmp}/r2-cloud-cli-check.XXXXXX")"
   register_cleanup_dir "${cli_home}"
 
-  expected_version="$(nix eval --raw .#r2.version)"
-  echo "+ r2 version"
+  expected_version="$(nix eval --raw .#r2c.version)"
+  echo "+ r2c version"
   actual_version="$(HOME="${cli_home}" "${r2_bin}" version)"
   if [[ ${actual_version} != "${expected_version}" ]]; then
-    echo "r2 version printed '${actual_version}', expected '${expected_version}'." >&2
+    echo "r2c version printed '${actual_version}', expected '${expected_version}'." >&2
     exit 1
   fi
 
-  expect_failure_output "r2 bucket lifecycle add with an empty prefix" "prefix is required" \
+  expect_failure_output "r2c bucket lifecycle add with an empty prefix" "prefix is required" \
     env HOME="${cli_home}" "${r2_bin}" bucket lifecycle add bucket rule "" --expire-days 7
 
   printf 'R2_ACCOUNT_ID=abc123\nthis line is not an assignment\n' >"${cli_home}/malformed.env"
-  expect_failure_output "r2 with a malformed credentials file" "line 2: expected KEY=VALUE" \
+  expect_failure_output "r2c with a malformed credentials file" "line 2: expected KEY=VALUE" \
     env HOME="${cli_home}" R2_CREDENTIALS_FILE="${cli_home}/malformed.env" "${r2_bin}" bucket list
 }
 
@@ -1151,12 +1151,12 @@ run_target_root_flake_template_docs() {
 }
 
 run_target_root_cli_module_eval() {
-  run nix build .#r2
-  run nix run .#r2 -- help
-  run nix run .#r2 -- bucket help
-  run nix run .#r2 -- bucket lifecycle help
-  run nix run .#r2 -- share help
-  run nix run .#r2 -- share worker help
+  run nix build .#r2c
+  run nix run .#r2c -- help
+  run nix run .#r2c -- bucket help
+  run nix run .#r2c -- bucket lifecycle help
+  run nix run .#r2c -- share help
+  run nix run .#r2c -- share worker help
   nix_eval_expect "r2-sync module (positive)" "R2 FUSE mount for documents" "${R2_SYNC_POSITIVE_EXPR}"
   nix_eval_expect "r2-restic module (positive)" "Restic backup timer" "${R2_RESTIC_POSITIVE_EXPR}"
   nix_eval_expect "r2-sync assertions (negative)" "ok" "${R2_SYNC_ASSERTION_EXPR}"

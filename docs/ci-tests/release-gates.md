@@ -11,11 +11,11 @@ Release automation validates root and worker artifacts before publishing tags.
 ## CLI smoke commands
 
 ```bash
-nix build .#r2
-nix run .#r2 -- help
-nix run .#r2 -- bucket help
-nix run .#r2 -- share help
-nix run .#r2 -- share worker help
+nix build .#r2c
+nix run .#r2c -- help
+nix run .#r2c -- bucket help
+nix run .#r2c -- share help
+nix run .#r2c -- share worker help
 ```
 
 ## Worker release build commands

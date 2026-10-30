@@ -21,7 +21,7 @@ Runtime extraction paths (system):
 
 Env file format: one `KEY=VALUE` per line, `#` comments, an optional `export`
 prefix, and quoted or unquoted values. systemd reads the system file through
-`EnvironmentFile=`; the `r2` CLI and its Home Manager wrapper parse
+`EnvironmentFile=`; the `r2c` CLI and its Home Manager wrapper parse
 `~/.config/cloudflare/r2/env` and `programs.r2-cloud.explorerEnvFile` as data
 and never execute them, so a malformed line stops loading with
 `Error: <file>: line <N>: expected KEY=VALUE`. See

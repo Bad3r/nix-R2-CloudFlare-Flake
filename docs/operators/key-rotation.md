@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Rotate Cloudflare Access service-token credentials used by `r2 share worker ...`
+Rotate Cloudflare Access service-token credentials used by `r2c share worker ...`
 automation without interrupting share-management operations.
 
 ## When to Use
@@ -48,16 +48,16 @@ curl -i \
 5. Validate share lifecycle commands:
 
 ```bash
-r2 share worker create files documents/test.txt 1h --max-downloads 1
-r2 share worker list files documents/test.txt
+r2c share worker create files documents/test.txt 1h --max-downloads 1
+r2c share worker list files documents/test.txt
 ```
 
 6. Revoke/disable the old service token after validation.
 
 ## Verification
 
-- `r2 share worker create` succeeds with new credentials.
-- `r2 share worker list` returns expected records.
+- `r2c share worker create` succeeds with new credentials.
+- `r2c share worker list` returns expected records.
 - Old service token no longer works after revocation.
 
 ## Failure Signatures and Triage

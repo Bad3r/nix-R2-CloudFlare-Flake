@@ -90,7 +90,7 @@ To use both `programs.rclone` and an R2 remote, either:
 When `accountId` is resolved at runtime (file/env), the managed config omits
 `endpoint`. In that case:
 
-- `r2` wrapper exports `RCLONE_CONFIG_<REMOTE>_ENDPOINT` automatically.
+- `r2c` wrapper exports `RCLONE_CONFIG_<REMOTE>_ENDPOINT` automatically.
 - bare `rclone` requires manual export of `RCLONE_CONFIG_<REMOTE>_ENDPOINT`.
 - `<REMOTE>` must be env-var-safe (`[A-Za-z0-9_]+`) for endpoint export. An
   assertion in `programs.r2-cloud` rejects other names at evaluation time when

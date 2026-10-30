@@ -37,15 +37,15 @@ Workflow behavior:
 
 1. Preflight validation checks semver format, `target_ref` policy, and verifies
    the release tag does not already exist.
-2. Root artifact build runs `nix build .#r2` and captures output/closure
+2. Root artifact build runs `nix build .#r2c` and captures output/closure
    metadata.
 3. Worker artifact build runs `pnpm install --frozen-lockfile`,
    `pnpm run check`, and `pnpm test`, then packages release inputs.
 4. CLI smoke verification runs from the packaged root artifact:
-   - `r2 help`
-   - `r2 bucket help`
-   - `r2 share help`
-   - `r2 share worker help`
+   - `r2c help`
+   - `r2c bucket help`
+   - `r2c share help`
+   - `r2c share worker help`
    - workflow installs Nix and imports exported closure metadata before
      invoking artifact binaries
 5. Release publish updates `CHANGELOG.md` from `Unreleased` to

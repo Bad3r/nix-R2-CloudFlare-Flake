@@ -9,6 +9,12 @@ and this project follows Conventional Commits.
 
 ### Changed
 
+- **Breaking: the CLI command is now `r2c`** (previously `r2`), because `r2`
+  collides with radare2's `r2` binary on hosts that install both. The flake
+  package output is `packages.<system>.r2c` (`nix run .#r2c`), the Home
+  Manager wrapper installs `r2c`, and the release tarball is
+  `r2c-<tag>-<system>.tar.gz`. No `r2` alias is kept. The rclone remote name
+  default (`r2`) and all option, module, and unit names are unchanged.
 - Cloudflare agent tooling now follows the maintained Codex plugin, which
   provides current skills and the Cloudflare API MCP server. Removed the
   outdated vendored `.agents/skills` snapshot, installer lock, and redundant

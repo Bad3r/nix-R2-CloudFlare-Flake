@@ -32,7 +32,7 @@ Current repository layout:
 - `flake.nix`: root flake outputs (packages, modules, templates, dev shells).
 - `modules/nixos/`: `r2-sync`, `r2-restic`, `git-annex` NixOS modules.
 - `modules/home-manager/`: `r2-cli`, `r2-credentials`, `rclone-config` HM modules.
-- `packages/r2-cli.nix`: packaged `r2` CLI.
+- `packages/r2-cli.nix`: packaged `r2c` CLI.
 - `lib/r2.nix`: shared library helpers.
 - `r2-explorer/`: Worker subflake, source, tests, and deploy config.
 - `templates/minimal`, `templates/full`: consumer flake templates.
@@ -57,8 +57,8 @@ Primary validation (matches CI target coverage):
 Root flake checks:
 
 - `nix flake check` to validate flake structure.
-- `nix build .#r2` to build the CLI.
-- `nix run .#r2 -- help` to smoke‑test CLI usage.
+- `nix build .#r2c` to build the CLI.
+- `nix run .#r2c -- help` to smoke‑test CLI usage.
 - `nix develop` for a dev shell with rclone/restic/git-annex/wrangler.
 - `nix develop .#hooks --command lefthook run pre-commit --all-files` for hook parity.
 
@@ -78,7 +78,7 @@ Available via `nix run nixpkgs#<package>` or system install:
 - **wrangler**: Cloudflare Workers CLI. Deploy, dev, and manage Workers and R2 buckets. `wrangler r2 bucket list`, `wrangler dev`, `wrangler deploy`.
 - **cloudflared**: Cloudflare Tunnel daemon. Expose local services, access private resources, test Access policies.
 - **flarectl**: Cloudflare API CLI. Manage DNS, zones, and account settings. Useful for scripting Cloudflare configuration.
-- **rclone**: File sync and mount. Test R2 connectivity with `nix run .#r2 -- rclone lsd r2:` (the wrapper exports `RCLONE_CONFIG_<REMOTE>_ENDPOINT` for endpoint-less remotes) or mount with `rclone mount`. Bare `rclone lsd r2:` needs that variable exported manually when the remote uses `accountIdFile`; see `docs/reference/programs-r2-cloud-rclone-config.md`, "Endpoint-less mode".
+- **rclone**: File sync and mount. Test R2 connectivity with `nix run .#r2c -- rclone lsd r2:` (the wrapper exports `RCLONE_CONFIG_<REMOTE>_ENDPOINT` for endpoint-less remotes) or mount with `rclone mount`. Bare `rclone lsd r2:` needs that variable exported manually when the remote uses `accountIdFile`; see `docs/reference/programs-r2-cloud-rclone-config.md`, "Endpoint-less mode".
 - **restic**: Backup tool. Test backup/restore workflows to R2.
 - **git-annex**: Large file management. Test special remote setup with `git annex initremote`.
 - **pnpm/nodejs**: Worker package management, typecheck, tests, and local dev.
@@ -117,7 +117,7 @@ Sync strategies:
 
 Sharing modes:
 
-- Presigned URLs via `r2 share`: S3 endpoint only, no Access.
+- Presigned URLs via `r2c share`: S3 endpoint only, no Access.
 - Access‑protected links: custom domain via Worker + HMAC.
 
 ## Documentation Requirements

@@ -13,14 +13,14 @@ escalate to operator runbooks as needed.
 Use the primary command:
 
 ```bash
-r2 share <bucket> <key> [expiry]
+r2c share <bucket> <key> [expiry]
 ```
 
 Examples:
 
 ```bash
-r2 share documents report.pdf
-r2 share documents report.pdf 168h
+r2c share documents report.pdf
+r2c share documents report.pdf 168h
 ```
 
 Notes:
@@ -30,9 +30,9 @@ Notes:
   `~/.config/cloudflare/r2/env`).
 - System-wide deployments typically point `R2_CREDENTIALS_FILE` at
   `/run/secrets/r2/credentials.env` rendered from `secrets/r2.yaml`.
-- A bucket literally named `worker` cannot be used with `r2 share`, because
-  `worker` is the `r2 share worker` subcommand keyword. There is no escape
-  hatch; rename the bucket or use `r2 share worker` instead.
+- A bucket literally named `worker` cannot be used with `r2c share`, because
+  `worker` is the `r2c share worker` subcommand keyword. There is no escape
+  hatch; rename the bucket or use `r2c share worker` instead.
 - Required variables in the sourced credentials file:
   - `R2_ACCOUNT_ID` (falls back to the HM-injected `R2_DEFAULT_ACCOUNT_ID` when
     unset; if both are set and differ, `R2_ACCOUNT_ID` wins and the CLI prints
@@ -45,9 +45,9 @@ Notes:
 Worker-mode share operations use the R2-Explorer API:
 
 ```bash
-r2 share worker create <bucket> <key> [ttl] [--max-downloads N]
-r2 share worker list <bucket> <key>
-r2 share worker revoke <token-id>
+r2c share worker create <bucket> <key> [ttl] [--max-downloads N]
+r2c share worker list <bucket> <key>
+r2c share worker revoke <token-id>
 ```
 
 Required environment variables for Worker-mode CLI calls:
